@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -38,6 +39,7 @@ func (r *IdentityRepository) FindUserForLogin(ctx context.Context, organizationC
 		FROM users u
 		JOIN organizations o ON o.id = u.organization_id
 		WHERE LOWER(o.code) = LOWER($1) AND LOWER(u.username) = LOWER($2)
+		  AND o.status = 'active'
 	`, organizationCode, username))
 	if err == pgx.ErrNoRows {
 		return identity.User{}, identity.ErrUserNotFound
@@ -129,7 +131,7 @@ func (r *IdentityRepository) FindSessionByTokenHash(ctx context.Context, tokenHa
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		JOIN organizations o ON o.id = u.organization_id
-		WHERE s.token_hash = $1
+		WHERE s.token_hash = $1 AND o.status = 'active'
 	`, tokenHash)
 
 	var session identity.Session
@@ -230,6 +232,78 @@ func (r *IdentityRepository) UpdateOwnPassword(ctx context.Context, input identi
 		return 0, err
 	}
 	return revoked, nil
+}
+
+func (r *IdentityRepository) UpdateOwnProfile(ctx context.Context, input identity.ProfileUpdate) (identity.User, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return identity.User{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var previousDisplayName, previousEmail string
+	err = tx.QueryRow(ctx, `
+		SELECT display_name, COALESCE(email, '')
+		FROM users
+		WHERE id = $1 AND organization_id = $2
+		FOR UPDATE
+	`, input.UserID, input.OrganizationID).Scan(&previousDisplayName, &previousEmail)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return identity.User{}, identity.ErrUserNotFound
+	}
+	if err != nil {
+		return identity.User{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET display_name = $1, email = $2, updated_at = NOW()
+		WHERE id = $3 AND organization_id = $4
+	`, input.DisplayName, nullableString(input.Email), input.UserID, input.OrganizationID); err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
+			return identity.User{}, identity.ErrEmailConflict
+		}
+		return identity.User{}, err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.UserID,
+		RequestID:      input.RequestID,
+		Action:         "auth.profile.update",
+		ResourceType:   "user",
+		ResourceID:     input.UserID,
+		Result:         "success",
+		SourceIP:       input.SourceIP,
+		Detail: map[string]any{
+			"previousDisplayName": previousDisplayName,
+			"displayName":         input.DisplayName,
+			"previousEmail":       previousEmail,
+			"email":               input.Email,
+		},
+	}); err != nil {
+		return identity.User{}, err
+	}
+	user, err := scanUser(tx.QueryRow(ctx, `
+		SELECT u.id, u.organization_id, o.name, o.code, u.username,
+		       COALESCE(u.email, ''), u.display_name, u.password_hash, u.status,
+		       ARRAY(
+		           SELECT DISTINCT p.code
+		           FROM user_roles ur
+		           JOIN role_permissions rp ON rp.role_id = ur.role_id
+		           JOIN permissions p ON p.id = rp.permission_id
+		           WHERE ur.user_id = u.id
+		           ORDER BY p.code
+		       )
+		FROM users u
+		JOIN organizations o ON o.id = u.organization_id
+		WHERE u.id = $1 AND u.organization_id = $2
+	`, input.UserID, input.OrganizationID))
+	if err != nil {
+		return identity.User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return identity.User{}, err
+	}
+	return user, nil
 }
 
 func (r *IdentityRepository) ListUserSessions(ctx context.Context, userID, currentSessionID string) ([]identity.UserSession, error) {
@@ -343,7 +417,7 @@ func (r *IdentityRepository) BootstrapAdmin(ctx context.Context, input identity.
 	roleID := uuid.NewString()
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO roles (id, organization_id, code, name, description, built_in)
-		VALUES ($1, $2, 'system_admin', '系统管理员', '拥有当前企业全部管理权限', TRUE)
+		VALUES ($1, $2, 'enterprise_admin', '企业管理员', '拥有当前企业全部管理权限', TRUE)
 		ON CONFLICT (organization_id, code) DO UPDATE SET name = EXCLUDED.name
 		RETURNING id
 	`, roleID, organizationID).Scan(&roleID); err != nil {

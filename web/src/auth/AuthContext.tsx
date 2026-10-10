@@ -4,8 +4,10 @@ import {
   getCurrentUser,
   login as requestLogin,
   logout as requestLogout,
+  updateProfile as requestUpdateProfile,
   type AuthUser,
   type LoginInput,
+  type UpdateProfileInput,
 } from '../api/auth'
 
 interface AuthContextValue {
@@ -16,6 +18,7 @@ interface AuthContextValue {
   refreshUser: () => Promise<void>
   login: (input: LoginInput) => Promise<void>
   logout: () => Promise<void>
+  updateProfile: (input: UpdateProfileInput) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -67,6 +70,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout: async () => {
         await requestLogout()
         setUser(null)
+      },
+      updateProfile: async (input) => {
+        const updatedUser = await requestUpdateProfile(input)
+        setUser(updatedUser)
       },
     }),
     [isLoading, startupError, user],

@@ -19,6 +19,8 @@ var (
 	ErrInvalidPassword     = errors.New("密码参数不正确")
 	ErrPasswordUnchanged   = errors.New("新密码不能与当前密码相同")
 	ErrCannotRevokeCurrent = errors.New("不能在会话管理中吊销当前会话")
+	ErrEmailConflict       = errors.New("邮箱已被当前企业内其他用户使用")
+	ErrInvalidProfile      = errors.New("个人资料参数不正确")
 )
 
 type User struct {
@@ -88,6 +90,23 @@ type PasswordUpdate struct {
 	SourceIP         string
 }
 
+type UpdateProfileInput struct {
+	Session     Session
+	DisplayName string
+	Email       string
+	RequestID   string
+	SourceIP    string
+}
+
+type ProfileUpdate struct {
+	OrganizationID string
+	UserID         string
+	DisplayName    string
+	Email          string
+	RequestID      string
+	SourceIP       string
+}
+
 type SessionActionInput struct {
 	OrganizationID   string
 	UserID           string
@@ -118,6 +137,7 @@ type Repository interface {
 	RecordAudit(ctx context.Context, event AuditEvent) error
 	FindUserPassword(ctx context.Context, organizationID, userID string) (string, error)
 	UpdateOwnPassword(ctx context.Context, input PasswordUpdate) (int64, error)
+	UpdateOwnProfile(ctx context.Context, input ProfileUpdate) (User, error)
 	ListUserSessions(ctx context.Context, userID, currentSessionID string) ([]UserSession, error)
 	RevokeUserSession(ctx context.Context, input SessionActionInput) error
 	RevokeOtherUserSessions(ctx context.Context, input SessionActionInput) (int64, error)

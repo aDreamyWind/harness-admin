@@ -1,18 +1,19 @@
 import {
-  ApartmentOutlined,
   AppstoreOutlined,
   AuditOutlined,
   DashboardOutlined,
   LogoutOutlined,
   LockOutlined,
+  MenuFoldOutlined,
   MenuOutlined,
+  MenuUnfoldOutlined,
   NodeIndexOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons'
-import { Avatar, Button, Card, Drawer, Dropdown, Layout, Menu, Spin, Tag, message, type MenuProps } from 'antd'
+import { Avatar, Button, Card, Drawer, Dropdown, Layout, Menu, Spin, message, type MenuProps } from 'antd'
 import { useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
@@ -37,37 +38,27 @@ const menuRoutes: Record<string, string> = {
   settings: '/settings/organization',
 }
 
-function Navigation({ items, selectedKey, onNavigate }: { items: MenuProps['items']; selectedKey: string; onNavigate: (path: string) => void }) {
+function Navigation({ items, selectedKey, onNavigate, collapsed = false }: {
+  items: MenuProps['items']
+  selectedKey: string
+  onNavigate: (path: string) => void
+  collapsed?: boolean
+}) {
   return (
-    <>
-      <div className="brand">
-        <div className="brand-mark" aria-hidden="true">
-          HA
-        </div>
-        <div>
-          <strong>Harness Admin</strong>
-          <span>Agent Control Plane</span>
-        </div>
-      </div>
-      <Menu
-        theme="dark"
-        mode="inline"
-        selectedKeys={[selectedKey]}
-        defaultOpenKeys={['identity']}
-        items={items}
-        onClick={({ key }) => {
-          const path = menuRoutes[key]
-          if (path) onNavigate(path)
-        }}
-      />
-      <div className="sider-footer">
-        <span className="environment-dot" />
-        <div>
-          <strong>本地环境</strong>
-          <span>Foundation · 0.1</span>
-        </div>
-      </div>
-    </>
+    <Menu
+      key={collapsed ? 'collapsed' : 'expanded'}
+      theme="dark"
+      mode="inline"
+      inlineCollapsed={collapsed}
+      triggerSubMenuAction={collapsed ? 'click' : 'hover'}
+      selectedKeys={[selectedKey]}
+      defaultOpenKeys={collapsed ? [] : ['identity']}
+      items={items}
+      onClick={({ key }) => {
+        const path = menuRoutes[key]
+        if (path) onNavigate(path)
+      }}
+    />
   )
 }
 
@@ -76,6 +67,7 @@ export function App() {
   const navigate = useNavigate()
   const location = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [siderCollapsed, setSiderCollapsed] = useState(() => window.localStorage.getItem('harness-sider-collapsed') === '1')
   const [loggingOut, setLoggingOut] = useState(false)
   const [messageApi, messageContext] = message.useMessage()
   const selectedMenuKey = location.pathname.startsWith('/identity/users')
@@ -93,6 +85,14 @@ export function App() {
   function navigateFromMenu(path: string) {
     navigate(path)
     setMobileOpen(false)
+  }
+
+  function toggleSider() {
+    setSiderCollapsed((current) => {
+      const next = !current
+      window.localStorage.setItem('harness-sider-collapsed', next ? '1' : '0')
+      return next
+    })
   }
 
   if (isLoading) {
@@ -122,7 +122,7 @@ export function App() {
       ),
     },
     { type: 'divider' },
-    { key: 'security', icon: <LockOutlined />, label: '密码与会话' },
+    { key: 'security', icon: <LockOutlined />, label: '账号与安全' },
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
   ]
 
@@ -146,9 +146,25 @@ export function App() {
     <>
       {messageContext}
       <Layout className="app-layout">
-        <Sider width={248} className="desktop-sider">
-          <Navigation items={menuItems} selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} />
-        </Sider>
+        <Header className="topbar">
+          <button className="brand-home" type="button" onClick={() => navigate('/')} aria-label="返回首页">
+            <span className="brand-mark" aria-hidden="true">HA</span>
+            <strong>Harness Admin</strong>
+          </button>
+          <Button
+            className="mobile-menu"
+            type="text"
+            icon={<MenuOutlined />}
+            onClick={() => setMobileOpen(true)}
+            aria-label="打开导航"
+          />
+          <Dropdown menu={{ items: accountItems, onClick: handleAccountAction }} trigger={['click']}>
+            <Button className="account-trigger" type="text" loading={loggingOut}>
+              <Avatar size={28} icon={<UserOutlined />} />
+              <span>{user.displayName}</span>
+            </Button>
+          </Dropdown>
+        </Header>
         <Drawer
           placement="left"
           size={280}
@@ -158,27 +174,20 @@ export function App() {
         >
           <Navigation items={menuItems} selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} />
         </Drawer>
-        <Layout>
-          <Header className="topbar">
+        <Layout className={`app-body${siderCollapsed ? ' sider-collapsed' : ''}`}>
+          <Sider width={248} collapsedWidth={72} collapsed={siderCollapsed} trigger={null} className="desktop-sider">
+            <Navigation items={menuItems} selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} collapsed={siderCollapsed} />
             <Button
-              className="mobile-menu"
+              className="sider-collapse"
               type="text"
-              icon={<MenuOutlined />}
-              onClick={() => setMobileOpen(true)}
-              aria-label="打开导航"
-            />
-            <div className="breadcrumb-label">
-              <ApartmentOutlined />
-              企业 Agent 基础设施
-            </div>
-            <Tag className="phase-tag">Phase 0 · 建设中</Tag>
-            <Dropdown menu={{ items: accountItems, onClick: handleAccountAction }} trigger={['click']}>
-              <Button className="account-trigger" type="text" loading={loggingOut}>
-                <Avatar size={28} icon={<UserOutlined />} />
-                <span>{user.displayName}</span>
-              </Button>
-            </Dropdown>
-          </Header>
+              icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              onClick={toggleSider}
+              aria-label={siderCollapsed ? '展开侧栏' : '收起侧栏'}
+              title={siderCollapsed ? '展开侧栏' : '收起侧栏'}
+            >
+              {siderCollapsed ? null : '收起侧栏'}
+            </Button>
+          </Sider>
           <Content className="main-content">
             <Routes>
               <Route path="/" element={<DashboardPage />} />
@@ -205,7 +214,7 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
   ].filter(Boolean) as NonNullable<MenuProps['items']>
 
   return [
-    { key: 'overview', icon: <DashboardOutlined />, label: '控制面总览' },
+    { key: 'overview', icon: <DashboardOutlined />, label: '首页' },
     identityItems.length ? {
       key: 'identity', icon: <TeamOutlined />, label: '身份与组织', children: identityItems,
     } : null,
@@ -229,7 +238,7 @@ function PermissionPage({ permission, children }: { permission: string; children
           <div>
             <h1>没有访问权限</h1>
             <p>当前账号没有查看这个页面的权限。若工作需要，请联系管理员调整角色。</p>
-            <Button type="primary" onClick={() => navigate('/')}>返回控制面总览</Button>
+            <Button type="primary" onClick={() => navigate('/')}>返回首页</Button>
           </div>
         </div>
       </Card>

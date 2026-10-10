@@ -10,6 +10,10 @@ type repositoryStub struct {
 	updated NameUpdate
 }
 
+func (*repositoryStub) ListActiveOrganizations(context.Context) ([]Organization, error) {
+	return []Organization{{ID: "org-1", Code: "default", Name: "默认企业", Status: "active"}}, nil
+}
+
 func (*repositoryStub) FindOrganization(_ context.Context, organizationID string) (Organization, error) {
 	return Organization{ID: organizationID, Code: "default", Name: "默认企业"}, nil
 }
@@ -23,6 +27,17 @@ func TestGetRejectsMissingOrganization(t *testing.T) {
 	service := NewService(&repositoryStub{})
 	if _, err := service.Get(context.Background(), ""); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("错误 = %v，期望 ErrInvalidInput", err)
+	}
+}
+
+func TestListActiveReturnsLoginOrganizations(t *testing.T) {
+	service := NewService(&repositoryStub{})
+	organizations, err := service.ListActive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(organizations) != 1 || organizations[0].Code != "default" {
+		t.Fatalf("可登录企业列表不正确: %#v", organizations)
 	}
 }
 

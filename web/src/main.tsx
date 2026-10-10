@@ -2,11 +2,13 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ConfigProvider } from 'antd'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter, useLocation } from 'react-router-dom'
 import zhCN from 'antd/locale/zh_CN'
 
 import { App } from './App'
+import { PlatformApp } from './PlatformApp'
 import { AuthProvider } from './auth/AuthContext'
+import { PlatformAuthProvider } from './auth/PlatformAuthContext'
 import './styles.css'
 
 const queryClient = new QueryClient({
@@ -48,11 +50,17 @@ createRoot(document.getElementById('root')!).render(
     >
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
-          <AuthProvider>
-            <App />
-          </AuthProvider>
+          <ApplicationRoot />
         </BrowserRouter>
       </QueryClientProvider>
     </ConfigProvider>
   </StrictMode>,
 )
+
+function ApplicationRoot() {
+  const location = useLocation()
+  if (location.pathname.startsWith('/platform')) {
+    return <PlatformAuthProvider><PlatformApp /></PlatformAuthProvider>
+  }
+  return <AuthProvider><App /></AuthProvider>
+}

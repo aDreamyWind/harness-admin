@@ -46,7 +46,7 @@ func main() {
 		OrganizationCode: env("BOOTSTRAP_ORG_CODE", "default"),
 		OrganizationName: env("BOOTSTRAP_ORG_NAME", "默认企业"),
 		Username:         env("BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		DisplayName:      env("BOOTSTRAP_ADMIN_DISPLAY_NAME", "系统管理员"),
+		DisplayName:      env("BOOTSTRAP_ADMIN_DISPLAY_NAME", "企业管理员"),
 		Email:            strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_EMAIL")),
 		PasswordHash:     passwordHash,
 	})

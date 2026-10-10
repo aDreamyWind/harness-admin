@@ -1,4 +1,4 @@
-import { EditOutlined, PlusOutlined } from '@ant-design/icons'
+import { DownOutlined, EditOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -9,7 +9,6 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
-  Select,
   Space,
   Table,
   Tag,
@@ -29,6 +28,8 @@ import {
   type DepartmentInput,
 } from '../api/departments'
 import { useAuth } from '../auth/AuthContext'
+import { DepartmentSelect } from '../components/DepartmentSelect'
+import { StatusIndicator } from '../components/StatusIndicator'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -47,10 +48,6 @@ export function DepartmentsPage() {
 
   const departmentsQuery = useQuery({ queryKey: ['departments'], queryFn: listDepartments })
   const treeData = useMemo(() => buildDepartmentTree(departmentsQuery.data ?? []), [departmentsQuery.data])
-  const parentOptions = useMemo(
-    () => buildParentOptions(departmentsQuery.data ?? [], editingDepartment?.id),
-    [departmentsQuery.data, editingDepartment?.id],
-  )
 
   const saveMutation = useMutation({
     mutationFn: (values: DepartmentInput) => editingDepartment
@@ -103,22 +100,23 @@ export function DepartmentsPage() {
       title: '部门',
       dataIndex: 'name',
       key: 'name',
+      className: 'department-name-column',
       width: 280,
       render: (_, department) => (
         <div className="department-identity-cell">
           <strong>{department.name}</strong>
-          <small>{department.code}</small>
         </div>
       ),
     },
+    { title: '部门编码', dataIndex: 'code', key: 'code', width: 180 },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
       width: 100,
       render: (status: Department['status']) => status === 'active'
-        ? <Tag color="success">启用</Tag>
-        : <Tag>停用</Tag>,
+        ? <StatusIndicator label="启用" tone="success" />
+        : <StatusIndicator label="停用" tone="muted" />,
     },
     { title: '直属用户', dataIndex: 'userCount', key: 'userCount', width: 100, align: 'right' },
     { title: '排序', dataIndex: 'sortOrder', key: 'sortOrder', width: 90, align: 'right' },
@@ -127,12 +125,12 @@ export function DepartmentsPage() {
   if (canWrite) columns.push({
       title: '操作',
       key: 'action',
-      fixed: 'right',
       width: 205,
+      fixed: 'right',
       render: (_, department) => {
         const nextStatus = department.status === 'active' ? 'disabled' : 'active'
         return (
-          <Space size={0}>
+          <Space size={0} onClick={(event) => event.stopPropagation()}>
             <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(department)}>编辑</Button>
             <Button type="link" size="small" disabled={department.status !== 'active'} onClick={() => openCreate(department.id)}>新增下级</Button>
             <Popconfirm
@@ -178,13 +176,31 @@ export function DepartmentsPage() {
           />
         ) : (
           <Table<DepartmentNode>
+            className="department-tree"
             key={(departmentsQuery.data ?? []).map((department) => department.id).join(',')}
             rowKey="id"
             columns={columns}
             dataSource={treeData}
             loading={departmentsQuery.isLoading}
             pagination={false}
-            expandable={{ defaultExpandAllRows: true, indentSize: 24 }}
+            expandable={{
+              defaultExpandAllRows: true,
+              expandRowByClick: true,
+              indentSize: 22,
+              expandIcon: ({ expanded, onExpand, record }) => record.children?.length ? (
+                <button
+                  className="department-expand-trigger"
+                  type="button"
+                  aria-label={expanded ? `收起${record.name}` : `展开${record.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onExpand(record, event)
+                  }}
+                >
+                  {expanded ? <DownOutlined /> : <RightOutlined />}
+                </button>
+              ) : <span className="department-expand-placeholder" aria-hidden="true" />,
+            }}
             scroll={{ x: 820 }}
             locale={{ emptyText: '当前企业还没有部门，可以先建立一级部门' }}
           />
@@ -220,7 +236,11 @@ export function DepartmentsPage() {
             <Input disabled={Boolean(editingDepartment)} placeholder="例如：engineering" />
           </Form.Item>
           <Form.Item label="上级部门" name="parentId">
-            <Select allowClear placeholder="不选择则为一级部门" options={parentOptions} showSearch optionFilterProp="label" />
+            <DepartmentSelect
+              departments={departmentsQuery.data ?? []}
+              excludeDepartmentId={editingDepartment?.id}
+              placeholder="不选择则为一级部门"
+            />
           </Form.Item>
           <Form.Item label="排序值" name="sortOrder" extra="同级部门按数值从小到大排列。" rules={[{ required: true, message: '请输入排序值' }]}>
             <InputNumber min={0} max={999999} precision={0} className="sort-order-input" />
@@ -244,20 +264,4 @@ function buildDepartmentTree(departments: Department[]): DepartmentNode[] {
     }
   })
   return roots
-}
-
-function buildParentOptions(departments: Department[], editingID?: string) {
-  const children = new Map<string, string[]>()
-  departments.forEach((department) => {
-    if (department.parentId) children.set(department.parentId, [...(children.get(department.parentId) ?? []), department.id])
-  })
-  const excluded = new Set<string>()
-  const visit = (id: string) => {
-    excluded.add(id)
-    ;(children.get(id) ?? []).forEach(visit)
-  }
-  if (editingID) visit(editingID)
-  return departments
-    .filter((department) => department.status === 'active' && !excluded.has(department.id))
-    .map((department) => ({ value: department.id, label: `${department.name} · ${department.code}` }))
 }

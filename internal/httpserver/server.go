@@ -17,20 +17,22 @@ type HealthChecker interface {
 }
 
 type Dependencies struct {
-	AppName           string
-	Environment       string
-	Logger            *slog.Logger
-	Database          HealthChecker
-	Cache             HealthChecker
-	Auth              AuthService
-	Access            AuthorizationService
-	UserAdmin         UserAdminService
-	RoleAdmin         RoleAdminService
-	DepartmentAdmin   DepartmentAdminService
-	OrganizationAdmin OrganizationAdminService
-	AuditEvents       AuditEventService
-	AuditRecorder     AuditRecorder
-	SessionCookie     string
+	AppName               string
+	Environment           string
+	Logger                *slog.Logger
+	Database              HealthChecker
+	Cache                 HealthChecker
+	Auth                  AuthService
+	Access                AuthorizationService
+	UserAdmin             UserAdminService
+	RoleAdmin             RoleAdminService
+	DepartmentAdmin       DepartmentAdminService
+	OrganizationAdmin     OrganizationAdminService
+	AuditEvents           AuditEventService
+	AuditRecorder         AuditRecorder
+	PlatformAdmin         PlatformAdminService
+	SessionCookie         string
+	PlatformSessionCookie string
 }
 
 type bootstrapResponse struct {
@@ -63,6 +65,9 @@ func New(deps Dependencies) http.Handler {
 	router.GET("/api/v1/system/bootstrap", bootstrapHandler(deps))
 	if deps.Auth != nil {
 		registerAuthRoutes(router, deps)
+	}
+	if deps.PlatformAdmin != nil {
+		registerPlatformRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.UserAdmin != nil {
 		registerUserRoutes(router, deps)

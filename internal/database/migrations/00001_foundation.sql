@@ -11,11 +11,86 @@ CREATE TABLE organizations (
 
 COMMENT ON TABLE organizations IS '企业组织';
 COMMENT ON COLUMN organizations.id IS '企业唯一标识';
-COMMENT ON COLUMN organizations.code IS '企业代码，用于登录和系统内识别';
+COMMENT ON COLUMN organizations.code IS '企业编码，用于登录和系统内识别';
 COMMENT ON COLUMN organizations.name IS '企业名称';
 COMMENT ON COLUMN organizations.status IS '企业状态：active 启用，disabled 停用';
 COMMENT ON COLUMN organizations.created_at IS '创建时间';
 COMMENT ON COLUMN organizations.updated_at IS '最后更新时间';
+
+CREATE TABLE platform_admins (
+    id UUID PRIMARY KEY,
+    username VARCHAR(80) NOT NULL,
+    display_name VARCHAR(120) NOT NULL,
+    password_hash TEXT NOT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'active',
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT platform_admins_status_check CHECK (status IN ('active', 'disabled'))
+);
+
+CREATE UNIQUE INDEX platform_admins_username_ci_key ON platform_admins (LOWER(username));
+
+COMMENT ON TABLE platform_admins IS '平台管理员账号，与企业用户身份隔离';
+COMMENT ON COLUMN platform_admins.id IS '平台管理员唯一标识';
+COMMENT ON COLUMN platform_admins.username IS '平台管理员登录用户名，不区分大小写';
+COMMENT ON COLUMN platform_admins.display_name IS '平台管理员显示名称';
+COMMENT ON COLUMN platform_admins.password_hash IS 'Argon2id 密码哈希，不保存明文密码';
+COMMENT ON COLUMN platform_admins.status IS '账号状态：active 正常，disabled 停用';
+COMMENT ON COLUMN platform_admins.last_login_at IS '最后一次成功登录时间';
+COMMENT ON COLUMN platform_admins.created_at IS '创建时间';
+COMMENT ON COLUMN platform_admins.updated_at IS '最后更新时间';
+
+CREATE TABLE platform_sessions (
+    id UUID PRIMARY KEY,
+    platform_admin_id UUID NOT NULL REFERENCES platform_admins(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    csrf_token_hash TEXT NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT '',
+    source_ip INET,
+    expires_at TIMESTAMPTZ NOT NULL,
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE platform_sessions IS '平台管理员登录会话';
+COMMENT ON COLUMN platform_sessions.id IS '平台会话唯一标识';
+COMMENT ON COLUMN platform_sessions.platform_admin_id IS '会话所属平台管理员标识';
+COMMENT ON COLUMN platform_sessions.token_hash IS '平台会话令牌的 SHA-256 哈希';
+COMMENT ON COLUMN platform_sessions.csrf_token_hash IS '平台会话 CSRF 令牌的 SHA-256 哈希';
+COMMENT ON COLUMN platform_sessions.user_agent IS '登录客户端的 User-Agent';
+COMMENT ON COLUMN platform_sessions.source_ip IS '登录来源 IP 地址';
+COMMENT ON COLUMN platform_sessions.expires_at IS '会话过期时间';
+COMMENT ON COLUMN platform_sessions.last_seen_at IS '会话最后访问时间';
+COMMENT ON COLUMN platform_sessions.revoked_at IS '会话吊销时间，未吊销时为空';
+COMMENT ON COLUMN platform_sessions.created_at IS '创建时间';
+
+CREATE TABLE platform_audit_events (
+    id BIGSERIAL PRIMARY KEY,
+    platform_admin_id UUID REFERENCES platform_admins(id),
+    request_id VARCHAR(80) NOT NULL DEFAULT '',
+    action VARCHAR(120) NOT NULL,
+    resource_type VARCHAR(80) NOT NULL,
+    resource_id VARCHAR(120) NOT NULL DEFAULT '',
+    result VARCHAR(24) NOT NULL,
+    source_ip INET,
+    detail JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT platform_audit_events_result_check CHECK (result IN ('success', 'denied', 'failed'))
+);
+
+COMMENT ON TABLE platform_audit_events IS '平台级审计事件';
+COMMENT ON COLUMN platform_audit_events.id IS '平台审计事件自增标识';
+COMMENT ON COLUMN platform_audit_events.platform_admin_id IS '操作平台管理员标识，可为空';
+COMMENT ON COLUMN platform_audit_events.request_id IS '关联 HTTP 请求标识';
+COMMENT ON COLUMN platform_audit_events.action IS '平台审计动作代码';
+COMMENT ON COLUMN platform_audit_events.resource_type IS '被操作资源类型';
+COMMENT ON COLUMN platform_audit_events.resource_id IS '被操作资源标识';
+COMMENT ON COLUMN platform_audit_events.result IS '操作结果：success 成功，denied 拒绝，failed 失败';
+COMMENT ON COLUMN platform_audit_events.source_ip IS '操作来源 IP 地址';
+COMMENT ON COLUMN platform_audit_events.detail IS '事件扩展详情，JSON 格式';
+COMMENT ON COLUMN platform_audit_events.created_at IS '事件发生时间';
 
 CREATE TABLE departments (
     id UUID PRIMARY KEY,
@@ -194,6 +269,10 @@ CREATE INDEX sessions_user_idx ON sessions (user_id);
 CREATE INDEX sessions_expires_idx ON sessions (expires_at) WHERE revoked_at IS NULL;
 CREATE INDEX audit_events_organization_created_idx ON audit_events (organization_id, created_at DESC);
 CREATE INDEX audit_events_actor_created_idx ON audit_events (actor_id, created_at DESC);
+CREATE INDEX platform_sessions_admin_idx ON platform_sessions (platform_admin_id);
+CREATE INDEX platform_sessions_expires_idx ON platform_sessions (expires_at) WHERE revoked_at IS NULL;
+CREATE INDEX platform_audit_events_created_idx ON platform_audit_events (created_at DESC);
+CREATE INDEX platform_audit_events_actor_created_idx ON platform_audit_events (platform_admin_id, created_at DESC);
 
 -- +goose Down
 DROP TABLE IF EXISTS audit_events;
@@ -204,4 +283,7 @@ DROP TABLE IF EXISTS permissions;
 DROP TABLE IF EXISTS roles;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS departments;
+DROP TABLE IF EXISTS platform_audit_events;
+DROP TABLE IF EXISTS platform_sessions;
+DROP TABLE IF EXISTS platform_admins;
 DROP TABLE IF EXISTS organizations;

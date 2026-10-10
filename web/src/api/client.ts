@@ -22,6 +22,7 @@ export class ApiError extends Error {
 }
 
 const csrfCookieName = 'harness_admin_csrf'
+const platformCSRFCookieName = 'harness_platform_csrf'
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
@@ -53,8 +54,8 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body.data
 }
 
-export function getCSRFToken(): string {
-  const prefix = `${encodeURIComponent(csrfCookieName)}=`
+function getCookie(name: string): string {
+  const prefix = `${encodeURIComponent(name)}=`
   const item = document.cookie
     .split(';')
     .map((part) => part.trim())
@@ -63,9 +64,17 @@ export function getCSRFToken(): string {
 }
 
 export function csrfHeaders(): Record<string, string> {
-  const token = getCSRFToken()
+  const token = getCookie(csrfCookieName)
   if (!token) {
     throw new ApiError('登录安全凭据已失效，请刷新页面后重试', 403, 'missing_csrf')
+  }
+  return { 'X-CSRF-Token': token }
+}
+
+export function platformCSRFHeaders(): Record<string, string> {
+  const token = getCookie(platformCSRFCookieName)
+  if (!token) {
+    throw new ApiError('平台登录安全凭据已失效，请刷新页面后重试', 403, 'missing_csrf')
   }
   return { 'X-CSRF-Token': token }
 }

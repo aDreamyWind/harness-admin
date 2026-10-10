@@ -1,11 +1,117 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.7.0
+  version: 0.9.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
 paths:
+  /platform/auth/login:
+    post:
+      summary: 平台管理员登录
+      operationId: platformLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlatformLoginRequest' }
+      responses:
+        '200':
+          description: 平台管理员登录成功，写入独立平台会话与 CSRF Cookie。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformLoginEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: 登录失败次数过多。 }
+  /platform/auth/me:
+    get:
+      summary: 获取当前平台管理员
+      operationId: getCurrentPlatformAdmin
+      security:
+        - platformSessionCookie: []
+      responses:
+        '200':
+          description: 当前平台管理员。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformAdminEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /platform/auth/logout:
+    post:
+      summary: 退出平台管理
+      operationId: platformLogout
+      security:
+        - platformSessionCookie: []
+          csrfHeader: []
+      responses:
+        '200': { description: 平台会话已吊销。 }
+  /platform/organizations:
+    get:
+      summary: 查询全部企业
+      operationId: listPlatformOrganizations
+      security:
+        - platformSessionCookie: []
+      responses:
+        '200':
+          description: 企业列表。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformOrganizationListEnvelope' }
+    post:
+      summary: 创建企业及首位企业管理员
+      operationId: createPlatformOrganization
+      security:
+        - platformSessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePlatformOrganizationRequest' }
+      responses:
+        '201':
+          description: 企业、企业管理员角色和首位管理员已在同一事务中创建。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformOrganizationEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: 企业编码已存在。 }
+  /platform/organizations/{organizationId}/status:
+    put:
+      summary: 修改企业状态
+      operationId: updatePlatformOrganizationStatus
+      security:
+        - platformSessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: organizationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePlatformOrganizationStatusRequest' }
+      responses:
+        '200':
+          description: 企业状态已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformOrganizationEnvelope' }
+        '404': { description: 企业不存在。 }
+  /auth/organizations:
+    get:
+      summary: 查询可登录企业
+      description: 登录页公开读取启用中的企业名称与企业编码。
+      operationId: listLoginOrganizations
+      responses:
+        '200':
+          description: 可登录企业列表，按创建时间排序。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginOrganizationListEnvelope'
   /auth/login:
     post:
       summary: 登录管理端
@@ -83,6 +189,31 @@ paths:
           description: 密码参数不正确或当前密码错误。
         '409':
           description: 新密码与当前密码相同。
+  /auth/profile:
+    put:
+      summary: 修改当前账号资料
+      description: 修改当前登录用户的显示名称和邮箱，登录用户名不可修改。
+      operationId: updateCurrentUserProfile
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: 个人资料已更新。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: 邮箱已被当前企业内其他用户使用。
   /auth/sessions:
     get:
       summary: 查询当前账号的活跃会话
@@ -380,7 +511,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       summary: 修改当前企业资料
-      description: 仅修改企业展示名称；企业代码作为登录和数据隔离标识不可修改。需要 `iam.organization.write` 权限。
+      description: 仅修改企业展示名称；企业编码作为登录和数据隔离标识不可修改。需要 `iam.organization.write` 权限。
       operationId: updateOrganization
       security:
         - sessionCookie: []
@@ -626,6 +757,10 @@ components:
       type: apiKey
       in: cookie
       name: harness_admin_session
+    platformSessionCookie:
+      type: apiKey
+      in: cookie
+      name: harness_platform_session
     csrfHeader:
       type: apiKey
       in: header
@@ -647,6 +782,46 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
+    PlatformLoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, maxLength: 80 }
+        password: { type: string, format: password, maxLength: 1024 }
+    PlatformAdmin:
+      type: object
+      required: [id, username, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+    PlatformOrganization:
+      type: object
+      required: [id, code, name, status, adminUsername, userCount, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, disabled] }
+        adminUsername: { type: string }
+        userCount: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreatePlatformOrganizationRequest:
+      type: object
+      required: [code, name, adminUsername, adminDisplayName, adminPassword]
+      properties:
+        code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,63}$' }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        adminUsername: { type: string, minLength: 1, maxLength: 80 }
+        adminDisplayName: { type: string, minLength: 1, maxLength: 120 }
+        adminEmail: { type: string, description: 可为空字符串。 }
+        adminPassword: { type: string, format: password, minLength: 3, maxLength: 1024 }
+    UpdatePlatformOrganizationStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, disabled] }
     LoginRequest:
       type: object
       required: [organizationCode, username, password]
@@ -654,6 +829,12 @@ components:
         organizationCode: { type: string }
         username: { type: string }
         password: { type: string, format: password }
+    LoginOrganization:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string }
+        name: { type: string }
     CreateUserRequest:
       type: object
       required: [username, displayName, password]
@@ -682,6 +863,14 @@ components:
       properties:
         currentPassword: { type: string, format: password }
         newPassword: { type: string, format: password, minLength: 3, maxLength: 1024 }
+    UpdateProfileRequest:
+      type: object
+      required: [displayName, email]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        email:
+          type: string
+          description: 电子邮箱；空字符串表示清除邮箱。
     ResetPasswordRequest:
       type: object
       required: [password]
@@ -877,6 +1066,41 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/LoginResult' }
+    PlatformLoginEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [admin, csrfToken, expiresAt]
+          properties:
+            admin: { $ref: '#/components/schemas/PlatformAdmin' }
+            csrfToken: { type: string }
+            expiresAt: { type: string, format: date-time }
+    PlatformAdminEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/PlatformAdmin' }
+    PlatformOrganizationEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/PlatformOrganization' }
+    PlatformOrganizationListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformOrganization' }
+    LoginOrganizationListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/LoginOrganization' }
     PasswordChangeEnvelope:
       type: object
       required: [data]

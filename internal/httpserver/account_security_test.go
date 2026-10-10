@@ -19,6 +19,7 @@ type accountAuthStub struct {
 	session             identity.Session
 	changePasswordInput identity.ChangePasswordInput
 	sessions            []identity.UserSession
+	profileInput        identity.UpdateProfileInput
 }
 
 func (*accountAuthStub) Login(context.Context, identity.LoginInput) (identity.LoginResult, error) {
@@ -49,6 +50,13 @@ func (*accountAuthStub) RevokeManagedSession(context.Context, identity.Session, 
 
 func (*accountAuthStub) RevokeOtherSessions(context.Context, identity.Session, string, string) (int64, error) {
 	return 0, nil
+}
+
+func (s *accountAuthStub) UpdateProfile(_ context.Context, input identity.UpdateProfileInput) (identity.User, error) {
+	s.profileInput = input
+	input.Session.User.DisplayName = input.DisplayName
+	input.Session.User.Email = input.Email
+	return input.Session.User, nil
 }
 
 type accountUserAdminStub struct {
@@ -132,6 +140,27 @@ func TestMeHandlerReturnsCurrentPermissions(t *testing.T) {
 	}
 	if len(body.Data.PermissionCodes) != 2 || body.Data.PermissionCodes[1] != "iam.user.read" {
 		t.Fatalf("当前用户权限响应不正确: %s", response.Body.String())
+	}
+}
+
+func TestUpdateProfileHandlerUsesCurrentUser(t *testing.T) {
+	auth := &accountAuthStub{session: accountTestSession()}
+	router := newAccountSecurityTestRouter(auth, nil)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/auth/profile",
+		strings.NewReader(`{"displayName":"新名称","email":"user@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.Header.Set("X-Request-ID", "request-profile")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 %d；响应 = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if auth.profileInput.Session.User.ID != "user-1" || auth.profileInput.DisplayName != "新名称" ||
+		auth.profileInput.Email != "user@example.com" || auth.profileInput.RequestID != "request-profile" {
+		t.Fatalf("修改个人资料参数不完整: %#v", auth.profileInput)
 	}
 }
 

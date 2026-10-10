@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -199,6 +200,37 @@ func (s *Service) ChangePassword(ctx context.Context, input ChangePasswordInput)
 		return 0, fmt.Errorf("修改密码失败: %w", err)
 	}
 	return revoked, nil
+}
+
+func (s *Service) UpdateProfile(ctx context.Context, input UpdateProfileInput) (User, error) {
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	if input.Session.User.ID == "" || input.Session.User.OrganizationID == "" ||
+		input.DisplayName == "" || len([]rune(input.DisplayName)) > 120 {
+		return User{}, ErrInvalidProfile
+	}
+	if input.Email != "" {
+		address, err := mail.ParseAddress(input.Email)
+		if err != nil || address.Address != input.Email {
+			return User{}, ErrInvalidProfile
+		}
+	}
+	user, err := s.repository.UpdateOwnProfile(ctx, ProfileUpdate{
+		OrganizationID: input.Session.User.OrganizationID,
+		UserID:         input.Session.User.ID,
+		DisplayName:    input.DisplayName,
+		Email:          input.Email,
+		RequestID:      input.RequestID,
+		SourceIP:       input.SourceIP,
+	})
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrEmailConflict) {
+			return User{}, err
+		}
+		return User{}, fmt.Errorf("修改个人资料失败: %w", err)
+	}
+	user.PasswordHash = ""
+	return user, nil
 }
 
 func (s *Service) ListSessions(ctx context.Context, session Session) ([]UserSession, error) {

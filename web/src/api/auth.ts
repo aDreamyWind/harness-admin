@@ -19,6 +19,11 @@ export interface LoginInput {
   password: string
 }
 
+export interface LoginOrganization {
+  code: string
+  name: string
+}
+
 export interface UserSession {
   id: string
   userAgent: string
@@ -34,6 +39,11 @@ export interface ChangePasswordInput {
   newPassword: string
 }
 
+export interface UpdateProfileInput {
+  displayName: string
+  email: string
+}
+
 interface LoginResult {
   user: AuthUser
   csrfToken: string
@@ -47,6 +57,10 @@ export async function login(input: LoginInput): Promise<AuthUser> {
     body: JSON.stringify(input),
   })
   return result.user
+}
+
+export function listLoginOrganizations(): Promise<LoginOrganization[]> {
+  return request<LoginOrganization[]>('/api/v1/auth/organizations')
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
@@ -69,6 +83,14 @@ export async function logout(): Promise<void> {
 
 export function changePassword(input: ChangePasswordInput): Promise<{ changed: boolean; revokedSessions: number }> {
   return request('/api/v1/auth/password', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateProfile(input: UpdateProfileInput): Promise<AuthUser> {
+  return request<AuthUser>('/api/v1/auth/profile', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
     body: JSON.stringify(input),

@@ -10,6 +10,28 @@ import (
 	"harness-admin/internal/organizationadmin"
 )
 
+func (r *IdentityRepository) ListActiveOrganizations(ctx context.Context) ([]organizationadmin.Organization, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, code, name, status, created_at, updated_at
+		FROM organizations
+		WHERE status = 'active'
+		ORDER BY created_at, name, id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	organizations := make([]organizationadmin.Organization, 0)
+	for rows.Next() {
+		organization, err := scanOrganization(rows)
+		if err != nil {
+			return nil, err
+		}
+		organizations = append(organizations, organization)
+	}
+	return organizations, rows.Err()
+}
+
 func (r *IdentityRepository) FindOrganization(ctx context.Context, organizationID string) (organizationadmin.Organization, error) {
 	return scanOrganization(r.pool.QueryRow(ctx, `
 		SELECT id, code, name, status, created_at, updated_at

@@ -8,17 +8,18 @@ import (
 )
 
 type Config struct {
-	AppName         string
-	Environment     string
-	HTTPAddress     string
-	DatabaseURL     string
-	RedisAddress    string
-	RedisPassword   string
-	RedisDB         int
-	AutoMigrate     bool
-	ShutdownTimeout time.Duration
-	SessionTTL      time.Duration
-	SessionCookie   string
+	AppName               string
+	Environment           string
+	HTTPAddress           string
+	DatabaseURL           string
+	RedisAddress          string
+	RedisPassword         string
+	RedisDB               int
+	AutoMigrate           bool
+	ShutdownTimeout       time.Duration
+	SessionTTL            time.Duration
+	SessionCookie         string
+	PlatformSessionCookie string
 }
 
 func Load() (Config, error) {
@@ -42,17 +43,18 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		AppName:         value("APP_NAME", "Harness Admin"),
-		Environment:     value("APP_ENV", "development"),
-		HTTPAddress:     value("HTTP_ADDR", ":8080"),
-		DatabaseURL:     value("DATABASE_URL", "postgres://harness:harness@localhost:55432/harness_admin?sslmode=disable"),
-		RedisAddress:    value("REDIS_ADDR", "localhost:56379"),
-		RedisPassword:   os.Getenv("REDIS_PASSWORD"),
-		RedisDB:         redisDB,
-		AutoMigrate:     autoMigrate,
-		ShutdownTimeout: shutdownTimeout,
-		SessionTTL:      sessionTTL,
-		SessionCookie:   value("SESSION_COOKIE_NAME", "harness_admin_session"),
+		AppName:               value("APP_NAME", "Harness Admin"),
+		Environment:           value("APP_ENV", "development"),
+		HTTPAddress:           value("HTTP_ADDR", ":8080"),
+		DatabaseURL:           value("DATABASE_URL", "postgres://harness:harness@localhost:55432/harness_admin?sslmode=disable"),
+		RedisAddress:          value("REDIS_ADDR", "localhost:56379"),
+		RedisPassword:         os.Getenv("REDIS_PASSWORD"),
+		RedisDB:               redisDB,
+		AutoMigrate:           autoMigrate,
+		ShutdownTimeout:       shutdownTimeout,
+		SessionTTL:            sessionTTL,
+		SessionCookie:         value("SESSION_COOKIE_NAME", "harness_admin_session"),
+		PlatformSessionCookie: value("PLATFORM_SESSION_COOKIE_NAME", "harness_platform_session"),
 	}
 	if cfg.SessionTTL < 15*time.Minute || cfg.SessionTTL > 30*24*time.Hour {
 		return Config{}, fmt.Errorf("SESSION_TTL 必须在 15 分钟到 30 天之间")

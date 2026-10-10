@@ -10,13 +10,13 @@ import {
   Select,
   Space,
   Table,
-  Tag,
   Typography,
   type TableColumnsType,
 } from 'antd'
 import { useState } from 'react'
 
 import { getAuditEvent, listAuditEvents, type AuditEvent } from '../api/audit'
+import { StatusIndicator } from '../components/StatusIndicator'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -25,6 +25,7 @@ const actionLabels: Record<string, string> = {
   'auth.account.lock': '登录失败锁定账号',
   'auth.logout': '退出登录',
   'auth.password.change': '修改密码',
+  'auth.profile.update': '修改个人资料',
   'auth.session.revoke': '退出指定设备',
   'auth.session.revoke_others': '退出其他设备',
   'authorization.permission.denied': '权限拒绝',
@@ -47,10 +48,10 @@ const actionLabels: Record<string, string> = {
 
 const actionOptions = Object.entries(actionLabels).map(([value, label]) => ({ value, label }))
 
-const resultLabels: Record<AuditEvent['result'], { text: string; color: string }> = {
-  success: { text: '成功', color: 'success' },
-  denied: { text: '已拒绝', color: 'warning' },
-  failed: { text: '失败', color: 'error' },
+const resultLabels: Record<AuditEvent['result'], { text: string; tone: 'success' | 'warning' | 'danger' }> = {
+  success: { text: '成功', tone: 'success' },
+  denied: { text: '已拒绝', tone: 'warning' },
+  failed: { text: '失败', tone: 'danger' },
 }
 
 export function AuditPage() {
@@ -146,7 +147,7 @@ export function AuditPage() {
       dataIndex: 'result',
       key: 'result',
       width: 92,
-      render: (value: AuditEvent['result']) => <Tag color={resultLabels[value].color}>{resultLabels[value].text}</Tag>,
+      render: (value: AuditEvent['result']) => <StatusIndicator label={resultLabels[value].text} tone={resultLabels[value].tone} />,
     },
     {
       title: '来源 IP',
@@ -158,8 +159,8 @@ export function AuditPage() {
     {
       title: '操作',
       key: 'operation',
-      fixed: 'right',
       width: 84,
+      fixed: 'right',
       render: (_, event) => (
         <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => setSelectedID(event.id)}>
           详情
@@ -237,7 +238,6 @@ export function AuditPage() {
             columns={columns}
             dataSource={eventsQuery.data?.items ?? []}
             loading={eventsQuery.isLoading}
-            rowClassName={(event) => `audit-row audit-row-${event.result}`}
             onRow={(event) => ({ onDoubleClick: () => setSelectedID(event.id) })}
             scroll={{ x: 1180 }}
             pagination={{
@@ -255,7 +255,7 @@ export function AuditPage() {
 
       <Drawer
         title="审计事件详情"
-        width={560}
+        size={560}
         open={Boolean(selectedID)}
         loading={detailQuery.isLoading}
         onClose={() => setSelectedID(null)}
@@ -265,7 +265,7 @@ export function AuditPage() {
         ) : detail ? (
           <Space direction="vertical" size={22} className="audit-detail-stack">
             <div className={`audit-detail-result audit-detail-result-${detail.result}`}>
-              <Tag color={resultLabels[detail.result].color}>{resultLabels[detail.result].text}</Tag>
+              <StatusIndicator label={resultLabels[detail.result].text} tone={resultLabels[detail.result].tone} />
               <div>
                 <strong>{actionLabels[detail.action] ?? detail.action}</strong>
                 <small>{detail.action}</small>

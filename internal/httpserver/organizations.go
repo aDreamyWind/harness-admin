@@ -14,6 +14,7 @@ import (
 )
 
 type OrganizationAdminService interface {
+	ListActive(context.Context) ([]organizationadmin.Organization, error)
 	Get(context.Context, string) (organizationadmin.Organization, error)
 	Update(context.Context, organizationadmin.UpdateInput) (organizationadmin.Organization, error)
 }
@@ -32,8 +33,24 @@ type organizationResponse struct {
 }
 
 func registerOrganizationRoutes(router *gin.Engine, deps Dependencies) {
+	router.GET("/api/v1/auth/organizations", listLoginOrganizationsHandler(deps))
 	router.GET("/api/v1/organization", requireSession(deps), requirePermission(deps, "iam.organization.read"), getOrganizationHandler(deps))
 	router.PUT("/api/v1/organization", requireSession(deps), requirePermission(deps, "iam.organization.write"), requireCSRF(deps), updateOrganizationHandler(deps))
+}
+
+func listLoginOrganizationsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		organizations, err := deps.OrganizationAdmin.ListActive(ctx.Request.Context())
+		if err != nil {
+			handleOrganizationAdminError(ctx, deps.Logger, err)
+			return
+		}
+		items := make([]gin.H, 0, len(organizations))
+		for _, organization := range organizations {
+			items = append(items, gin.H{"code": organization.Code, "name": organization.Name})
+		}
+		httpx.OK(ctx, http.StatusOK, items)
+	}
 }
 
 func getOrganizationHandler(deps Dependencies) gin.HandlerFunc {

@@ -1,9 +1,10 @@
-.PHONY: help dev bootstrap-admin seed-test-organization infra-up infra-down test build web-install web-dev web-build
+.PHONY: help dev bootstrap-admin bootstrap-platform-admin seed-test-organization infra-up infra-down test build web-install web-dev web-build
 
 help:
 	@echo "可用命令："
 	@echo "  make dev             启动 Go HTTP 服务"
 	@echo "  make bootstrap-admin 创建初始管理员"
+	@echo "  make bootstrap-platform-admin 创建平台管理员"
 	@echo "  make seed-test-organization 写入测试企业组织树"
 	@echo "  make infra-up        启动 PostgreSQL 和 Redis"
 	@echo "  make infra-down      停止本地基础设施"
@@ -18,6 +19,9 @@ dev:
 
 bootstrap-admin:
 	@set -a; test ! -f .env || . ./.env; set +a; go run ./cmd/bootstrap-admin
+
+bootstrap-platform-admin:
+	@set -a; test ! -f .env || . ./.env; set +a; go run ./cmd/bootstrap-platform-admin
 
 seed-test-organization:
 	@set -a; test ! -f .env || . ./.env; set +a; go run ./cmd/seed-test-organization
@@ -41,4 +45,4 @@ web-dev:
 	cd web && pnpm dev
 
 web-build:
-	cd web && pnpm build
+	cd web && pnpm run build

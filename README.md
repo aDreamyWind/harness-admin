@@ -24,6 +24,7 @@ Harness Admin 是面向企业 Harness 的控制平面。项目从零构建，不
 ```bash
 cp .env.example .env
 make infra-up
+BOOTSTRAP_PLATFORM_ADMIN_PASSWORD='请替换为至少3位的密码' make bootstrap-platform-admin
 BOOTSTRAP_ADMIN_PASSWORD='请替换为至少3位的密码' make bootstrap-admin
 make seed-test-organization
 make dev
@@ -39,6 +40,7 @@ make web-dev
 访问：
 
 - 管理端：http://localhost:5173
+- 平台管理：http://localhost:5173/platform/login
 - 后端：http://localhost:8080
 - 存活检查：http://localhost:8080/healthz
 - 就绪检查：http://localhost:8080/readyz
@@ -55,14 +57,27 @@ go run ./cmd/server
 
 常用命令可以通过 `make help` 查看。
 
+身份上只保留两个产品概念：“平台管理员”管理全部企业，“企业管理员”只管理所属企业。平台管理员使用独立账号、独立登录入口和独立会话；创建企业时，会在同一个数据库事务中同时创建该企业的首位企业管理员。
+
+平台管理接口：
+
+- `POST /api/v1/platform/auth/login`
+- `GET /api/v1/platform/auth/me`
+- `POST /api/v1/platform/auth/logout`
+- `GET /api/v1/platform/organizations`
+- `POST /api/v1/platform/organizations`
+- `PUT /api/v1/platform/organizations/{organizationId}/status`
+
 `make seed-test-organization` 仅允许在 `development` 或 `test` 环境执行，会为指定企业写入一套常见企业组织树，包括集团总部、总经理办公室、人力资源、财务、产品、研发、营销、法务等 17 个部门。该命令可重复执行：已有部门会按代码更新层级、名称、排序和启用状态，不会重复创建。默认使用 `default` 企业和 `admin` 操作人，可通过 `TEST_ORG_CODE`、`TEST_ORG_ACTOR_USERNAME` 配置。
 
 身份接口：
 
+- `GET /api/v1/auth/organizations`
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
 - `POST /api/v1/auth/logout`
 - `PUT /api/v1/auth/password`
+- `PUT /api/v1/auth/profile`
 - `GET /api/v1/auth/sessions`
 - `DELETE /api/v1/auth/sessions/{sessionId}`
 - `POST /api/v1/auth/sessions/revoke-others`
@@ -108,7 +123,7 @@ go run ./cmd/server
 
 登录请求需要提供 `organizationCode`、`username` 和 `password`。登录成功后服务端写入仅限 `/api`、前端不可读取的 HttpOnly 会话 Cookie，同时写入同源前端可读取的 `harness_admin_csrf` Cookie。管理端会在退出及后续写接口中自动把该值放入 `X-CSRF-Token` 请求头；非浏览器客户端也可以使用登录响应中的 `csrfToken`。登录和当前用户响应同时返回由角色汇总得到的 `permissionCodes`，前端据此隐藏无权访问的菜单和管理操作，后端仍会对每次请求执行最终权限校验。
 
-当前账号可在“密码与会话”中修改密码和管理登录设备。自己修改密码会保留当前会话并吊销其他会话；管理员为其他用户重置密码会吊销该用户的全部会话。密码最少 3 位。
+当前账号可在“账号与安全”中修改显示名称、邮箱和密码，并管理登录设备。自己修改密码会保留当前会话并吊销其他会话；管理员为其他用户重置密码会吊销该用户的全部会话。密码最少 3 位。
 
 同一企业账号在 15 分钟内连续登录失败 5 次后会被锁定，并立即吊销该账号的全部现有会话。拥有 `iam.user.write` 权限的管理员可在用户目录中解锁账号；解锁会同时清除 Redis 中的登录失败计数，使用户可以立即重新登录。
 

@@ -34,13 +34,15 @@ import {
   type UpdateUserInput,
 } from '../api/users'
 import { useAuth } from '../auth/AuthContext'
+import { DepartmentSelect } from '../components/DepartmentSelect'
+import { StatusIndicator } from '../components/StatusIndicator'
 
 const { Paragraph, Text, Title } = Typography
 
-const statusLabels: Record<ManagedUser['status'], { text: string; color: string }> = {
-  active: { text: '正常', color: 'success' },
-  locked: { text: '已锁定', color: 'warning' },
-  disabled: { text: '已停用', color: 'default' },
+const statusLabels: Record<ManagedUser['status'], { text: string; tone: 'success' | 'warning' | 'muted' }> = {
+  active: { text: '正常', tone: 'success' },
+  locked: { text: '已锁定', tone: 'warning' },
+  disabled: { text: '已停用', tone: 'muted' },
 }
 
 export function UsersPage() {
@@ -158,16 +160,21 @@ export function UsersPage() {
     {
       title: '用户',
       key: 'user',
-      width: 250,
+      width: 190,
       render: (_, user) => (
         <div className="user-identity-cell">
           <span className="user-table-avatar"><UserOutlined /></span>
           <span>
             <strong>{user.displayName}</strong>
-            <small>@{user.username}</small>
           </span>
         </div>
       ),
+    },
+    {
+      title: '账号',
+      dataIndex: 'username',
+      key: 'username',
+      width: 140,
     },
     {
       title: '邮箱',
@@ -195,8 +202,8 @@ export function UsersPage() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 205,
-      render: (value: ManagedUser['status']) => <Tag color={statusLabels[value].color}>{statusLabels[value].text}</Tag>,
+      width: 100,
+      render: (value: ManagedUser['status']) => <StatusIndicator label={statusLabels[value].text} tone={statusLabels[value].tone} />,
     },
     {
       title: '最后登录',
@@ -210,8 +217,8 @@ export function UsersPage() {
   if (canWrite) columns.push({
       title: '操作',
       key: 'action',
+      width: 285,
       fixed: 'right',
-      width: 250,
       render: (_, user) => {
         const nextStatus = user.status === 'active' ? 'disabled' : 'active'
         const isSelf = user.id === currentUser?.id
@@ -353,7 +360,7 @@ export function UsersPage() {
             columns={columns}
             dataSource={usersQuery.data?.items ?? []}
             loading={usersQuery.isLoading}
-            scroll={{ x: 1300 }}
+            scroll={{ x: 1500 }}
             pagination={{
               current: page,
               pageSize,
@@ -401,14 +408,9 @@ export function UsersPage() {
           </Form.Item>
           {canReadDepartments ? (
             <Form.Item label="所属部门" name="departmentId">
-              <Select
-                allowClear
-                showSearch
-                optionFilterProp="label"
+              <DepartmentSelect
+                departments={departmentsQuery.data ?? []}
                 placeholder="可选"
-                options={(departmentsQuery.data ?? [])
-                  .filter((department) => department.status === 'active')
-                  .map((department) => ({ value: department.id, label: `${department.name} · ${department.code}` }))}
               />
             </Form.Item>
           ) : null}
@@ -545,17 +547,12 @@ export function UsersPage() {
         {assignDepartmentMutation.isError ? (
           <Alert className="form-alert" type="error" showIcon message={assignDepartmentMutation.error instanceof Error ? assignDepartmentMutation.error.message : '部门调整失败'} />
         ) : null}
-        <Select
+        <DepartmentSelect
           className="user-department-select"
-          allowClear
-          showSearch
-          optionFilterProp="label"
+          departments={departmentsQuery.data ?? []}
           placeholder="选择部门"
           value={selectedDepartmentID}
           onChange={setSelectedDepartmentID}
-          options={(departmentsQuery.data ?? [])
-            .filter((department) => department.status === 'active')
-            .map((department) => ({ value: department.id, label: `${department.name} · ${department.code}` }))}
         />
       </Modal>
     </main>

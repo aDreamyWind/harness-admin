@@ -16,6 +16,14 @@ func NewService(repository Repository) *Service {
 	return &Service{repository: repository}
 }
 
+func (s *Service) ListActive(ctx context.Context) ([]Organization, error) {
+	organizations, err := s.repository.ListActiveOrganizations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("查询可登录企业失败: %w", err)
+	}
+	return organizations, nil
+}
+
 func (s *Service) Get(ctx context.Context, organizationID string) (Organization, error) {
 	if organizationID == "" {
 		return Organization{}, ErrInvalidInput

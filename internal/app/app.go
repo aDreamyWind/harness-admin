@@ -18,6 +18,7 @@ import (
 	"harness-admin/internal/httpserver"
 	"harness-admin/internal/identity"
 	"harness-admin/internal/organizationadmin"
+	"harness-admin/internal/platformadmin"
 	"harness-admin/internal/roleadmin"
 	pgstore "harness-admin/internal/store/postgres"
 	"harness-admin/internal/useradmin"
@@ -52,7 +53,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		return nil, err
 	}
 	identityRepository := pgstore.NewIdentityRepository(db)
+	platformRepository := pgstore.NewPlatformAdminRepository(db)
 	loginLimiter := cache.NewLoginLimiter(redisClient, 5, 15*time.Minute)
+	platformService := platformadmin.NewService(platformRepository, platformLimiterAdapter{limiter: loginLimiter}, identity.HashPassword, identity.VerifyPassword, cfg.SessionTTL)
 	authService := identity.NewService(identityRepository, loginLimiter, cfg.SessionTTL)
 	accessService := access.NewService(identityRepository)
 	userAdminService := useradmin.NewService(identityRepository, identity.HashPassword, loginLimiter)
@@ -62,20 +65,22 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	auditEventService := auditadmin.NewService(identityRepository)
 
 	handler := httpserver.New(httpserver.Dependencies{
-		AppName:           cfg.AppName,
-		Environment:       cfg.Environment,
-		Logger:            logger,
-		Database:          db,
-		Cache:             redisClient,
-		Auth:              authService,
-		Access:            accessService,
-		UserAdmin:         userAdminService,
-		RoleAdmin:         roleAdminService,
-		DepartmentAdmin:   departmentAdminService,
-		OrganizationAdmin: organizationAdminService,
-		AuditEvents:       auditEventService,
-		AuditRecorder:     identityRepository,
-		SessionCookie:     cfg.SessionCookie,
+		AppName:               cfg.AppName,
+		Environment:           cfg.Environment,
+		Logger:                logger,
+		Database:              db,
+		Cache:                 redisClient,
+		Auth:                  authService,
+		Access:                accessService,
+		UserAdmin:             userAdminService,
+		RoleAdmin:             roleAdminService,
+		DepartmentAdmin:       departmentAdminService,
+		OrganizationAdmin:     organizationAdminService,
+		AuditEvents:           auditEventService,
+		AuditRecorder:         identityRepository,
+		PlatformAdmin:         platformService,
+		SessionCookie:         cfg.SessionCookie,
+		PlatformSessionCookie: cfg.PlatformSessionCookie,
 	})
 
 	return &Application{
@@ -90,6 +95,23 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		DB:    db,
 		Redis: redisClient,
 	}, nil
+}
+
+type platformLimiterAdapter struct {
+	limiter *cache.LoginLimiter
+}
+
+func (a platformLimiterAdapter) Allow(ctx context.Context, username string) (bool, error) {
+	return a.limiter.Allow(ctx, "platform", username)
+}
+
+func (a platformLimiterAdapter) RecordFailure(ctx context.Context, username string) (int64, bool, error) {
+	failure, err := a.limiter.RecordFailure(ctx, "platform", username)
+	return failure.Attempts, failure.LimitReached, err
+}
+
+func (a platformLimiterAdapter) Clear(ctx context.Context, username string) error {
+	return a.limiter.Clear(ctx, "platform", username)
 }
 
 func (a *Application) Close() {

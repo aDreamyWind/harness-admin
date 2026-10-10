@@ -21,6 +21,7 @@ type repositoryStub struct {
 	sessions       []UserSession
 	sessionAction  SessionActionInput
 	accountLock    AccountLockInput
+	profileUpdate  ProfileUpdate
 }
 
 func (r *repositoryStub) FindUserForLogin(context.Context, string, string) (User, error) {
@@ -60,6 +61,14 @@ func (r *repositoryStub) FindUserPassword(context.Context, string, string) (stri
 func (r *repositoryStub) UpdateOwnPassword(_ context.Context, input PasswordUpdate) (int64, error) {
 	r.passwordUpdate = input
 	return r.updateRevoked, nil
+}
+
+func (r *repositoryStub) UpdateOwnProfile(_ context.Context, input ProfileUpdate) (User, error) {
+	r.profileUpdate = input
+	return User{
+		ID: input.UserID, OrganizationID: input.OrganizationID, Username: "admin",
+		DisplayName: input.DisplayName, Email: input.Email, Status: "active",
+	}, nil
 }
 
 func (r *repositoryStub) ListUserSessions(context.Context, string, string) ([]UserSession, error) {
@@ -304,6 +313,22 @@ func TestChangePasswordRejectsIncorrectAndUnchangedPassword(t *testing.T) {
 	input.CurrentPassword, input.NewPassword = "old-password", "old-password"
 	if _, err := service.ChangePassword(context.Background(), input); !errors.Is(err, ErrPasswordUnchanged) {
 		t.Fatalf("错误 = %v，期望 ErrPasswordUnchanged", err)
+	}
+}
+
+func TestUpdateProfileNormalizesAndPersistsCurrentUser(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository, &limiterStub{allowed: true}, time.Hour)
+	user, err := service.UpdateProfile(context.Background(), UpdateProfileInput{
+		Session:     Session{User: User{ID: "user-1", OrganizationID: "org-1"}},
+		DisplayName: "  新名称  ", Email: "USER@EXAMPLE.COM ", RequestID: "request-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.DisplayName != "新名称" || user.Email != "user@example.com" ||
+		repository.profileUpdate.UserID != "user-1" || repository.profileUpdate.RequestID != "request-1" {
+		t.Fatalf("个人资料更新参数不正确: user=%#v input=%#v", user, repository.profileUpdate)
 	}
 }
 

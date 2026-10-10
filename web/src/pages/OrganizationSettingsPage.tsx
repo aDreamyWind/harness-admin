@@ -10,6 +10,7 @@ import {
   type UpdateOrganizationInput,
 } from '../api/organization'
 import { useAuth } from '../auth/AuthContext'
+import { StatusIndicator } from '../components/StatusIndicator'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -51,7 +52,7 @@ export function OrganizationSettingsPage() {
         <div>
           <Text className="module-kicker">系统设置 / 企业资料</Text>
           <Title level={1}>企业设置</Title>
-          <Paragraph>维护当前企业在控制面中展示的名称和登录标识。</Paragraph>
+          <Paragraph>维护当前企业在控制面中展示的名称和企业编码。</Paragraph>
         </div>
         {!canWrite ? <Tag>只读</Tag> : null}
       </section>
@@ -71,17 +72,19 @@ export function OrganizationSettingsPage() {
           <Col xs={24} xl={9}>
             <Card className="organization-identity-card" variant="borderless">
               <div className="organization-card-label">
-                <span>企业登录标识</span>
-                <Tag color={organization.status === 'active' ? 'success' : 'default'}>
-                  {organization.status === 'active' ? '正常' : '已停用'}
-                </Tag>
+                <span>当前企业</span>
+                <StatusIndicator
+                  label={organization.status === 'active' ? '正常' : '已停用'}
+                  tone={organization.status === 'active' ? 'success' : 'muted'}
+                />
               </div>
-              <div className="organization-code">{organization.code}</div>
+              <div className="organization-code">{organization.name}</div>
               <div className="organization-lock-note">
                 <LockOutlined />
-                <span>企业代码用于登录和数据隔离，创建后不可修改。</span>
+                <span>企业编码用于登录和数据隔离，创建后不可修改。</span>
               </div>
               <dl className="organization-metadata">
+                <div><dt>企业编码</dt><dd>{organization.code}</dd></div>
                 <div><dt>企业 ID</dt><dd>{organization.id}</dd></div>
                 <div><dt>创建时间</dt><dd>{formatDateTime(organization.createdAt)}</dd></div>
                 <div><dt>最后更新</dt><dd>{formatDateTime(organization.updatedAt)}</dd></div>
@@ -93,7 +96,6 @@ export function OrganizationSettingsPage() {
             <Card className="content-card organization-name-card" variant="borderless">
               <div className="organization-form-heading">
                 <div>
-                  <Text className="eyebrow">DISPLAY NAME</Text>
                   <Title level={3}>企业名称</Title>
                   <Paragraph>该名称会出现在账号菜单和后续企业级配置中。</Paragraph>
                 </div>

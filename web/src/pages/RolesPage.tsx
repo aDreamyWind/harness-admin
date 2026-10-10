@@ -91,11 +91,16 @@ export function RolesPage() {
         <div className="role-identity-cell">
           <span>
             <strong>{role.name}</strong>
-            <small>{role.code}</small>
           </span>
           {role.builtIn ? <Tag>内置</Tag> : null}
         </div>
       ),
+    },
+    {
+      title: '角色编码',
+      dataIndex: 'code',
+      key: 'code',
+      width: 180,
     },
     {
       title: '说明',
@@ -126,8 +131,8 @@ export function RolesPage() {
   if (canWrite) columns.push({
       title: '操作',
       key: 'action',
-      fixed: 'right',
       width: 90,
+      fixed: 'right',
       render: (_, role) => (
         <Button type="link" size="small" icon={<EditOutlined />} disabled={role.builtIn} onClick={() => openEdit(role)}>
           编辑
@@ -242,6 +247,7 @@ const resourceLabels: Record<string, string> = {
   department: '部门',
   role: '角色',
   audit_event: '审计事件',
+  organization: '企业',
 }
 
 function groupPermissions(permissions: Permission[]): Array<[string, Permission[]]> {

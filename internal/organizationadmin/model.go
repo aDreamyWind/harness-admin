@@ -37,6 +37,7 @@ type NameUpdate struct {
 }
 
 type Repository interface {
+	ListActiveOrganizations(ctx context.Context) ([]Organization, error)
 	FindOrganization(ctx context.Context, organizationID string) (Organization, error)
 	UpdateOrganization(ctx context.Context, input NameUpdate) (Organization, error)
 }

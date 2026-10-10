@@ -27,6 +27,7 @@ type AuthService interface {
 	ListSessions(context.Context, identity.Session) ([]identity.UserSession, error)
 	RevokeManagedSession(context.Context, identity.Session, string, string, string) error
 	RevokeOtherSessions(context.Context, identity.Session, string, string) (int64, error)
+	UpdateProfile(context.Context, identity.UpdateProfileInput) (identity.User, error)
 }
 
 type loginRequest struct {
@@ -57,6 +58,11 @@ type changePasswordRequest struct {
 	NewPassword     string `json:"newPassword"`
 }
 
+type updateProfileRequest struct {
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+}
+
 type userSessionResponse struct {
 	ID         string    `json:"id"`
 	UserAgent  string    `json:"userAgent"`
@@ -73,6 +79,7 @@ func registerAuthRoutes(router *gin.Engine, deps Dependencies) {
 	group.GET("/me", requireSession(deps), meHandler())
 	group.POST("/logout", requireSession(deps), requireCSRF(deps), logoutHandler(deps))
 	group.PUT("/password", requireSession(deps), requireCSRF(deps), changePasswordHandler(deps))
+	group.PUT("/profile", requireSession(deps), requireCSRF(deps), updateProfileHandler(deps))
 	group.GET("/sessions", requireSession(deps), listSessionsHandler(deps))
 	group.DELETE("/sessions/:id", requireSession(deps), requireCSRF(deps), revokeSessionHandler(deps))
 	group.POST("/sessions/revoke-others", requireSession(deps), requireCSRF(deps), revokeOtherSessionsHandler(deps))
@@ -162,6 +169,29 @@ func changePasswordHandler(deps Dependencies) gin.HandlerFunc {
 	}
 }
 
+func updateProfileHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 16*1024)
+		var request updateProfileRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "个人资料参数格式不正确")
+			return
+		}
+		user, err := deps.Auth.UpdateProfile(ctx.Request.Context(), identity.UpdateProfileInput{
+			Session:     currentSession(ctx),
+			DisplayName: request.DisplayName,
+			Email:       request.Email,
+			RequestID:   contextString(ctx, "request_id"),
+			SourceIP:    ctx.ClientIP(),
+		})
+		if err != nil {
+			handleAccountSecurityError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, presentUser(user))
+	}
+}
+
 func listSessionsHandler(deps Dependencies) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		items, err := deps.Auth.ListSessions(ctx.Request.Context(), currentSession(ctx))
@@ -220,6 +250,10 @@ func handleAccountSecurityError(ctx *gin.Context, logger *slog.Logger, err error
 		httpx.Fail(ctx, http.StatusConflict, "cannot_revoke_current_session", err.Error())
 	case errors.Is(err, identity.ErrSessionNotFound):
 		httpx.Fail(ctx, http.StatusNotFound, "session_not_found", "会话不存在或已经失效")
+	case errors.Is(err, identity.ErrInvalidProfile):
+		httpx.Fail(ctx, http.StatusBadRequest, "invalid_profile", "个人资料参数不正确")
+	case errors.Is(err, identity.ErrEmailConflict):
+		httpx.Fail(ctx, http.StatusConflict, "email_conflict", err.Error())
 	default:
 		logger.Error("账号安全接口处理失败", "error", err, "request_id", contextString(ctx, "request_id"))
 		httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "服务暂时不可用")
@@ -260,7 +294,7 @@ func requireCSRF(deps Dependencies) gin.HandlerFunc {
 func handleAuthError(ctx *gin.Context, logger *slog.Logger, err error) {
 	switch {
 	case errors.Is(err, identity.ErrInvalidCredentials):
-		httpx.Fail(ctx, http.StatusUnauthorized, "invalid_credentials", "企业代码、用户名或密码错误")
+		httpx.Fail(ctx, http.StatusUnauthorized, "invalid_credentials", "企业编码、用户名或密码错误")
 	case errors.Is(err, identity.ErrAccountDisabled):
 		httpx.Fail(ctx, http.StatusForbidden, "account_unavailable", "账号当前不可用")
 	case errors.Is(err, identity.ErrAccountLocked):

@@ -1,4 +1,4 @@
-import { ClockCircleOutlined, DesktopOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import { ClockCircleOutlined, DesktopOutlined, LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -8,10 +8,10 @@ import {
   Input,
   Popconfirm,
   Space,
-  Tag,
   Typography,
   message,
 } from 'antd'
+import { useEffect } from 'react'
 
 import {
   changePassword,
@@ -21,6 +21,8 @@ import {
   type ChangePasswordInput,
   type UserSession,
 } from '../api/auth'
+import { useAuth } from '../auth/AuthContext'
+import { StatusIndicator } from '../components/StatusIndicator'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -28,12 +30,29 @@ interface PasswordForm extends ChangePasswordInput {
   confirmPassword: string
 }
 
+interface ProfileForm {
+  displayName: string
+  email: string
+}
+
 export function AccountSecurityPage() {
   const [form] = Form.useForm<PasswordForm>()
+  const [profileForm] = Form.useForm<ProfileForm>()
   const [messageApi, messageContext] = message.useMessage()
   const queryClient = useQueryClient()
+  const { user, updateProfile } = useAuth()
+
+  useEffect(() => {
+    if (user) profileForm.setFieldsValue({ displayName: user.displayName, email: user.email ?? '' })
+  }, [profileForm, user])
 
   const sessionsQuery = useQuery({ queryKey: ['account-sessions'], queryFn: listSessions })
+
+  const profileMutation = useMutation({
+    mutationFn: updateProfile,
+    onSuccess: () => messageApi.success('个人资料已更新'),
+    onError: (error) => messageApi.error(error instanceof Error ? error.message : '个人资料修改失败'),
+  })
 
   const passwordMutation = useMutation({
     mutationFn: (values: PasswordForm) => changePassword({
@@ -75,9 +94,9 @@ export function AccountSecurityPage() {
       {messageContext}
       <section className="module-heading security-heading">
         <div>
-          <Text className="module-kicker">个人账号 / 安全设置</Text>
-          <Title level={1}>密码与会话</Title>
-          <Paragraph>更新登录凭据，并确认哪些设备仍可访问控制面。</Paragraph>
+          <Text className="module-kicker">个人账号 / 账号与安全</Text>
+          <Title level={1}>账号与安全</Title>
+          <Paragraph>维护个人资料、登录密码和当前活跃设备。</Paragraph>
         </div>
         <div className="security-state">
           <SafetyCertificateOutlined />
@@ -89,52 +108,86 @@ export function AccountSecurityPage() {
       </section>
 
       <div className="security-layout">
-        <Card className="security-card password-card" variant="borderless">
-          <div className="security-section-title">
-            <LockOutlined />
-            <div>
-              <Title level={3}>修改密码</Title>
-              <Paragraph>修改后保留当前设备，其他设备会自动退出。</Paragraph>
+        <div className="security-settings-column">
+          <Card className="security-card profile-card" variant="borderless">
+            <div className="security-section-title">
+              <UserOutlined />
+              <div>
+                <Title level={3}>个人资料</Title>
+                <Paragraph>登录用户名不可修改，姓名和邮箱会用于页面展示与审计。</Paragraph>
+              </div>
             </div>
-          </div>
-          {passwordMutation.isError ? (
-            <Alert className="form-alert" type="error" showIcon message={passwordMutation.error instanceof Error ? passwordMutation.error.message : '密码修改失败'} />
-          ) : null}
-          <Form<PasswordForm>
-            form={form}
-            layout="vertical"
-            requiredMark={false}
-            onFinish={(values) => passwordMutation.mutate(values)}
-          >
-            <Form.Item label="当前密码" name="currentPassword" rules={[{ required: true, message: '请输入当前密码' }]}>
-              <Input.Password autoComplete="current-password" />
-            </Form.Item>
-            <Form.Item label="新密码" name="newPassword" extra="至少 3 位。" rules={[
-              { required: true, message: '请输入新密码' },
-              { min: 3, message: '密码不能少于 3 位' },
-            ]}>
-              <Input.Password autoComplete="new-password" />
-            </Form.Item>
-            <Form.Item
-              label="确认新密码"
-              name="confirmPassword"
-              dependencies={['newPassword']}
-              rules={[
-                { required: true, message: '请再次输入新密码' },
-                ({ getFieldValue }) => ({
-                  validator(_, value) {
-                    return !value || getFieldValue('newPassword') === value
-                      ? Promise.resolve()
-                      : Promise.reject(new Error('两次输入的新密码不一致'))
-                  },
-                }),
-              ]}
+            <Form<ProfileForm>
+              form={profileForm}
+              layout="vertical"
+              requiredMark={false}
+              onFinish={(values) => profileMutation.mutate(values)}
             >
-              <Input.Password autoComplete="new-password" />
-            </Form.Item>
-            <Button type="primary" htmlType="submit" loading={passwordMutation.isPending}>修改密码</Button>
-          </Form>
-        </Card>
+              <Form.Item label="登录用户名">
+                <Input value={user?.username ?? ''} disabled />
+              </Form.Item>
+              <Form.Item label="显示名称" name="displayName" rules={[
+                { required: true, whitespace: true, message: '请输入显示名称' },
+                { max: 120, message: '显示名称不能超过 120 个字符' },
+              ]}>
+                <Input autoComplete="name" />
+              </Form.Item>
+              <Form.Item label="邮箱" name="email" extra="留空表示不设置邮箱。" rules={[
+                { type: 'email', message: '请输入正确的邮箱地址' },
+              ]}>
+                <Input autoComplete="email" />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" loading={profileMutation.isPending}>保存资料</Button>
+            </Form>
+          </Card>
+
+          <Card className="security-card password-card" variant="borderless">
+            <div className="security-section-title">
+              <LockOutlined />
+              <div>
+                <Title level={3}>修改密码</Title>
+                <Paragraph>修改后保留当前设备，其他设备会自动退出。</Paragraph>
+              </div>
+            </div>
+            {passwordMutation.isError ? (
+              <Alert className="form-alert" type="error" showIcon message={passwordMutation.error instanceof Error ? passwordMutation.error.message : '密码修改失败'} />
+            ) : null}
+            <Form<PasswordForm>
+              form={form}
+              layout="vertical"
+              requiredMark={false}
+              onFinish={(values) => passwordMutation.mutate(values)}
+            >
+              <Form.Item label="当前密码" name="currentPassword" rules={[{ required: true, message: '请输入当前密码' }]}>
+                <Input.Password autoComplete="current-password" />
+              </Form.Item>
+              <Form.Item label="新密码" name="newPassword" extra="至少 3 位。" rules={[
+                { required: true, message: '请输入新密码' },
+                { min: 3, message: '密码不能少于 3 位' },
+              ]}>
+                <Input.Password autoComplete="new-password" />
+              </Form.Item>
+              <Form.Item
+                label="确认新密码"
+                name="confirmPassword"
+                dependencies={['newPassword']}
+                rules={[
+                  { required: true, message: '请再次输入新密码' },
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      return !value || getFieldValue('newPassword') === value
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('两次输入的新密码不一致'))
+                    },
+                  }),
+                ]}
+              >
+                <Input.Password autoComplete="new-password" />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" loading={passwordMutation.isPending}>修改密码</Button>
+            </Form>
+          </Card>
+        </div>
 
         <Card className="security-card sessions-card" variant="borderless">
           <div className="security-section-title sessions-title">
@@ -193,7 +246,7 @@ function SessionRow({ session, revoking, onRevoke }: { session: UserSession; rev
       <div className="session-main">
         <div className="session-name">
           <strong>{client}</strong>
-          {session.current ? <Tag color="processing">当前设备</Tag> : null}
+          {session.current ? <StatusIndicator label="当前设备" tone="info" /> : null}
         </div>
         <Text ellipsis={{ tooltip: session.userAgent || '未记录客户端信息' }}>{session.userAgent || '未记录客户端信息'}</Text>
         <Space size={16} wrap className="session-meta">

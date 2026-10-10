@@ -43,6 +43,10 @@ func (auditAuthStub) RevokeOtherSessions(context.Context, identity.Session, stri
 	return 0, nil
 }
 
+func (auditAuthStub) UpdateProfile(context.Context, identity.UpdateProfileInput) (identity.User, error) {
+	return identity.User{}, nil
+}
+
 type auditAccessStub struct{ allowed bool }
 
 func (s auditAccessStub) Allowed(context.Context, string, string) (bool, error) {
