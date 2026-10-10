@@ -26,7 +26,15 @@ func NewIdentityRepository(pool *pgxpool.Pool) *IdentityRepository {
 func (r *IdentityRepository) FindUserForLogin(ctx context.Context, organizationCode, username string) (identity.User, error) {
 	user, err := scanUser(r.pool.QueryRow(ctx, `
 		SELECT u.id, u.organization_id, o.name, o.code, u.username,
-		       COALESCE(u.email, ''), u.display_name, u.password_hash, u.status
+		       COALESCE(u.email, ''), u.display_name, u.password_hash, u.status,
+		       ARRAY(
+		           SELECT DISTINCT p.code
+		           FROM user_roles ur
+		           JOIN role_permissions rp ON rp.role_id = ur.role_id
+		           JOIN permissions p ON p.id = rp.permission_id
+		           WHERE ur.user_id = u.id
+		           ORDER BY p.code
+		       )
 		FROM users u
 		JOIN organizations o ON o.id = u.organization_id
 		WHERE LOWER(o.code) = LOWER($1) AND LOWER(u.username) = LOWER($2)
@@ -66,7 +74,15 @@ func (r *IdentityRepository) FindSessionByTokenHash(ctx context.Context, tokenHa
 	row := r.pool.QueryRow(ctx, `
 		SELECT s.id, s.token_hash, s.csrf_token_hash, s.expires_at, s.revoked_at,
 		       u.id, u.organization_id, o.name, o.code, u.username,
-		       COALESCE(u.email, ''), u.display_name, u.status
+		       COALESCE(u.email, ''), u.display_name, u.status,
+		       ARRAY(
+		           SELECT DISTINCT p.code
+		           FROM user_roles ur
+		           JOIN role_permissions rp ON rp.role_id = ur.role_id
+		           JOIN permissions p ON p.id = rp.permission_id
+		           WHERE ur.user_id = u.id
+		           ORDER BY p.code
+		       )
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		JOIN organizations o ON o.id = u.organization_id
@@ -78,7 +94,7 @@ func (r *IdentityRepository) FindSessionByTokenHash(ctx context.Context, tokenHa
 		&session.ID, &session.TokenHash, &session.CSRFTokenHash, &session.ExpiresAt, &session.RevokedAt,
 		&session.User.ID, &session.User.OrganizationID, &session.User.Organization,
 		&session.User.OrganizationCode, &session.User.Username, &session.User.Email,
-		&session.User.DisplayName, &session.User.Status,
+		&session.User.DisplayName, &session.User.Status, &session.User.PermissionCodes,
 	)
 	if err == pgx.ErrNoRows {
 		return identity.Session{}, identity.ErrSessionNotFound
@@ -372,6 +388,7 @@ func scanUser(row rowScanner) (identity.User, error) {
 	err := row.Scan(
 		&user.ID, &user.OrganizationID, &user.Organization, &user.OrganizationCode,
 		&user.Username, &user.Email, &user.DisplayName, &user.PasswordHash, &user.Status,
+		&user.PermissionCodes,
 	)
 	return user, err
 }

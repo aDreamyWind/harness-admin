@@ -100,6 +100,7 @@ func TestLoginCreatesServerSideSession(t *testing.T) {
 		DisplayName:      "管理员",
 		PasswordHash:     passwordHash,
 		Status:           "active",
+		PermissionCodes:  []string{"iam.user.read"},
 	}}
 	limiter := &limiterStub{allowed: true}
 	service := NewService(repository, limiter, 12*time.Hour)
@@ -120,6 +121,9 @@ func TestLoginCreatesServerSideSession(t *testing.T) {
 	}
 	if result.User.PasswordHash != "" {
 		t.Fatal("登录结果不应暴露密码哈希")
+	}
+	if len(result.User.PermissionCodes) != 1 || result.User.PermissionCodes[0] != "iam.user.read" {
+		t.Fatalf("登录结果缺少权限代码: %#v", result.User.PermissionCodes)
 	}
 	if repository.savedSession.TokenHash == result.Token {
 		t.Fatal("数据库中不应保存明文会话令牌")

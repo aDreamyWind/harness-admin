@@ -729,6 +729,37 @@ select {
   font-size: 12px;
 }
 
+.permission-card {
+  max-width: 760px;
+  margin: 72px auto 0;
+}
+
+.permission-denied {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 28px;
+  align-items: center;
+  padding: 34px 28px;
+}
+
+.permission-code {
+  color: #c4ced9;
+  font: 700 48px/1 "SFMono-Regular", Menlo, monospace;
+  letter-spacing: -4px;
+}
+
+.permission-denied h1 {
+  margin: 0 0 8px;
+  color: #24344a;
+  font-size: 22px;
+}
+
+.permission-denied p {
+  margin: 0 0 20px;
+  color: #6f7d90;
+  line-height: 1.7;
+}
+
 .directory-card .ant-table-wrapper {
   padding: 0 18px 8px;
 }
@@ -1334,6 +1365,12 @@ select {
   .session-row > *:last-child {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .permission-denied {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 20px 8px;
   }
 
   .directory-total {

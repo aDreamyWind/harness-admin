@@ -30,6 +30,7 @@ type User struct {
 	DisplayName      string
 	PasswordHash     string
 	Status           string
+	PermissionCodes  []string
 }
 
 type Session struct {

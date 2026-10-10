@@ -10,6 +10,7 @@ export interface AuthUser {
   username: string
   email?: string
   displayName: string
+  permissionCodes: string[]
 }
 
 export interface LoginInput {

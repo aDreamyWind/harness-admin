@@ -41,7 +41,10 @@ const statusLabels: Record<ManagedUser['status'], { text: string; color: string 
 }
 
 export function UsersPage() {
-  const { user: currentUser } = useAuth()
+  const { user: currentUser, hasPermission } = useAuth()
+  const canWrite = hasPermission('iam.user.write')
+  const canReadRoles = hasPermission('iam.role.read')
+  const canReadDepartments = hasPermission('iam.department.read')
   const queryClient = useQueryClient()
   const [form] = Form.useForm<CreateUserInput>()
   const [passwordForm] = Form.useForm<{ password: string; confirmPassword: string }>()
@@ -64,8 +67,8 @@ export function UsersPage() {
     placeholderData: keepPreviousData,
   })
 
-  const rolesQuery = useQuery({ queryKey: ['roles'], queryFn: listRoles })
-  const departmentsQuery = useQuery({ queryKey: ['departments'], queryFn: listDepartments })
+  const rolesQuery = useQuery({ queryKey: ['roles'], queryFn: listRoles, enabled: canWrite && canReadRoles })
+  const departmentsQuery = useQuery({ queryKey: ['departments'], queryFn: listDepartments, enabled: canWrite && canReadDepartments })
 
   const createMutation = useMutation({
     mutationFn: createUser,
@@ -174,7 +177,9 @@ export function UsersPage() {
       width: 170,
       render: (value?: string) => value ? formatDateTime(value) : <Text type="secondary">尚未登录</Text>,
     },
-    {
+  ]
+
+  if (canWrite) columns.push({
       title: '操作',
       key: 'action',
       fixed: 'right',
@@ -184,25 +189,29 @@ export function UsersPage() {
         const isSelf = user.id === currentUser?.id
         return (
           <Space size={0}>
-            <Button
-              type="link"
-              size="small"
-              disabled={isSelf}
-              onClick={() => { setRoleUser(user); setSelectedRoleIDs(user.roleIds); assignRolesMutation.reset() }}
-            >
-              角色
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              onClick={() => {
-                setDepartmentUser(user)
-                setSelectedDepartmentID(user.departmentId || undefined)
-                assignDepartmentMutation.reset()
-              }}
-            >
-              部门
-            </Button>
+            {canReadRoles ? (
+              <Button
+                type="link"
+                size="small"
+                disabled={isSelf}
+                onClick={() => { setRoleUser(user); setSelectedRoleIDs(user.roleIds); assignRolesMutation.reset() }}
+              >
+                角色
+              </Button>
+            ) : null}
+            {canReadDepartments ? (
+              <Button
+                type="link"
+                size="small"
+                onClick={() => {
+                  setDepartmentUser(user)
+                  setSelectedDepartmentID(user.departmentId || undefined)
+                  assignDepartmentMutation.reset()
+                }}
+              >
+                部门
+              </Button>
+            ) : null}
             <Button
               type="link"
               size="small"
@@ -231,8 +240,7 @@ export function UsersPage() {
           </Space>
         )
       },
-    },
-  ]
+    })
 
   return (
     <main>
@@ -243,9 +251,11 @@ export function UsersPage() {
           <Title level={1}>用户目录</Title>
           <Paragraph>管理当前企业内可以登录控制面的账号。</Paragraph>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          新建用户
-        </Button>
+        {canWrite ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+            新建用户
+          </Button>
+        ) : <Tag>只读</Tag>}
       </section>
 
       <Card className="directory-card" variant="borderless">
@@ -335,17 +345,19 @@ export function UsersPage() {
           <Form.Item label="邮箱" name="email" rules={[{ type: 'email', message: '请输入正确的邮箱地址' }]}>
             <Input autoComplete="off" placeholder="可选" />
           </Form.Item>
-          <Form.Item label="所属部门" name="departmentId">
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              placeholder="可选"
-              options={(departmentsQuery.data ?? [])
-                .filter((department) => department.status === 'active')
-                .map((department) => ({ value: department.id, label: `${department.name} · ${department.code}` }))}
-            />
-          </Form.Item>
+          {canReadDepartments ? (
+            <Form.Item label="所属部门" name="departmentId">
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                placeholder="可选"
+                options={(departmentsQuery.data ?? [])
+                  .filter((department) => department.status === 'active')
+                  .map((department) => ({ value: department.id, label: `${department.name} · ${department.code}` }))}
+              />
+            </Form.Item>
+          ) : null}
           <Form.Item label="初始密码" name="password" extra="至少 3 位。创建后请通过安全方式交给用户。" rules={[
             { required: true, message: '请输入初始密码' },
             { min: 3, message: '密码不能少于 3 位' },

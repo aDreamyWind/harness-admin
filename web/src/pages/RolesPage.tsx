@@ -26,10 +26,13 @@ import {
   type Role,
   type RoleInput,
 } from '../api/roles'
+import { useAuth } from '../auth/AuthContext'
 
 const { Paragraph, Text, Title } = Typography
 
 export function RolesPage() {
+  const { hasPermission } = useAuth()
+  const canWrite = hasPermission('iam.role.write')
   const queryClient = useQueryClient()
   const [form] = Form.useForm<RoleInput>()
   const [messageApi, messageContext] = message.useMessage()
@@ -118,7 +121,9 @@ export function RolesPage() {
       width: 90,
       align: 'right',
     },
-    {
+  ]
+
+  if (canWrite) columns.push({
       title: '操作',
       key: 'action',
       fixed: 'right',
@@ -128,8 +133,7 @@ export function RolesPage() {
           编辑
         </Button>
       ),
-    },
-  ]
+    })
 
   return (
     <main>
@@ -140,7 +144,9 @@ export function RolesPage() {
           <Title level={1}>角色权限</Title>
           <Paragraph>通过角色组合系统权限，再将角色分配给企业用户。</Paragraph>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建角色</Button>
+        {canWrite
+          ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建角色</Button>
+          : <Tag>只读</Tag>}
       </section>
 
       <Card className="directory-card" variant="borderless">

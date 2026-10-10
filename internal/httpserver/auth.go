@@ -36,13 +36,14 @@ type loginRequest struct {
 }
 
 type userResponse struct {
-	ID               string `json:"id"`
-	OrganizationID   string `json:"organizationId"`
-	Organization     string `json:"organization"`
-	OrganizationCode string `json:"organizationCode"`
-	Username         string `json:"username"`
-	Email            string `json:"email,omitempty"`
-	DisplayName      string `json:"displayName"`
+	ID               string   `json:"id"`
+	OrganizationID   string   `json:"organizationId"`
+	Organization     string   `json:"organization"`
+	OrganizationCode string   `json:"organizationCode"`
+	Username         string   `json:"username"`
+	Email            string   `json:"email,omitempty"`
+	DisplayName      string   `json:"displayName"`
+	PermissionCodes  []string `json:"permissionCodes"`
 }
 
 type loginResponse struct {
@@ -276,6 +277,10 @@ func handleAuthError(ctx *gin.Context, logger *slog.Logger, err error) {
 }
 
 func presentUser(user identity.User) userResponse {
+	permissionCodes := user.PermissionCodes
+	if permissionCodes == nil {
+		permissionCodes = []string{}
+	}
 	return userResponse{
 		ID:               user.ID,
 		OrganizationID:   user.OrganizationID,
@@ -284,6 +289,7 @@ func presentUser(user identity.User) userResponse {
 		Username:         user.Username,
 		Email:            user.Email,
 		DisplayName:      user.DisplayName,
+		PermissionCodes:  permissionCodes,
 	}
 }
 

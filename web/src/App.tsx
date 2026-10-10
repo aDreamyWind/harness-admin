@@ -12,8 +12,8 @@ import {
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons'
-import { Avatar, Button, Drawer, Dropdown, Layout, Menu, Spin, Tag, message, type MenuProps } from 'antd'
-import { useState } from 'react'
+import { Avatar, Button, Card, Drawer, Dropdown, Layout, Menu, Spin, Tag, message, type MenuProps } from 'antd'
+import { useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
 import { useAuth } from './auth/AuthContext'
@@ -27,25 +27,6 @@ import { UsersPage } from './pages/UsersPage'
 
 const { Header, Sider, Content } = Layout
 
-const menuItems = [
-  { key: 'overview', icon: <DashboardOutlined />, label: '控制面总览' },
-  {
-    key: 'identity',
-    icon: <TeamOutlined />,
-    label: '身份与组织',
-    children: [
-      { key: 'users', label: '用户' },
-      { key: 'departments', label: '部门' },
-      { key: 'roles', label: '角色与权限' },
-    ],
-  },
-  { key: 'models', icon: <AppstoreOutlined />, label: '模型目录', disabled: true },
-  { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关', disabled: true },
-  { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },
-  { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' },
-  { key: 'settings', icon: <SettingOutlined />, label: '系统设置', disabled: true },
-]
-
 const menuRoutes: Record<string, string> = {
   overview: '/',
   users: '/identity/users',
@@ -54,7 +35,7 @@ const menuRoutes: Record<string, string> = {
   audit: '/audit',
 }
 
-function Navigation({ selectedKey, onNavigate }: { selectedKey: string; onNavigate: (path: string) => void }) {
+function Navigation({ items, selectedKey, onNavigate }: { items: MenuProps['items']; selectedKey: string; onNavigate: (path: string) => void }) {
   return (
     <>
       <div className="brand">
@@ -71,7 +52,7 @@ function Navigation({ selectedKey, onNavigate }: { selectedKey: string; onNaviga
         mode="inline"
         selectedKeys={[selectedKey]}
         defaultOpenKeys={['identity']}
-        items={menuItems}
+        items={items}
         onClick={({ key }) => {
           const path = menuRoutes[key]
           if (path) onNavigate(path)
@@ -89,7 +70,7 @@ function Navigation({ selectedKey, onNavigate }: { selectedKey: string; onNaviga
 }
 
 export function App() {
-  const { user, isLoading, logout } = useAuth()
+  const { user, isLoading, logout, hasPermission } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -122,6 +103,8 @@ export function App() {
   if (!user) {
     return <LoginPage />
   }
+
+  const menuItems = buildMenuItems(hasPermission)
 
   const accountItems: MenuProps['items'] = [
     {
@@ -160,7 +143,7 @@ export function App() {
       {messageContext}
       <Layout className="app-layout">
         <Sider width={248} className="desktop-sider">
-          <Navigation selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} />
+          <Navigation items={menuItems} selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} />
         </Sider>
         <Drawer
           placement="left"
@@ -169,7 +152,7 @@ export function App() {
           onClose={() => setMobileOpen(false)}
           styles={{ body: { padding: 0, background: '#111b2d' } }}
         >
-          <Navigation selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} />
+          <Navigation items={menuItems} selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} />
         </Drawer>
         <Layout>
           <Header className="topbar">
@@ -195,10 +178,10 @@ export function App() {
           <Content className="main-content">
             <Routes>
               <Route path="/" element={<DashboardPage />} />
-              <Route path="/identity/users" element={<UsersPage />} />
-              <Route path="/identity/departments" element={<DepartmentsPage />} />
-              <Route path="/identity/roles" element={<RolesPage />} />
-              <Route path="/audit" element={<AuditPage />} />
+              <Route path="/identity/users" element={<PermissionPage permission="iam.user.read"><UsersPage /></PermissionPage>} />
+              <Route path="/identity/departments" element={<PermissionPage permission="iam.department.read"><DepartmentsPage /></PermissionPage>} />
+              <Route path="/identity/roles" element={<PermissionPage permission="iam.role.read"><RolesPage /></PermissionPage>} />
+              <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
               <Route path="/account/security" element={<AccountSecurityPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
@@ -206,5 +189,45 @@ export function App() {
         </Layout>
       </Layout>
     </>
+  )
+}
+
+function buildMenuItems(hasPermission: (permissionCode: string) => boolean): MenuProps['items'] {
+  const identityItems = [
+    hasPermission('iam.user.read') ? { key: 'users', label: '用户' } : null,
+    hasPermission('iam.department.read') ? { key: 'departments', label: '部门' } : null,
+    hasPermission('iam.role.read') ? { key: 'roles', label: '角色与权限' } : null,
+  ].filter(Boolean) as NonNullable<MenuProps['items']>
+
+  return [
+    { key: 'overview', icon: <DashboardOutlined />, label: '控制面总览' },
+    identityItems.length ? {
+      key: 'identity', icon: <TeamOutlined />, label: '身份与组织', children: identityItems,
+    } : null,
+    { key: 'models', icon: <AppstoreOutlined />, label: '模型目录', disabled: true },
+    { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关', disabled: true },
+    { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },
+    hasPermission('audit.event.read') ? { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' } : null,
+    { key: 'settings', icon: <SettingOutlined />, label: '系统设置', disabled: true },
+  ].filter(Boolean) as NonNullable<MenuProps['items']>
+}
+
+function PermissionPage({ permission, children }: { permission: string; children: ReactNode }) {
+  const { hasPermission } = useAuth()
+  const navigate = useNavigate()
+  if (hasPermission(permission)) return children
+  return (
+    <main>
+      <Card className="content-card permission-card" variant="borderless">
+        <div className="permission-denied">
+          <span className="permission-code">403</span>
+          <div>
+            <h1>没有访问权限</h1>
+            <p>当前账号没有查看这个页面的权限。若工作需要，请联系管理员调整角色。</p>
+            <Button type="primary" onClick={() => navigate('/')}>返回控制面总览</Button>
+          </div>
+        </div>
+      </Card>
+    </main>
   )
 }

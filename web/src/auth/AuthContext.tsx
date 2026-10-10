@@ -12,6 +12,7 @@ interface AuthContextValue {
   user: AuthUser | null
   isLoading: boolean
   startupError: string
+  hasPermission: (permissionCode: string) => boolean
   login: (input: LoginInput) => Promise<void>
   logout: () => Promise<void>
 }
@@ -52,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isLoading,
       startupError,
+      hasPermission: (permissionCode) => (user?.permissionCodes ?? []).includes(permissionCode),
       login: async (input) => {
         const authenticatedUser = await requestLogin(input)
         setUser(authenticatedUser)

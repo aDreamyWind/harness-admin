@@ -28,6 +28,7 @@ import {
   type Department,
   type DepartmentInput,
 } from '../api/departments'
+import { useAuth } from '../auth/AuthContext'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -36,6 +37,8 @@ interface DepartmentNode extends Department {
 }
 
 export function DepartmentsPage() {
+  const { hasPermission } = useAuth()
+  const canWrite = hasPermission('iam.department.write')
   const queryClient = useQueryClient()
   const [form] = Form.useForm<DepartmentInput>()
   const [messageApi, messageContext] = message.useMessage()
@@ -119,7 +122,9 @@ export function DepartmentsPage() {
     },
     { title: '直属用户', dataIndex: 'userCount', key: 'userCount', width: 100, align: 'right' },
     { title: '排序', dataIndex: 'sortOrder', key: 'sortOrder', width: 90, align: 'right' },
-    {
+  ]
+
+  if (canWrite) columns.push({
       title: '操作',
       key: 'action',
       fixed: 'right',
@@ -142,8 +147,7 @@ export function DepartmentsPage() {
           </Space>
         )
       },
-    },
-  ]
+    })
 
   return (
     <main>
@@ -154,7 +158,9 @@ export function DepartmentsPage() {
           <Title level={1}>部门结构</Title>
           <Paragraph>维护当前企业的部门层级与用户归属。</Paragraph>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>新建部门</Button>
+        {canWrite
+          ? <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>新建部门</Button>
+          : <Tag>只读</Tag>}
       </section>
 
       <Card className="directory-card" variant="borderless">

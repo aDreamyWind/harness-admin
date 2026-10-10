@@ -98,6 +98,31 @@ func TestChangePasswordHandlerUsesCurrentSession(t *testing.T) {
 	}
 }
 
+func TestMeHandlerReturnsCurrentPermissions(t *testing.T) {
+	auth := &accountAuthStub{session: accountTestSession()}
+	auth.session.User.PermissionCodes = []string{"audit.event.read", "iam.user.read"}
+	router := newAccountSecurityTestRouter(auth, nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 %d；响应 = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var body struct {
+		Data struct {
+			PermissionCodes []string `json:"permissionCodes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Data.PermissionCodes) != 2 || body.Data.PermissionCodes[1] != "iam.user.read" {
+		t.Fatalf("当前用户权限响应不正确: %s", response.Body.String())
+	}
+}
+
 func TestListSessionsHandlerReturnsCurrentSessionMarker(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	auth := &accountAuthStub{

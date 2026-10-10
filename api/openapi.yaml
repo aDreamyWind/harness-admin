@@ -607,7 +607,7 @@ components:
         sortOrder: { type: integer, minimum: 0, maximum: 999999 }
     AuthUser:
       type: object
-      required: [id, organizationId, organization, organizationCode, username, displayName]
+      required: [id, organizationId, organization, organizationCode, username, displayName, permissionCodes]
       properties:
         id: { type: string, format: uuid }
         organizationId: { type: string, format: uuid }
@@ -616,6 +616,10 @@ components:
         username: { type: string }
         email: { type: string, format: email }
         displayName: { type: string }
+        permissionCodes:
+          type: array
+          description: 当前用户通过角色获得的权限代码，已去重并按代码排序。
+          items: { type: string }
     ManagedUser:
       type: object
       required: [id, username, displayName, status, roleIds, roleNames, createdAt]
