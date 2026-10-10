@@ -45,6 +45,49 @@ func (r *IdentityRepository) FindUserForLogin(ctx context.Context, organizationC
 	return user, err
 }
 
+func (r *IdentityRepository) LockUserAfterFailedLogin(ctx context.Context, input identity.AccountLockInput) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	command, err := tx.Exec(ctx, `
+		UPDATE users SET status = 'locked', updated_at = NOW()
+		WHERE id = $1 AND organization_id = $2 AND status = 'active'
+	`, input.UserID, input.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() == 0 {
+		return nil
+	}
+	revoked, err := tx.Exec(ctx, `
+		UPDATE sessions SET revoked_at = NOW()
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, input.UserID)
+	if err != nil {
+		return err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID,
+		RequestID:      input.RequestID,
+		Action:         "auth.account.lock",
+		ResourceType:   "user",
+		ResourceID:     input.UserID,
+		Result:         "success",
+		SourceIP:       input.SourceIP,
+		Detail: map[string]any{
+			"reason":          "failed_login_limit",
+			"attempts":        input.Attempts,
+			"revokedSessions": revoked.RowsAffected(),
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (r *IdentityRepository) SaveLogin(ctx context.Context, session identity.NewSession, event identity.AuditEvent) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

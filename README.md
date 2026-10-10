@@ -74,6 +74,7 @@ go run ./cmd/server
 - `PUT /api/v1/users/{userId}`
 - `PATCH /api/v1/users/{userId}/status`
 - `PUT /api/v1/users/{userId}/password`
+- `POST /api/v1/users/{userId}/unlock`
 - `PUT /api/v1/users/{userId}/roles`
 - `PATCH /api/v1/users/{userId}/department`
 
@@ -108,6 +109,8 @@ go run ./cmd/server
 登录请求需要提供 `organizationCode`、`username` 和 `password`。登录成功后服务端写入仅限 `/api`、前端不可读取的 HttpOnly 会话 Cookie，同时写入同源前端可读取的 `harness_admin_csrf` Cookie。管理端会在退出及后续写接口中自动把该值放入 `X-CSRF-Token` 请求头；非浏览器客户端也可以使用登录响应中的 `csrfToken`。登录和当前用户响应同时返回由角色汇总得到的 `permissionCodes`，前端据此隐藏无权访问的菜单和管理操作，后端仍会对每次请求执行最终权限校验。
 
 当前账号可在“密码与会话”中修改密码和管理登录设备。自己修改密码会保留当前会话并吊销其他会话；管理员为其他用户重置密码会吊销该用户的全部会话。密码最少 3 位。
+
+同一企业账号在 15 分钟内连续登录失败 5 次后会被锁定，并立即吊销该账号的全部现有会话。拥有 `iam.user.write` 权限的管理员可在用户目录中解锁账号；解锁会同时清除 Redis 中的登录失败计数，使用户可以立即重新登录。
 
 ## 验证
 

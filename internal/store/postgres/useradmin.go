@@ -189,6 +189,9 @@ func (r *IdentityRepository) ChangeUserStatus(ctx context.Context, input useradm
 	if err != nil {
 		return useradmin.User{}, err
 	}
+	if previousStatus == "locked" {
+		return useradmin.User{}, useradmin.ErrLockedUserStatus
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE users SET status = $1, updated_at = NOW()
 		WHERE id = $2 AND organization_id = $3
@@ -278,6 +281,81 @@ func (r *IdentityRepository) ResetUserPassword(ctx context.Context, input userad
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (r *IdentityRepository) FindLockedUserIdentity(ctx context.Context, organizationID, userID string) (useradmin.LockedUserIdentity, error) {
+	var result useradmin.LockedUserIdentity
+	var status string
+	err := r.pool.QueryRow(ctx, `
+		SELECT o.code, u.username, u.status
+		FROM users u
+		JOIN organizations o ON o.id = u.organization_id
+		WHERE u.organization_id = $1 AND u.id = $2
+	`, organizationID, userID).Scan(&result.OrganizationCode, &result.Username, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return useradmin.LockedUserIdentity{}, useradmin.ErrUserNotFound
+	}
+	if err != nil {
+		return useradmin.LockedUserIdentity{}, err
+	}
+	if status != "locked" {
+		return useradmin.LockedUserIdentity{}, useradmin.ErrUserNotLocked
+	}
+	return result, nil
+}
+
+func (r *IdentityRepository) UnlockUser(ctx context.Context, input useradmin.UnlockInput) (useradmin.User, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return useradmin.User{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var previousStatus string
+	err = tx.QueryRow(ctx, `
+		SELECT status FROM users
+		WHERE id = $1 AND organization_id = $2
+		FOR UPDATE
+	`, input.UserID, input.OrganizationID).Scan(&previousStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return useradmin.User{}, useradmin.ErrUserNotFound
+	}
+	if err != nil {
+		return useradmin.User{}, err
+	}
+	if previousStatus != "locked" {
+		return useradmin.User{}, useradmin.ErrUserNotLocked
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET status = 'active', updated_at = NOW()
+		WHERE id = $1 AND organization_id = $2
+	`, input.UserID, input.OrganizationID); err != nil {
+		return useradmin.User{}, err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.ActorID,
+		RequestID:      input.RequestID,
+		Action:         "identity.user.unlock",
+		ResourceType:   "user",
+		ResourceID:     input.UserID,
+		Result:         "success",
+		SourceIP:       input.SourceIP,
+		Detail: map[string]any{
+			"previousStatus": previousStatus,
+			"status":         "active",
+		},
+	}); err != nil {
+		return useradmin.User{}, err
+	}
+	user, err := findManagedUser(ctx, tx, input.OrganizationID, input.UserID)
+	if err != nil {
+		return useradmin.User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return useradmin.User{}, err
+	}
+	return user, nil
 }
 
 func findManagedUser(ctx context.Context, queryer interface {

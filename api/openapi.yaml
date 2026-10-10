@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.6.0
+  version: 0.7.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -25,6 +25,8 @@ paths:
                 $ref: '#/components/schemas/LoginResponseEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '423':
+          description: 账号因连续登录失败已被锁定，需要管理员解锁。
         '429':
           description: 登录失败次数过多。
   /auth/me:
@@ -248,7 +250,7 @@ paths:
         '404':
           description: 用户不存在。
         '409':
-          description: 不能停用当前登录账号。
+          description: 不能停用当前登录账号；锁定用户必须使用解锁接口。
   /users/{userId}/password:
     put:
       summary: 重置用户密码
@@ -277,6 +279,30 @@ paths:
           description: 用户不存在。
         '409':
           description: 不能重置当前登录账号的密码。
+  /users/{userId}/unlock:
+    post:
+      summary: 解锁用户
+      description: 清除目标账号的登录失败计数并恢复为正常状态，需要 `iam.user.write` 权限。
+      operationId: unlockUser
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 用户已解锁，可以重新登录。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedUserEnvelope'
+        '404':
+          description: 用户不存在。
+        '409':
+          description: 用户当前未被锁定。
   /users/{userId}/roles:
     put:
       summary: 设置用户角色

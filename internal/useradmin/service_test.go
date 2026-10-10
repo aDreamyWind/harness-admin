@@ -12,6 +12,8 @@ type repositoryStub struct {
 	updated       ProfileUpdate
 	statusInput   ChangeStatusInput
 	passwordReset PasswordReset
+	lockedUser    LockedUserIdentity
+	unlockInput   UnlockInput
 }
 
 func (r *repositoryStub) ListUsers(_ context.Context, filter ListFilter) (UserList, error) {
@@ -39,9 +41,29 @@ func (r *repositoryStub) ResetUserPassword(_ context.Context, input PasswordRese
 	return nil
 }
 
+func (r *repositoryStub) FindLockedUserIdentity(context.Context, string, string) (LockedUserIdentity, error) {
+	return r.lockedUser, nil
+}
+
+func (r *repositoryStub) UnlockUser(_ context.Context, input UnlockInput) (User, error) {
+	r.unlockInput = input
+	return User{ID: input.UserID, Status: "active"}, nil
+}
+
+type loginFailureResetterStub struct {
+	organizationCode string
+	username         string
+}
+
+func (s *loginFailureResetterStub) Clear(_ context.Context, organizationCode, username string) error {
+	s.organizationCode = organizationCode
+	s.username = username
+	return nil
+}
+
 func TestListAppliesPaginationDefaults(t *testing.T) {
 	repository := &repositoryStub{}
-	service := NewService(repository, func(string) (string, error) { return "hash", nil })
+	service := NewService(repository, func(string) (string, error) { return "hash", nil }, &loginFailureResetterStub{})
 	if _, err := service.List(context.Background(), ListFilter{}); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +79,7 @@ func TestCreateHashesPassword(t *testing.T) {
 			t.Fatalf("收到的密码 = %q", password)
 		}
 		return "password-hash", nil
-	})
+	}, &loginFailureResetterStub{})
 	user, err := service.Create(context.Background(), CreateInput{
 		OrganizationID: "org-1",
 		ActorID:        "admin-1",
@@ -78,7 +100,7 @@ func TestCreateHashesPassword(t *testing.T) {
 }
 
 func TestCreateRejectsInvalidInput(t *testing.T) {
-	service := NewService(&repositoryStub{}, func(string) (string, error) { return "", errors.New("密码过短") })
+	service := NewService(&repositoryStub{}, func(string) (string, error) { return "", errors.New("密码过短") }, &loginFailureResetterStub{})
 	_, err := service.Create(context.Background(), CreateInput{
 		OrganizationID: "org-1", ActorID: "admin-1", Username: "user", DisplayName: "用户", Password: "123",
 	})
@@ -89,7 +111,7 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 
 func TestUpdateNormalizesProfile(t *testing.T) {
 	repository := &repositoryStub{}
-	service := NewService(repository, func(string) (string, error) { return "hash", nil })
+	service := NewService(repository, func(string) (string, error) { return "hash", nil }, &loginFailureResetterStub{})
 	user, err := service.Update(context.Background(), UpdateInput{
 		OrganizationID: "org-1",
 		ActorID:        "admin-1",
@@ -113,7 +135,7 @@ func TestUpdateNormalizesProfile(t *testing.T) {
 }
 
 func TestUpdateRejectsInvalidProfile(t *testing.T) {
-	service := NewService(&repositoryStub{}, func(string) (string, error) { return "hash", nil })
+	service := NewService(&repositoryStub{}, func(string) (string, error) { return "hash", nil }, &loginFailureResetterStub{})
 	for _, input := range []UpdateInput{
 		{OrganizationID: "org-1", ActorID: "admin-1", UserID: "user-1", DisplayName: ""},
 		{OrganizationID: "org-1", ActorID: "admin-1", UserID: "user-1", DisplayName: "用户", Email: "not-an-email"},
@@ -125,7 +147,7 @@ func TestUpdateRejectsInvalidProfile(t *testing.T) {
 }
 
 func TestChangeStatusRejectsDisablingSelf(t *testing.T) {
-	service := NewService(&repositoryStub{}, func(string) (string, error) { return "hash", nil })
+	service := NewService(&repositoryStub{}, func(string) (string, error) { return "hash", nil }, &loginFailureResetterStub{})
 	_, err := service.ChangeStatus(context.Background(), ChangeStatusInput{
 		OrganizationID: "org-1", ActorID: "user-1", UserID: "user-1", Status: "disabled",
 	})
@@ -141,7 +163,7 @@ func TestResetPasswordHashesPasswordAndRejectsSelf(t *testing.T) {
 			t.Fatalf("收到的密码 = %q", password)
 		}
 		return "password-hash", nil
-	})
+	}, &loginFailureResetterStub{})
 	if err := service.ResetPassword(context.Background(), ResetPasswordInput{
 		OrganizationID: "org-1", ActorID: "admin-1", UserID: "user-1", Password: "123",
 	}); err != nil {
@@ -154,5 +176,28 @@ func TestResetPasswordHashesPasswordAndRejectsSelf(t *testing.T) {
 		OrganizationID: "org-1", ActorID: "admin-1", UserID: "admin-1", Password: "123",
 	}); !errors.Is(err, ErrCannotResetSelf) {
 		t.Fatalf("错误 = %v，期望 ErrCannotResetSelf", err)
+	}
+}
+
+func TestUnlockClearsFailureCounterBeforeActivatingUser(t *testing.T) {
+	repository := &repositoryStub{lockedUser: LockedUserIdentity{OrganizationCode: "default", Username: "locked.user"}}
+	resetter := &loginFailureResetterStub{}
+	service := NewService(repository, func(string) (string, error) { return "hash", nil }, resetter)
+
+	user, err := service.Unlock(context.Background(), UnlockInput{
+		OrganizationID: "org-1",
+		ActorID:        "admin-1",
+		UserID:         "user-1",
+		RequestID:      "request-1",
+		SourceIP:       "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resetter.organizationCode != "default" || resetter.username != "locked.user" {
+		t.Fatalf("登录失败计数清理参数不正确: %#v", resetter)
+	}
+	if user.Status != "active" || repository.unlockInput.ActorID != "admin-1" || repository.unlockInput.RequestID != "request-1" {
+		t.Fatalf("解锁参数或返回结果不正确: user=%#v input=%#v", user, repository.unlockInput)
 	}
 }

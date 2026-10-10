@@ -12,12 +12,13 @@ import (
 )
 
 type Service struct {
-	repository   Repository
-	hashPassword PasswordHashFunc
+	repository    Repository
+	hashPassword  PasswordHashFunc
+	loginFailures LoginFailureResetter
 }
 
-func NewService(repository Repository, hashPassword PasswordHashFunc) *Service {
-	return &Service{repository: repository, hashPassword: hashPassword}
+func NewService(repository Repository, hashPassword PasswordHashFunc, loginFailures LoginFailureResetter) *Service {
+	return &Service{repository: repository, hashPassword: hashPassword, loginFailures: loginFailures}
 }
 
 func (s *Service) List(ctx context.Context, filter ListFilter) (UserList, error) {
@@ -122,7 +123,7 @@ func (s *Service) ChangeStatus(ctx context.Context, input ChangeStatusInput) (Us
 	}
 	user, err := s.repository.ChangeUserStatus(ctx, input)
 	if err != nil {
-		if errors.Is(err, ErrUserNotFound) {
+		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrLockedUserStatus) {
 			return User{}, err
 		}
 		return User{}, fmt.Errorf("修改用户状态失败: %w", err)
@@ -156,6 +157,30 @@ func (s *Service) ResetPassword(ctx context.Context, input ResetPasswordInput) e
 		return fmt.Errorf("重置用户密码失败: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) Unlock(ctx context.Context, input UnlockInput) (User, error) {
+	if input.OrganizationID == "" || input.ActorID == "" || input.UserID == "" {
+		return User{}, ErrInvalidInput
+	}
+	lockedUser, err := s.repository.FindLockedUserIdentity(ctx, input.OrganizationID, input.UserID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrUserNotLocked) {
+			return User{}, err
+		}
+		return User{}, fmt.Errorf("查询锁定用户失败: %w", err)
+	}
+	if err := s.loginFailures.Clear(ctx, lockedUser.OrganizationCode, lockedUser.Username); err != nil {
+		return User{}, fmt.Errorf("清除登录失败计数失败: %w", err)
+	}
+	user, err := s.repository.UnlockUser(ctx, input)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrUserNotLocked) {
+			return User{}, err
+		}
+		return User{}, fmt.Errorf("解锁用户失败: %w", err)
+	}
+	return user, nil
 }
 
 func validLength(value string, minimum, maximum int) bool {

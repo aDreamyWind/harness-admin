@@ -14,6 +14,8 @@ var (
 	ErrCannotDisableSelf = errors.New("不能停用当前登录账号")
 	ErrCannotResetSelf   = errors.New("请通过账号安全修改自己的密码")
 	ErrInvalidUserStatus = errors.New("用户状态不正确")
+	ErrUserNotLocked     = errors.New("用户当前未被锁定")
+	ErrLockedUserStatus  = errors.New("锁定用户请使用解锁操作")
 )
 
 type User struct {
@@ -117,12 +119,31 @@ type PasswordReset struct {
 	SourceIP       string
 }
 
+type UnlockInput struct {
+	OrganizationID string
+	ActorID        string
+	UserID         string
+	RequestID      string
+	SourceIP       string
+}
+
+type LockedUserIdentity struct {
+	OrganizationCode string
+	Username         string
+}
+
 type Repository interface {
 	ListUsers(ctx context.Context, filter ListFilter) (UserList, error)
 	CreateUser(ctx context.Context, input NewUser) (User, error)
 	UpdateUser(ctx context.Context, input ProfileUpdate) (User, error)
 	ChangeUserStatus(ctx context.Context, input ChangeStatusInput) (User, error)
 	ResetUserPassword(ctx context.Context, input PasswordReset) error
+	FindLockedUserIdentity(ctx context.Context, organizationID, userID string) (LockedUserIdentity, error)
+	UnlockUser(ctx context.Context, input UnlockInput) (User, error)
 }
 
 type PasswordHashFunc func(password string) (string, error)
+
+type LoginFailureResetter interface {
+	Clear(ctx context.Context, organizationCode, username string) error
+}

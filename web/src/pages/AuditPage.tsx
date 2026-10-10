@@ -22,6 +22,7 @@ const { Paragraph, Text, Title } = Typography
 
 const actionLabels: Record<string, string> = {
   'auth.login': '登录',
+  'auth.account.lock': '登录失败锁定账号',
   'auth.logout': '退出登录',
   'auth.password.change': '修改密码',
   'auth.session.revoke': '退出指定设备',
@@ -33,6 +34,7 @@ const actionLabels: Record<string, string> = {
   'identity.user.update': '修改用户资料',
   'identity.user.status_change': '修改用户状态',
   'identity.user.password_reset': '重置用户密码',
+  'identity.user.unlock': '管理员解锁用户',
   'identity.user.roles_change': '调整用户角色',
   'identity.user.department_change': '调整用户部门',
   'identity.role.create': '创建角色',

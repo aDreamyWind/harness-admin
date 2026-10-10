@@ -55,7 +55,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	loginLimiter := cache.NewLoginLimiter(redisClient, 5, 15*time.Minute)
 	authService := identity.NewService(identityRepository, loginLimiter, cfg.SessionTTL)
 	accessService := access.NewService(identityRepository)
-	userAdminService := useradmin.NewService(identityRepository, identity.HashPassword)
+	userAdminService := useradmin.NewService(identityRepository, identity.HashPassword, loginLimiter)
 	roleAdminService := roleadmin.NewService(identityRepository)
 	departmentAdminService := departmentadmin.NewService(identityRepository)
 	organizationAdminService := organizationadmin.NewService(identityRepository)

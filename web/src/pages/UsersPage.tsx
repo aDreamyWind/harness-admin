@@ -1,4 +1,4 @@
-import { EditOutlined, KeyOutlined, PlusOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
+import { EditOutlined, KeyOutlined, PlusOutlined, SearchOutlined, UnlockOutlined, UserOutlined } from '@ant-design/icons'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -27,6 +27,7 @@ import {
   createUser,
   listUsers,
   resetUserPassword,
+  unlockUser,
   updateUser,
   type CreateUserInput,
   type ManagedUser,
@@ -144,6 +145,15 @@ export function UsersPage() {
     onError: (error) => messageApi.error(error instanceof Error ? error.message : '密码重置失败'),
   })
 
+  const unlockMutation = useMutation({
+    mutationFn: unlockUser,
+    onSuccess: async () => {
+      messageApi.success('用户已解锁，可以重新登录')
+      await queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error) => messageApi.error(error instanceof Error ? error.message : '用户解锁失败'),
+  })
+
   const columns: TableColumnsType<ManagedUser> = [
     {
       title: '用户',
@@ -255,18 +265,32 @@ export function UsersPage() {
             >
               密码
             </Button>
-            <Popconfirm
-              title={nextStatus === 'disabled' ? '停用这个用户？' : '启用这个用户？'}
-              description={nextStatus === 'disabled' ? '停用后，该用户的现有会话会立即失效。' : '启用后，该用户可以重新登录。'}
-              okText={nextStatus === 'disabled' ? '停用' : '启用'}
-              cancelText="取消"
-              disabled={isSelf}
-              onConfirm={() => statusMutation.mutate({ id: user.id, nextStatus })}
-            >
-              <Button type="link" size="small" disabled={isSelf || user.status === 'locked'}>
-                {nextStatus === 'disabled' ? '停用' : '启用'}
-              </Button>
-            </Popconfirm>
+            {user.status === 'locked' ? (
+              <Popconfirm
+                title="解锁这个用户？"
+                description="解锁后，该用户可以立即重新登录。"
+                okText="解锁"
+                cancelText="取消"
+                onConfirm={() => unlockMutation.mutate(user.id)}
+              >
+                <Button type="link" size="small" icon={<UnlockOutlined />} loading={unlockMutation.isPending}>
+                  解锁
+                </Button>
+              </Popconfirm>
+            ) : (
+              <Popconfirm
+                title={nextStatus === 'disabled' ? '停用这个用户？' : '启用这个用户？'}
+                description={nextStatus === 'disabled' ? '停用后，该用户的现有会话会立即失效。' : '启用后，该用户可以重新登录。'}
+                okText={nextStatus === 'disabled' ? '停用' : '启用'}
+                cancelText="取消"
+                disabled={isSelf}
+                onConfirm={() => statusMutation.mutate({ id: user.id, nextStatus })}
+              >
+                <Button type="link" size="small" disabled={isSelf}>
+                  {nextStatus === 'disabled' ? '停用' : '启用'}
+                </Button>
+              </Popconfirm>
+            )}
           </Space>
         )
       },

@@ -20,10 +20,16 @@ type repositoryStub struct {
 	updateRevoked  int64
 	sessions       []UserSession
 	sessionAction  SessionActionInput
+	accountLock    AccountLockInput
 }
 
 func (r *repositoryStub) FindUserForLogin(context.Context, string, string) (User, error) {
 	return r.user, r.findUserErr
+}
+
+func (r *repositoryStub) LockUserAfterFailedLogin(_ context.Context, input AccountLockInput) error {
+	r.accountLock = input
+	return nil
 }
 
 func (r *repositoryStub) SaveLogin(_ context.Context, session NewSession, event AuditEvent) error {
@@ -72,16 +78,20 @@ func (r *repositoryStub) RevokeOtherUserSessions(_ context.Context, input Sessio
 
 type limiterStub struct {
 	allowed  bool
+	failure  LoginFailure
 	failures int
 	clears   int
 }
 
-func (l *limiterStub) Allow(context.Context, string) (bool, error) { return l.allowed, nil }
-func (l *limiterStub) RecordFailure(context.Context, string) error {
+func (l *limiterStub) Allow(context.Context, string, string) (bool, error) { return l.allowed, nil }
+func (l *limiterStub) RecordFailure(context.Context, string, string) (LoginFailure, error) {
 	l.failures++
-	return nil
+	if l.failure.Attempts == 0 {
+		l.failure.Attempts = int64(l.failures)
+	}
+	return l.failure, nil
 }
-func (l *limiterStub) Clear(context.Context, string) error {
+func (l *limiterStub) Clear(context.Context, string, string) error {
 	l.clears++
 	return nil
 }
@@ -167,6 +177,52 @@ func TestLoginStopsWhenRateLimited(t *testing.T) {
 	})
 	if !errors.Is(err, ErrTooManyAttempts) {
 		t.Fatalf("错误 = %v，期望 ErrTooManyAttempts", err)
+	}
+}
+
+func TestLoginLocksActiveAccountAfterFailureLimit(t *testing.T) {
+	passwordHash, err := HashPassword("correct-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &repositoryStub{user: User{
+		ID: "user-1", OrganizationID: "org-1", Username: "admin",
+		PasswordHash: passwordHash, Status: "active",
+	}}
+	limiter := &limiterStub{allowed: true, failure: LoginFailure{Attempts: 5, LimitReached: true}}
+	service := NewService(repository, limiter, time.Hour)
+
+	_, err = service.Login(context.Background(), LoginInput{
+		OrganizationCode: "default", Username: "admin", Password: "wrong-password",
+		RequestID: "request-1", SourceIP: "127.0.0.1",
+	})
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("错误 = %v，期望 ErrInvalidCredentials", err)
+	}
+	if repository.accountLock.UserID != "user-1" || repository.accountLock.OrganizationID != "org-1" ||
+		repository.accountLock.Attempts != 5 || repository.accountLock.RequestID != "request-1" {
+		t.Fatalf("锁定账号参数不正确: %#v", repository.accountLock)
+	}
+}
+
+func TestLoginReturnsAccountLockedForCorrectPassword(t *testing.T) {
+	passwordHash, err := HashPassword("correct-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &repositoryStub{user: User{
+		ID: "user-1", OrganizationID: "org-1", Username: "admin",
+		PasswordHash: passwordHash, Status: "locked",
+	}}
+	service := NewService(repository, &limiterStub{allowed: true}, time.Hour)
+	_, err = service.Login(context.Background(), LoginInput{
+		OrganizationCode: "default", Username: "admin", Password: "correct-password",
+	})
+	if !errors.Is(err, ErrAccountLocked) {
+		t.Fatalf("错误 = %v，期望 ErrAccountLocked", err)
+	}
+	if len(repository.audits) != 1 || repository.audits[0].Detail["reason"] != "account_locked" {
+		t.Fatalf("锁定账号登录审计不正确: %#v", repository.audits)
 	}
 }
 

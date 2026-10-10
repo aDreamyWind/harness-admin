@@ -82,3 +82,10 @@ export function resetUserPassword(userId: string, password: string): Promise<voi
     body: JSON.stringify({ password }),
   })
 }
+
+export function unlockUser(userId: string): Promise<ManagedUser> {
+	return request<ManagedUser>(`/api/v1/users/${userId}/unlock`, {
+		method: 'POST',
+		headers: csrfHeaders(),
+	})
+}

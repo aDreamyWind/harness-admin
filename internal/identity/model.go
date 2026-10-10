@@ -8,6 +8,7 @@ import (
 
 var (
 	ErrInvalidCredentials  = errors.New("用户名或密码错误")
+	ErrAccountLocked       = errors.New("账号已锁定，请联系管理员解锁")
 	ErrAccountDisabled     = errors.New("账号不可用")
 	ErrTooManyAttempts     = errors.New("登录尝试过于频繁")
 	ErrUnauthorized        = errors.New("登录状态无效")
@@ -50,6 +51,14 @@ type NewSession struct {
 	UserAgent     string
 	SourceIP      string
 	ExpiresAt     time.Time
+}
+
+type AccountLockInput struct {
+	OrganizationID string
+	UserID         string
+	Attempts       int64
+	RequestID      string
+	SourceIP       string
 }
 
 type UserSession struct {
@@ -102,6 +111,7 @@ type AuditEvent struct {
 
 type Repository interface {
 	FindUserForLogin(ctx context.Context, organizationCode, username string) (User, error)
+	LockUserAfterFailedLogin(ctx context.Context, input AccountLockInput) error
 	SaveLogin(ctx context.Context, session NewSession, event AuditEvent) error
 	FindSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
 	RevokeSession(ctx context.Context, sessionID string, event AuditEvent) error
@@ -114,9 +124,14 @@ type Repository interface {
 }
 
 type LoginLimiter interface {
-	Allow(ctx context.Context, key string) (bool, error)
-	RecordFailure(ctx context.Context, key string) error
-	Clear(ctx context.Context, key string) error
+	Allow(ctx context.Context, organizationCode, username string) (bool, error)
+	RecordFailure(ctx context.Context, organizationCode, username string) (LoginFailure, error)
+	Clear(ctx context.Context, organizationCode, username string) error
+}
+
+type LoginFailure struct {
+	Attempts     int64
+	LimitReached bool
 }
 
 type LoginInput struct {

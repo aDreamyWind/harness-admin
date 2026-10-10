@@ -263,6 +263,8 @@ func handleAuthError(ctx *gin.Context, logger *slog.Logger, err error) {
 		httpx.Fail(ctx, http.StatusUnauthorized, "invalid_credentials", "企业代码、用户名或密码错误")
 	case errors.Is(err, identity.ErrAccountDisabled):
 		httpx.Fail(ctx, http.StatusForbidden, "account_unavailable", "账号当前不可用")
+	case errors.Is(err, identity.ErrAccountLocked):
+		httpx.Fail(ctx, http.StatusLocked, "account_locked", err.Error())
 	case errors.Is(err, identity.ErrTooManyAttempts):
 		ctx.Header("Retry-After", "900")
 		httpx.Fail(ctx, http.StatusTooManyRequests, "too_many_attempts", "登录失败次数过多，请稍后再试")

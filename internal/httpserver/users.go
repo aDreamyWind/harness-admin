@@ -21,6 +21,7 @@ type UserAdminService interface {
 	Update(context.Context, useradmin.UpdateInput) (useradmin.User, error)
 	ChangeStatus(context.Context, useradmin.ChangeStatusInput) (useradmin.User, error)
 	ResetPassword(context.Context, useradmin.ResetPasswordInput) error
+	Unlock(context.Context, useradmin.UnlockInput) (useradmin.User, error)
 }
 
 type createUserRequest struct {
@@ -72,6 +73,7 @@ func registerUserRoutes(router *gin.Engine, deps Dependencies) {
 	group.PUT("/:id", requirePermission(deps, "iam.user.write"), requireCSRF(deps), updateUserHandler(deps))
 	group.PATCH("/:id/status", requirePermission(deps, "iam.user.write"), requireCSRF(deps), changeUserStatusHandler(deps))
 	group.PUT("/:id/password", requirePermission(deps, "iam.user.write"), requireCSRF(deps), resetUserPasswordHandler(deps))
+	group.POST("/:id/unlock", requirePermission(deps, "iam.user.write"), requireCSRF(deps), unlockUserHandler(deps))
 }
 
 func updateUserHandler(deps Dependencies) gin.HandlerFunc {
@@ -129,6 +131,28 @@ func resetUserPasswordHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, gin.H{"reset": true})
+	}
+}
+
+func unlockUserHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if _, err := uuid.Parse(ctx.Param("id")); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "用户标识格式不正确")
+			return
+		}
+		session := currentSession(ctx)
+		user, err := deps.UserAdmin.Unlock(ctx.Request.Context(), useradmin.UnlockInput{
+			OrganizationID: session.User.OrganizationID,
+			ActorID:        session.User.ID,
+			UserID:         ctx.Param("id"),
+			RequestID:      contextString(ctx, "request_id"),
+			SourceIP:       ctx.ClientIP(),
+		})
+		if err != nil {
+			handleUserAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, presentManagedUser(user))
 	}
 }
 
@@ -237,6 +261,10 @@ func handleUserAdminError(ctx *gin.Context, logger *slog.Logger, err error) {
 		httpx.Fail(ctx, http.StatusConflict, "cannot_disable_self", "不能停用当前登录账号")
 	case errors.Is(err, useradmin.ErrCannotResetSelf):
 		httpx.Fail(ctx, http.StatusConflict, "cannot_reset_self", err.Error())
+	case errors.Is(err, useradmin.ErrUserNotLocked):
+		httpx.Fail(ctx, http.StatusConflict, "user_not_locked", err.Error())
+	case errors.Is(err, useradmin.ErrLockedUserStatus):
+		httpx.Fail(ctx, http.StatusConflict, "locked_user_requires_unlock", err.Error())
 	case errors.Is(err, useradmin.ErrUserNotFound):
 		httpx.Fail(ctx, http.StatusNotFound, "user_not_found", "用户不存在")
 	default:

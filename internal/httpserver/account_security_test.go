@@ -54,6 +54,7 @@ func (*accountAuthStub) RevokeOtherSessions(context.Context, identity.Session, s
 type accountUserAdminStub struct {
 	updateInput useradmin.UpdateInput
 	resetInput  useradmin.ResetPasswordInput
+	unlockInput useradmin.UnlockInput
 	resetErr    error
 }
 
@@ -77,6 +78,11 @@ func (*accountUserAdminStub) ChangeStatus(context.Context, useradmin.ChangeStatu
 func (s *accountUserAdminStub) ResetPassword(_ context.Context, input useradmin.ResetPasswordInput) error {
 	s.resetInput = input
 	return s.resetErr
+}
+
+func (s *accountUserAdminStub) Unlock(_ context.Context, input useradmin.UnlockInput) (useradmin.User, error) {
+	s.unlockInput = input
+	return useradmin.User{ID: input.UserID, Status: "active"}, nil
 }
 
 type accountAccessStub struct{}
@@ -204,6 +210,27 @@ func TestUpdateUserHandlerUsesCurrentOrganizationAndActor(t *testing.T) {
 		input.UserID != "917e4f53-3cb0-4df2-8027-c0a49fd58d25" || input.DisplayName != "新名称" ||
 		input.Email != "user@example.com" || input.RequestID != "request-3" {
 		t.Fatalf("修改用户资料参数不完整: %#v", input)
+	}
+}
+
+func TestUnlockUserHandlerUsesCurrentOrganizationAndActor(t *testing.T) {
+	auth := &accountAuthStub{session: accountTestSession()}
+	users := &accountUserAdminStub{}
+	router := newAccountSecurityTestRouter(auth, users)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/users/917e4f53-3cb0-4df2-8027-c0a49fd58d25/unlock", nil)
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.Header.Set("X-Request-ID", "request-4")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 %d；响应 = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	input := users.unlockInput
+	if input.OrganizationID != "org-1" || input.ActorID != "user-1" ||
+		input.UserID != "917e4f53-3cb0-4df2-8027-c0a49fd58d25" || input.RequestID != "request-4" {
+		t.Fatalf("解锁用户参数不完整: %#v", input)
 	}
 }
 

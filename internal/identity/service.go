@@ -40,8 +40,7 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 		return LoginResult{}, ErrInvalidCredentials
 	}
 
-	limitKey := loginLimitKey(organizationCode, username, input.SourceIP)
-	allowed, err := s.limiter.Allow(ctx, limitKey)
+	allowed, err := s.limiter.Allow(ctx, organizationCode, username)
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("检查登录频率失败: %w", err)
 	}
@@ -53,18 +52,33 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			_ = VerifyPassword(dummyPasswordHash, input.Password)
-			s.recordFailedLogin(ctx, limitKey, input, "user_not_found")
+			if err := s.recordFailedLogin(ctx, organizationCode, username, input, "user_not_found", User{}); err != nil {
+				return LoginResult{}, fmt.Errorf("记录失败登录失败: %w", err)
+			}
 			return LoginResult{}, ErrInvalidCredentials
 		}
 		return LoginResult{}, fmt.Errorf("查询登录用户失败: %w", err)
 	}
 	if !VerifyPassword(user.PasswordHash, input.Password) {
-		s.recordFailedLogin(ctx, limitKey, input, "password_mismatch")
+		if err := s.recordFailedLogin(ctx, organizationCode, username, input, "password_mismatch", user); err != nil {
+			return LoginResult{}, fmt.Errorf("记录失败登录失败: %w", err)
+		}
 		return LoginResult{}, ErrInvalidCredentials
 	}
+	if user.Status == "locked" {
+		if err := s.recordRejectedLogin(ctx, input, user, "account_locked"); err != nil {
+			return LoginResult{}, fmt.Errorf("记录锁定账号登录失败: %w", err)
+		}
+		return LoginResult{}, ErrAccountLocked
+	}
 	if user.Status != "active" {
-		s.recordFailedLogin(ctx, limitKey, input, "account_"+user.Status)
+		if err := s.recordRejectedLogin(ctx, input, user, "account_"+user.Status); err != nil {
+			return LoginResult{}, fmt.Errorf("记录不可用账号登录失败: %w", err)
+		}
 		return LoginResult{}, ErrAccountDisabled
+	}
+	if err := s.limiter.Clear(ctx, organizationCode, username); err != nil {
+		return LoginResult{}, fmt.Errorf("清除登录失败计数失败: %w", err)
 	}
 
 	token, err := randomToken(32)
@@ -100,8 +114,6 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("保存登录会话失败: %w", err)
 	}
-	_ = s.limiter.Clear(ctx, limitKey)
-
 	user.PasswordHash = ""
 	return LoginResult{User: user, Token: token, CSRFToken: csrfToken, ExpiresAt: expiresAt}, nil
 }
@@ -235,14 +247,56 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, session Session, requ
 	return revoked, nil
 }
 
-func (s *Service) recordFailedLogin(ctx context.Context, limitKey string, input LoginInput, reason string) {
-	_ = s.limiter.RecordFailure(ctx, limitKey)
-	_ = s.repository.RecordAudit(ctx, AuditEvent{
-		RequestID:    input.RequestID,
-		Action:       "auth.login",
-		ResourceType: "session",
-		Result:       "failed",
-		SourceIP:     input.SourceIP,
+func (s *Service) recordFailedLogin(
+	ctx context.Context,
+	organizationCode string,
+	username string,
+	input LoginInput,
+	reason string,
+	user User,
+) error {
+	failure, err := s.limiter.RecordFailure(ctx, organizationCode, username)
+	if err != nil {
+		return err
+	}
+	if failure.LimitReached && user.ID != "" && user.Status == "active" {
+		if err := s.repository.LockUserAfterFailedLogin(ctx, AccountLockInput{
+			OrganizationID: user.OrganizationID,
+			UserID:         user.ID,
+			Attempts:       failure.Attempts,
+			RequestID:      input.RequestID,
+			SourceIP:       input.SourceIP,
+		}); err != nil {
+			return err
+		}
+		if err := s.limiter.Clear(ctx, organizationCode, username); err != nil {
+			return err
+		}
+	}
+	return s.repository.RecordAudit(ctx, AuditEvent{
+		OrganizationID: user.OrganizationID,
+		RequestID:      input.RequestID,
+		Action:         "auth.login",
+		ResourceType:   "session",
+		Result:         "failed",
+		SourceIP:       input.SourceIP,
+		Detail: map[string]any{
+			"organizationCode": input.OrganizationCode,
+			"username":         input.Username,
+			"reason":           reason,
+			"attempts":         failure.Attempts,
+		},
+	})
+}
+
+func (s *Service) recordRejectedLogin(ctx context.Context, input LoginInput, user User, reason string) error {
+	return s.repository.RecordAudit(ctx, AuditEvent{
+		OrganizationID: user.OrganizationID,
+		RequestID:      input.RequestID,
+		Action:         "auth.login",
+		ResourceType:   "session",
+		Result:         "failed",
+		SourceIP:       input.SourceIP,
 		Detail: map[string]any{
 			"organizationCode": input.OrganizationCode,
 			"username":         input.Username,
@@ -262,9 +316,4 @@ func randomToken(length int) (string, error) {
 func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
-}
-
-func loginLimitKey(organizationCode, username, sourceIP string) string {
-	sum := sha256.Sum256([]byte(organizationCode + "\x00" + username + "\x00" + sourceIP))
-	return "auth:login:" + hex.EncodeToString(sum[:])
 }
