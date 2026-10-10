@@ -8,6 +8,7 @@ export interface ManagedUser {
   departmentId?: string
   departmentName?: string
   status: 'active' | 'locked' | 'disabled'
+  roleIds: string[]
   roleNames: string[]
   lastLoginAt?: string
   createdAt: string

@@ -436,6 +436,94 @@ select {
   margin-bottom: 18px;
 }
 
+.role-identity-cell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.role-identity-cell strong,
+.role-identity-cell small,
+.user-role-options .ant-checkbox-wrapper span:last-child > span,
+.user-role-options .ant-checkbox-wrapper small,
+.permission-group-options .ant-checkbox-wrapper span:last-child > span,
+.permission-group-options .ant-checkbox-wrapper small {
+  display: block;
+}
+
+.role-identity-cell strong {
+  color: #26364b;
+  font-size: 13px;
+}
+
+.role-identity-cell small,
+.user-role-options .ant-checkbox-wrapper small,
+.permission-group-options .ant-checkbox-wrapper small {
+  margin-top: 2px;
+  color: #8793a2;
+  font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
+}
+
+.permission-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.permission-tags .ant-tag {
+  margin: 0;
+}
+
+.role-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.permission-matrix,
+.user-role-options {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+}
+
+.permission-group {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid #e7edf3;
+}
+
+.permission-group-title {
+  color: #4b5c72;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.permission-group-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.permission-group-options .ant-checkbox-wrapper,
+.user-role-options .ant-checkbox-wrapper {
+  align-items: flex-start;
+  margin-inline-start: 0;
+}
+
+.user-role-options {
+  padding: 6px 0;
+}
+
+.user-role-options .ant-checkbox-wrapper {
+  padding: 10px 12px;
+  border: 1px solid #e1e8ee;
+  border-radius: 5px;
+}
+
 .page-heading {
   display: flex;
   align-items: flex-end;
@@ -851,6 +939,12 @@ select {
   .directory-total {
     width: 100%;
     margin-left: 0;
+  }
+
+  .role-form-grid,
+  .permission-group,
+  .permission-group-options {
+    grid-template-columns: 1fr;
   }
 
   .page-heading h1.ant-typography {

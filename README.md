@@ -11,7 +11,7 @@ Harness Admin 是面向企业 Harness 的控制平面。项目从零构建，不
 - React + Ant Design 管理端外壳；
 - 用户、组织、角色、会话和审计的首版数据模型；
 - Argon2id 密码、服务端会话、CSRF 校验与登录限流。
-- 基于角色权限的接口授权与企业用户管理。
+- 基于角色权限的接口授权、企业用户管理与角色权限配置。
 
 ## 技术栈
 
@@ -65,6 +65,14 @@ go run ./cmd/server
 - `GET /api/v1/users`
 - `POST /api/v1/users`
 - `PATCH /api/v1/users/{userId}/status`
+- `PUT /api/v1/users/{userId}/roles`
+
+角色权限接口：
+
+- `GET /api/v1/roles`
+- `POST /api/v1/roles`
+- `PUT /api/v1/roles/{roleId}`
+- `GET /api/v1/permissions`
 
 接口契约见 [`api/openapi.yaml`](api/openapi.yaml)。
 

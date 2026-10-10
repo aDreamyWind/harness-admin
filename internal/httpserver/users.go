@@ -41,6 +41,7 @@ type managedUserResponse struct {
 	DepartmentID   string     `json:"departmentId,omitempty"`
 	DepartmentName string     `json:"departmentName,omitempty"`
 	Status         string     `json:"status"`
+	RoleIDs        []string   `json:"roleIds"`
 	RoleNames      []string   `json:"roleNames"`
 	LastLoginAt    *time.Time `json:"lastLoginAt,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
@@ -175,7 +176,7 @@ func presentManagedUser(user useradmin.User) managedUserResponse {
 	return managedUserResponse{
 		ID: user.ID, Username: user.Username, Email: user.Email, DisplayName: user.DisplayName,
 		DepartmentID: user.DepartmentID, DepartmentName: user.DepartmentName, Status: user.Status,
-		RoleNames: user.RoleNames, LastLoginAt: user.LastLoginAt, CreatedAt: user.CreatedAt,
+		RoleIDs: user.RoleIDs, RoleNames: user.RoleNames, LastLoginAt: user.LastLoginAt, CreatedAt: user.CreatedAt,
 	}
 }
 

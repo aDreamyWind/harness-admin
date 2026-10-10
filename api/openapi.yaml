@@ -145,6 +145,105 @@ paths:
           description: 用户不存在。
         '409':
           description: 不能停用当前登录账号。
+  /users/{userId}/roles:
+    put:
+      summary: 设置用户角色
+      operationId: assignUserRoles
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roleIds]
+              properties:
+                roleIds:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 用户角色已更新，需要 `iam.user.write` 权限。
+        '404':
+          description: 用户或角色不存在。
+        '409':
+          description: 不能修改当前登录账号的角色。
+  /roles:
+    get:
+      summary: 查询当前企业角色
+      operationId: listRoles
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 角色列表，需要 `iam.role.read` 权限。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleListEnvelope'
+    post:
+      summary: 创建角色
+      operationId: createRole
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRoleRequest' }
+      responses:
+        '201':
+          description: 角色创建成功，需要 `iam.role.write` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleEnvelope' }
+        '409':
+          description: 角色代码已存在。
+  /roles/{roleId}:
+    put:
+      summary: 修改自定义角色
+      operationId: updateRole
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: roleId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateRoleRequest' }
+      responses:
+        '200':
+          description: 角色已更新，需要 `iam.role.write` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoleEnvelope' }
+        '409':
+          description: 系统内置角色不允许修改。
+  /permissions:
+    get:
+      summary: 查询系统权限定义
+      operationId: listPermissions
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 权限列表，需要 `iam.role.read` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PermissionListEnvelope' }
 components:
   securitySchemes:
     sessionCookie:
@@ -188,6 +287,25 @@ components:
         email: { type: string, format: email }
         departmentId: { type: string, format: uuid }
         password: { type: string, format: password, minLength: 3 }
+    CreateRoleRequest:
+      type: object
+      required: [code, name, permissionCodes]
+      properties:
+        code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,79}$' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 500 }
+        permissionCodes:
+          type: array
+          items: { type: string }
+    UpdateRoleRequest:
+      type: object
+      required: [name, permissionCodes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 500 }
+        permissionCodes:
+          type: array
+          items: { type: string }
     AuthUser:
       type: object
       required: [id, organizationId, organization, organizationCode, username, displayName]
@@ -201,7 +319,7 @@ components:
         displayName: { type: string }
     ManagedUser:
       type: object
-      required: [id, username, displayName, status, roleNames, createdAt]
+      required: [id, username, displayName, status, roleIds, roleNames, createdAt]
       properties:
         id: { type: string, format: uuid }
         username: { type: string }
@@ -210,11 +328,38 @@ components:
         departmentId: { type: string, format: uuid }
         departmentName: { type: string }
         status: { type: string, enum: [active, locked, disabled] }
+        roleIds:
+          type: array
+          items: { type: string, format: uuid }
         roleNames:
           type: array
           items: { type: string }
         lastLoginAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
+    Role:
+      type: object
+      required: [id, code, name, description, builtIn, userCount, permissionCodes, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        description: { type: string }
+        builtIn: { type: boolean }
+        userCount: { type: integer, format: int64 }
+        permissionCodes:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+    Permission:
+      type: object
+      required: [id, code, name, resource, action, description]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        resource: { type: string }
+        action: { type: string }
+        description: { type: string }
     LoginResult:
       type: object
       required: [user, csrfToken, expiresAt]
@@ -264,3 +409,22 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/UserList' }
+    RoleEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Role' }
+    RoleListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+    PermissionListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Permission' }

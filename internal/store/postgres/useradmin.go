@@ -16,6 +16,12 @@ const managedUserColumns = `
 	u.id, u.username, COALESCE(u.email, ''), u.display_name,
 	COALESCE(u.department_id::text, ''), COALESCE(d.name, ''), u.status,
 	COALESCE((
+		SELECT ARRAY_AGG(r.id::text ORDER BY r.name)
+		FROM user_roles ur
+		JOIN roles r ON r.id = ur.role_id
+		WHERE ur.user_id = u.id
+	), '{}'::TEXT[]),
+	COALESCE((
 		SELECT ARRAY_AGG(r.name ORDER BY r.name)
 		FROM user_roles ur
 		JOIN roles r ON r.id = ur.role_id
@@ -184,7 +190,7 @@ func scanManagedUser(row rowScanner) (useradmin.User, error) {
 	var user useradmin.User
 	err := row.Scan(
 		&user.ID, &user.Username, &user.Email, &user.DisplayName,
-		&user.DepartmentID, &user.DepartmentName, &user.Status, &user.RoleNames,
+		&user.DepartmentID, &user.DepartmentName, &user.Status, &user.RoleIDs, &user.RoleNames,
 		&user.LastLoginAt, &user.CreatedAt,
 	)
 	return user, err

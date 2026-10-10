@@ -25,6 +25,7 @@ type Dependencies struct {
 	Auth          AuthService
 	Access        AuthorizationService
 	UserAdmin     UserAdminService
+	RoleAdmin     RoleAdminService
 	SessionCookie string
 }
 
@@ -61,6 +62,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.UserAdmin != nil {
 		registerUserRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.Access != nil && deps.RoleAdmin != nil {
+		registerRoleRoutes(router, deps)
 	}
 	router.NoRoute(func(ctx *gin.Context) {
 		httpx.Fail(ctx, http.StatusNotFound, "route_not_found", "请求的接口不存在")

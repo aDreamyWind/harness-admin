@@ -4,11 +4,13 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Form,
   Input,
   Modal,
   Popconfirm,
   Select,
+  Space,
   Table,
   Tag,
   Typography,
@@ -18,6 +20,7 @@ import {
 import { useState } from 'react'
 
 import { ApiError } from '../api/client'
+import { assignUserRoles, listRoles } from '../api/roles'
 import {
   changeUserStatus,
   createUser,
@@ -45,6 +48,8 @@ export function UsersPage() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
+  const [roleUser, setRoleUser] = useState<ManagedUser | null>(null)
+  const [selectedRoleIDs, setSelectedRoleIDs] = useState<string[]>([])
   const pageSize = 20
 
   const usersQuery = useQuery({
@@ -52,6 +57,8 @@ export function UsersPage() {
     queryFn: () => listUsers({ search, status, page, pageSize }),
     placeholderData: keepPreviousData,
   })
+
+  const rolesQuery = useQuery({ queryKey: ['roles'], queryFn: listRoles })
 
   const createMutation = useMutation({
     mutationFn: createUser,
@@ -71,6 +78,19 @@ export function UsersPage() {
       await queryClient.invalidateQueries({ queryKey: ['users'] })
     },
     onError: (error) => messageApi.error(error instanceof Error ? error.message : '状态修改失败'),
+  })
+
+  const assignRolesMutation = useMutation({
+    mutationFn: ({ userId, roleIds }: { userId: string; roleIds: string[] }) => assignUserRoles(userId, roleIds),
+    onSuccess: async () => {
+      messageApi.success('用户角色已更新')
+      setRoleUser(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['users'] }),
+        queryClient.invalidateQueries({ queryKey: ['roles'] }),
+      ])
+    },
+    onError: (error) => messageApi.error(error instanceof Error ? error.message : '角色分配失败'),
   })
 
   const columns: TableColumnsType<ManagedUser> = [
@@ -107,7 +127,7 @@ export function UsersPage() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
+      width: 150,
       render: (value: ManagedUser['status']) => <Tag color={statusLabels[value].color}>{statusLabels[value].text}</Tag>,
     },
     {
@@ -126,18 +146,28 @@ export function UsersPage() {
         const nextStatus = user.status === 'active' ? 'disabled' : 'active'
         const isSelf = user.id === currentUser?.id
         return (
-          <Popconfirm
-            title={nextStatus === 'disabled' ? '停用这个用户？' : '启用这个用户？'}
-            description={nextStatus === 'disabled' ? '停用后，该用户的现有会话会立即失效。' : '启用后，该用户可以重新登录。'}
-            okText={nextStatus === 'disabled' ? '停用' : '启用'}
-            cancelText="取消"
-            disabled={isSelf}
-            onConfirm={() => statusMutation.mutate({ id: user.id, nextStatus })}
-          >
-            <Button type="link" size="small" disabled={isSelf || user.status === 'locked'}>
-              {nextStatus === 'disabled' ? '停用' : '启用'}
+          <Space size={0}>
+            <Button
+              type="link"
+              size="small"
+              disabled={isSelf}
+              onClick={() => { setRoleUser(user); setSelectedRoleIDs(user.roleIds); assignRolesMutation.reset() }}
+            >
+              角色
             </Button>
-          </Popconfirm>
+            <Popconfirm
+              title={nextStatus === 'disabled' ? '停用这个用户？' : '启用这个用户？'}
+              description={nextStatus === 'disabled' ? '停用后，该用户的现有会话会立即失效。' : '启用后，该用户可以重新登录。'}
+              okText={nextStatus === 'disabled' ? '停用' : '启用'}
+              cancelText="取消"
+              disabled={isSelf}
+              onConfirm={() => statusMutation.mutate({ id: user.id, nextStatus })}
+            >
+              <Button type="link" size="small" disabled={isSelf || user.status === 'locked'}>
+                {nextStatus === 'disabled' ? '停用' : '启用'}
+              </Button>
+            </Popconfirm>
+          </Space>
         )
       },
     },
@@ -251,6 +281,35 @@ export function UsersPage() {
             <Input.Password autoComplete="new-password" placeholder="至少 3 位" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`分配角色${roleUser ? ` · ${roleUser.displayName}` : ''}`}
+        open={Boolean(roleUser)}
+        okText="保存角色"
+        cancelText="取消"
+        confirmLoading={assignRolesMutation.isPending}
+        onCancel={() => { setRoleUser(null); assignRolesMutation.reset() }}
+        onOk={() => roleUser && assignRolesMutation.mutate({ userId: roleUser.id, roleIds: selectedRoleIDs })}
+        destroyOnHidden
+      >
+        <Paragraph type="secondary">角色变更会立即影响该用户后续请求的权限。</Paragraph>
+        {assignRolesMutation.isError ? (
+          <Alert className="form-alert" type="error" showIcon message={assignRolesMutation.error instanceof Error ? assignRolesMutation.error.message : '角色分配失败'} />
+        ) : null}
+        <Checkbox.Group
+          className="user-role-options"
+          value={selectedRoleIDs}
+          onChange={(values) => setSelectedRoleIDs(values as string[])}
+        >
+          {(rolesQuery.data ?? []).map((role) => (
+            <Checkbox key={role.id} value={role.id}>
+              <span>{role.name}</span>
+              <small>{role.code}</small>
+            </Checkbox>
+          ))}
+        </Checkbox.Group>
+        {!rolesQuery.isLoading && !rolesQuery.data?.length ? <Text type="secondary">当前企业还没有可分配角色。</Text> : null}
       </Modal>
     </main>
   )

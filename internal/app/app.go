@@ -15,6 +15,7 @@ import (
 	"harness-admin/internal/database"
 	"harness-admin/internal/httpserver"
 	"harness-admin/internal/identity"
+	"harness-admin/internal/roleadmin"
 	pgstore "harness-admin/internal/store/postgres"
 	"harness-admin/internal/useradmin"
 )
@@ -52,6 +53,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	authService := identity.NewService(identityRepository, loginLimiter, cfg.SessionTTL)
 	accessService := access.NewService(identityRepository)
 	userAdminService := useradmin.NewService(identityRepository, identity.HashPassword)
+	roleAdminService := roleadmin.NewService(identityRepository)
 
 	handler := httpserver.New(httpserver.Dependencies{
 		AppName:       cfg.AppName,
@@ -62,6 +64,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		Auth:          authService,
 		Access:        accessService,
 		UserAdmin:     userAdminService,
+		RoleAdmin:     roleAdminService,
 		SessionCookie: cfg.SessionCookie,
 	})
 

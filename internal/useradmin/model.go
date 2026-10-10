@@ -23,6 +23,7 @@ type User struct {
 	DepartmentID   string
 	DepartmentName string
 	Status         string
+	RoleIDs        []string
 	RoleNames      []string
 	LastLoginAt    *time.Time
 	CreatedAt      time.Time
