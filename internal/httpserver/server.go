@@ -17,11 +17,15 @@ type HealthChecker interface {
 }
 
 type Dependencies struct {
-	AppName     string
-	Environment string
-	Logger      *slog.Logger
-	Database    HealthChecker
-	Cache       HealthChecker
+	AppName       string
+	Environment   string
+	Logger        *slog.Logger
+	Database      HealthChecker
+	Cache         HealthChecker
+	Auth          AuthService
+	Access        AuthorizationService
+	UserAdmin     UserAdminService
+	SessionCookie string
 }
 
 type bootstrapResponse struct {
@@ -44,6 +48,7 @@ func New(deps Dependencies) http.Handler {
 	}
 
 	router := gin.New()
+	_ = router.SetTrustedProxies(nil)
 	router.Use(requestID(), accessLog(deps.Logger), gin.Recovery())
 
 	router.GET("/healthz", func(ctx *gin.Context) {
@@ -51,6 +56,12 @@ func New(deps Dependencies) http.Handler {
 	})
 	router.GET("/readyz", readinessHandler(deps))
 	router.GET("/api/v1/system/bootstrap", bootstrapHandler(deps))
+	if deps.Auth != nil {
+		registerAuthRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.Access != nil && deps.UserAdmin != nil {
+		registerUserRoutes(router, deps)
+	}
 	router.NoRoute(func(ctx *gin.Context) {
 		httpx.Fail(ctx, http.StatusNotFound, "route_not_found", "请求的接口不存在")
 	})

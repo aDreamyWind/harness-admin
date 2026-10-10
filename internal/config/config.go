@@ -17,6 +17,8 @@ type Config struct {
 	RedisDB         int
 	AutoMigrate     bool
 	ShutdownTimeout time.Duration
+	SessionTTL      time.Duration
+	SessionCookie   string
 }
 
 func Load() (Config, error) {
@@ -34,6 +36,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	sessionTTL, err := durationValue("SESSION_TTL", 12*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		AppName:         value("APP_NAME", "Harness Admin"),
@@ -45,6 +51,11 @@ func Load() (Config, error) {
 		RedisDB:         redisDB,
 		AutoMigrate:     autoMigrate,
 		ShutdownTimeout: shutdownTimeout,
+		SessionTTL:      sessionTTL,
+		SessionCookie:   value("SESSION_COOKIE_NAME", "harness_admin_session"),
+	}
+	if cfg.SessionTTL < 15*time.Minute || cfg.SessionTTL > 30*24*time.Hour {
+		return Config{}, fmt.Errorf("SESSION_TTL 必须在 15 分钟到 30 天之间")
 	}
 
 	switch cfg.Environment {

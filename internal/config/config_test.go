@@ -8,6 +8,8 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("REDIS_DB", "")
 	t.Setenv("AUTO_MIGRATE", "")
 	t.Setenv("SHUTDOWN_TIMEOUT", "")
+	t.Setenv("SESSION_TTL", "")
+	t.Setenv("SESSION_COOKIE_NAME", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -19,11 +21,21 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.ShutdownTimeout.String() != "10s" {
 		t.Fatalf("默认停止超时不正确: %s", cfg.ShutdownTimeout)
 	}
+	if cfg.SessionTTL.String() != "12h0m0s" {
+		t.Fatalf("默认会话时长不正确: %s", cfg.SessionTTL)
+	}
 }
 
 func TestLoadRejectsInvalidEnvironment(t *testing.T) {
 	t.Setenv("APP_ENV", "unknown")
 	if _, err := Load(); err == nil {
 		t.Fatal("非法 APP_ENV 应返回错误")
+	}
+}
+
+func TestLoadRejectsUnsafeSessionTTL(t *testing.T) {
+	t.Setenv("SESSION_TTL", "5m")
+	if _, err := Load(); err == nil {
+		t.Fatal("过短 SESSION_TTL 应返回错误")
 	}
 }

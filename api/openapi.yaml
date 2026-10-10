@@ -1,0 +1,266 @@
+openapi: 3.1.0
+info:
+  title: Harness Admin API
+  version: 0.2.0
+  description: Harness 企业控制面 HTTP API。
+servers:
+  - url: /api/v1
+paths:
+  /auth/login:
+    post:
+      summary: 登录管理端
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功，同时写入会话与 CSRF Cookie。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponseEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: 登录失败次数过多。
+  /auth/me:
+    get:
+      summary: 获取当前登录用户
+      operationId: getCurrentUser
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 当前用户。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/logout:
+    post:
+      summary: 退出登录
+      operationId: logout
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        '200':
+          description: 会话已吊销。
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /users:
+    get:
+      summary: 查询当前企业用户
+      operationId: listUsers
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, locked, disabled]
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 分页用户列表，需要 `iam.user.read` 权限。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      summary: 创建用户
+      operationId: createUser
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: 用户创建成功，需要 `iam.user.write` 权限。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedUserEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: 用户名或邮箱已存在。
+  /users/{userId}/status:
+    patch:
+      summary: 修改用户状态
+      operationId: changeUserStatus
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [active, disabled]
+      responses:
+        '200':
+          description: 状态修改成功；停用时会吊销该用户全部会话。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedUserEnvelope'
+        '404':
+          description: 用户不存在。
+        '409':
+          description: 不能停用当前登录账号。
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: harness_admin_session
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+  responses:
+    BadRequest:
+      description: 请求参数不正确。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unauthorized:
+      description: 未登录或会话已失效。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: 权限不足或 CSRF 校验失败。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  schemas:
+    LoginRequest:
+      type: object
+      required: [organizationCode, username, password]
+      properties:
+        organizationCode: { type: string }
+        username: { type: string }
+        password: { type: string, format: password }
+    CreateUserRequest:
+      type: object
+      required: [username, displayName, password]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 80 }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, format: email }
+        departmentId: { type: string, format: uuid }
+        password: { type: string, format: password, minLength: 3 }
+    AuthUser:
+      type: object
+      required: [id, organizationId, organization, organizationCode, username, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        organization: { type: string }
+        organizationCode: { type: string }
+        username: { type: string }
+        email: { type: string, format: email }
+        displayName: { type: string }
+    ManagedUser:
+      type: object
+      required: [id, username, displayName, status, roleNames, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string, format: email }
+        displayName: { type: string }
+        departmentId: { type: string, format: uuid }
+        departmentName: { type: string }
+        status: { type: string, enum: [active, locked, disabled] }
+        roleNames:
+          type: array
+          items: { type: string }
+        lastLoginAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    LoginResult:
+      type: object
+      required: [user, csrfToken, expiresAt]
+      properties:
+        user: { $ref: '#/components/schemas/AuthUser' }
+        csrfToken: { type: string }
+        expiresAt: { type: string, format: date-time }
+    UserList:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedUser' }
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        pageSize: { type: integer }
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: '#/components/schemas/ErrorBody' }
+    UserEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/AuthUser' }
+    LoginResponseEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/LoginResult' }
+    ManagedUserEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ManagedUser' }
+    UserListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/UserList' }

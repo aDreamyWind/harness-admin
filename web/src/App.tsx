@@ -3,16 +3,22 @@ import {
   AppstoreOutlined,
   AuditOutlined,
   DashboardOutlined,
+  LogoutOutlined,
   MenuOutlined,
   NodeIndexOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   TeamOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
-import { Button, Drawer, Layout, Menu, Tag } from 'antd'
+import { Avatar, Button, Drawer, Dropdown, Layout, Menu, Spin, Tag, message, type MenuProps } from 'antd'
 import { useState } from 'react'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 
+import { useAuth } from './auth/AuthContext'
 import { DashboardPage } from './pages/DashboardPage'
+import { LoginPage } from './pages/LoginPage'
+import { UsersPage } from './pages/UsersPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -24,8 +30,8 @@ const menuItems = [
     label: '身份与组织',
     children: [
       { key: 'users', label: '用户' },
-      { key: 'departments', label: '部门' },
-      { key: 'roles', label: '角色与权限' },
+      { key: 'departments', label: '部门', disabled: true },
+      { key: 'roles', label: '角色与权限', disabled: true },
     ],
   },
   { key: 'models', icon: <AppstoreOutlined />, label: '模型目录', disabled: true },
@@ -35,7 +41,12 @@ const menuItems = [
   { key: 'settings', icon: <SettingOutlined />, label: '系统设置', disabled: true },
 ]
 
-function Navigation() {
+const menuRoutes: Record<string, string> = {
+  overview: '/',
+  users: '/identity/users',
+}
+
+function Navigation({ selectedKey, onNavigate }: { selectedKey: string; onNavigate: (path: string) => void }) {
   return (
     <>
       <div className="brand">
@@ -50,9 +61,13 @@ function Navigation() {
       <Menu
         theme="dark"
         mode="inline"
-        defaultSelectedKeys={['overview']}
+        selectedKeys={[selectedKey]}
         defaultOpenKeys={['identity']}
         items={menuItems}
+        onClick={({ key }) => {
+          const path = menuRoutes[key]
+          if (path) onNavigate(path)
+        }}
       />
       <div className="sider-footer">
         <span className="environment-dot" />
@@ -66,41 +81,105 @@ function Navigation() {
 }
 
 export function App() {
+  const { user, isLoading, logout } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [messageApi, messageContext] = message.useMessage()
+  const selectedMenuKey = location.pathname.startsWith('/identity/users') ? 'users' : 'overview'
+
+  function navigateFromMenu(path: string) {
+    navigate(path)
+    setMobileOpen(false)
+  }
+
+  if (isLoading) {
+    return (
+      <div className="auth-loading" role="status" aria-label="正在检查登录状态">
+        <Spin size="large" />
+        <span>正在检查登录状态</span>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <LoginPage />
+  }
+
+  const accountItems: MenuProps['items'] = [
+    {
+      key: 'identity',
+      disabled: true,
+      label: (
+        <div className="account-summary">
+          <strong>{user.displayName}</strong>
+          <span>{user.organization}</span>
+        </div>
+      ),
+    },
+    { type: 'divider' },
+    { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
+  ]
+
+  async function handleAccountAction(info: { key: string }) {
+    if (info.key !== 'logout' || loggingOut) return
+    setLoggingOut(true)
+    try {
+      await logout()
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : '退出失败，请稍后重试')
+    } finally {
+      setLoggingOut(false)
+    }
+  }
 
   return (
-    <Layout className="app-layout">
-      <Sider width={248} className="desktop-sider">
-        <Navigation />
-      </Sider>
-      <Drawer
-        placement="left"
-        size={280}
-        open={mobileOpen}
-        onClose={() => setMobileOpen(false)}
-        styles={{ body: { padding: 0, background: '#111b2d' } }}
-      >
-        <Navigation />
-      </Drawer>
-      <Layout>
-        <Header className="topbar">
-          <Button
-            className="mobile-menu"
-            type="text"
-            icon={<MenuOutlined />}
-            onClick={() => setMobileOpen(true)}
-            aria-label="打开导航"
-          />
-          <div className="breadcrumb-label">
-            <ApartmentOutlined />
-            企业 Agent 基础设施
-          </div>
-          <Tag className="phase-tag">Phase 0 · 建设中</Tag>
-        </Header>
-        <Content className="main-content">
-          <DashboardPage />
-        </Content>
+    <>
+      {messageContext}
+      <Layout className="app-layout">
+        <Sider width={248} className="desktop-sider">
+          <Navigation selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} />
+        </Sider>
+        <Drawer
+          placement="left"
+          size={280}
+          open={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+          styles={{ body: { padding: 0, background: '#111b2d' } }}
+        >
+          <Navigation selectedKey={selectedMenuKey} onNavigate={navigateFromMenu} />
+        </Drawer>
+        <Layout>
+          <Header className="topbar">
+            <Button
+              className="mobile-menu"
+              type="text"
+              icon={<MenuOutlined />}
+              onClick={() => setMobileOpen(true)}
+              aria-label="打开导航"
+            />
+            <div className="breadcrumb-label">
+              <ApartmentOutlined />
+              企业 Agent 基础设施
+            </div>
+            <Tag className="phase-tag">Phase 0 · 建设中</Tag>
+            <Dropdown menu={{ items: accountItems, onClick: handleAccountAction }} trigger={['click']}>
+              <Button className="account-trigger" type="text" loading={loggingOut}>
+                <Avatar size={28} icon={<UserOutlined />} />
+                <span>{user.displayName}</span>
+              </Button>
+            </Dropdown>
+          </Header>
+          <Content className="main-content">
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/identity/users" element={<UsersPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Content>
+        </Layout>
       </Layout>
-    </Layout>
+    </>
   )
 }

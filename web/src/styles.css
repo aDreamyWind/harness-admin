@@ -17,6 +17,139 @@ body {
   background: #edf3f7;
 }
 
+.auth-loading {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  color: #617086;
+  font-size: 13px;
+}
+
+.login-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 40px 20px;
+  border-top: 4px solid #2457d6;
+  background: #f4f7f9;
+}
+
+.login-panel {
+  width: min(100%, 430px);
+  padding: 34px 38px 30px;
+  border: 1px solid #d8e1e9;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.login-brand,
+.login-brand > span:last-child {
+  display: flex;
+}
+
+.login-brand {
+  align-items: center;
+  gap: 11px;
+  padding-bottom: 25px;
+  border-bottom: 1px solid #e4eaf0;
+}
+
+.login-brand > span:last-child {
+  flex-direction: column;
+}
+
+.login-brand-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 3px;
+  background: #1e4fc5;
+  color: #fff;
+  font: 700 12px/1 "SFMono-Regular", Menlo, monospace;
+}
+
+.login-brand strong {
+  color: #17243a;
+  font-size: 14px;
+}
+
+.login-brand small {
+  margin-top: 2px;
+  color: #7b899a;
+  font: 600 9px/1.2 "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.11em;
+}
+
+.login-heading {
+  margin: 31px 0 25px;
+}
+
+.login-kicker {
+  color: #2457d6;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.login-heading h1.ant-typography {
+  margin: 8px 0 7px;
+  color: #152238;
+  font-size: 27px;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+}
+
+.login-heading p.ant-typography {
+  margin: 0;
+  color: #6e7d90;
+  font-size: 13px;
+}
+
+.login-alert {
+  margin-bottom: 20px;
+}
+
+.login-panel .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.login-panel .ant-form-item-label > label {
+  color: #38475c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.login-panel .ant-input,
+.login-panel .ant-input-affix-wrapper {
+  border-radius: 3px;
+}
+
+.login-submit {
+  height: 42px;
+  margin-top: 4px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.login-footnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 25px;
+  padding-top: 18px;
+  border-top: 1px solid #e4eaf0;
+  color: #8290a1;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.login-footnote .anticon {
+  margin-top: 3px;
+  color: #617086;
+}
+
 button,
 input,
 textarea,
@@ -152,6 +285,38 @@ select {
   font: 600 11px/24px "SFMono-Regular", Menlo, monospace;
 }
 
+.account-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  margin-left: 12px;
+  padding: 0 8px;
+  color: #33445c;
+  font-size: 12px;
+}
+
+.account-trigger .ant-avatar {
+  background: #dce6f2;
+  color: #31547d;
+}
+
+.account-summary {
+  min-width: 150px;
+  padding: 3px 1px;
+}
+
+.account-summary strong,
+.account-summary span {
+  display: block;
+}
+
+.account-summary span {
+  margin-top: 3px;
+  color: #7b8797;
+  font-size: 11px;
+}
+
 .mobile-menu {
   display: none;
   margin-right: 8px;
@@ -162,6 +327,113 @@ select {
   max-width: 1500px;
   margin: 0 auto;
   padding: 46px 36px 64px;
+}
+
+.module-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 22px;
+}
+
+.module-kicker {
+  color: #5f6f83;
+  font-size: 12px;
+}
+
+.module-heading h1.ant-typography {
+  margin: 6px 0 4px;
+  color: #152238;
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+}
+
+.module-heading p.ant-typography {
+  margin: 0;
+  color: #718096;
+  font-size: 13px;
+}
+
+.directory-card {
+  border: 1px solid #dce4eb !important;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.directory-card .ant-card-body {
+  padding: 0;
+}
+
+.directory-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e5ebf0;
+}
+
+.user-search {
+  width: min(100%, 340px);
+}
+
+.status-filter {
+  width: 128px;
+}
+
+.directory-total {
+  margin-left: auto;
+  color: #7a8798;
+  font-size: 12px;
+}
+
+.directory-card .ant-table-wrapper {
+  padding: 0 18px 8px;
+}
+
+.directory-card .ant-table-thead > tr > th {
+  color: #647287;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.user-identity-cell {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.user-table-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #d9e2ea;
+  border-radius: 5px;
+  background: #f4f7fa;
+  color: #526982;
+}
+
+.user-identity-cell strong,
+.user-identity-cell small {
+  display: block;
+}
+
+.user-identity-cell strong {
+  color: #26364b;
+  font-size: 13px;
+}
+
+.user-identity-cell small {
+  margin-top: 2px;
+  color: #8793a2;
+  font-size: 11px;
+}
+
+.form-alert {
+  margin-bottom: 18px;
 }
 
 .page-heading {
@@ -539,8 +811,46 @@ select {
     display: none;
   }
 
+  .account-trigger {
+    margin-left: auto;
+  }
+
+  .account-trigger > span:last-child:not(.ant-btn-icon) {
+    display: none;
+  }
+
+  .login-shell {
+    align-items: start;
+    padding: 28px 14px;
+  }
+
+  .login-panel {
+    padding: 27px 23px 24px;
+  }
+
   .main-content {
     padding: 28px 14px 42px;
+  }
+
+  .module-heading {
+    align-items: flex-start;
+  }
+
+  .module-heading h1.ant-typography {
+    font-size: 26px;
+  }
+
+  .directory-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .user-search {
+    width: 100%;
+  }
+
+  .directory-total {
+    width: 100%;
+    margin-left: 0;
   }
 
   .page-heading h1.ant-typography {
@@ -576,4 +886,3 @@ select {
     animation-iteration-count: 1 !important;
   }
 }
-

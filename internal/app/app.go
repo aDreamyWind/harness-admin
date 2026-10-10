@@ -9,10 +9,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"harness-admin/internal/access"
 	"harness-admin/internal/cache"
 	"harness-admin/internal/config"
 	"harness-admin/internal/database"
 	"harness-admin/internal/httpserver"
+	"harness-admin/internal/identity"
+	pgstore "harness-admin/internal/store/postgres"
+	"harness-admin/internal/useradmin"
 )
 
 type Application struct {
@@ -43,13 +47,22 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		db.Close()
 		return nil, err
 	}
+	identityRepository := pgstore.NewIdentityRepository(db)
+	loginLimiter := cache.NewLoginLimiter(redisClient, 5, 15*time.Minute)
+	authService := identity.NewService(identityRepository, loginLimiter, cfg.SessionTTL)
+	accessService := access.NewService(identityRepository)
+	userAdminService := useradmin.NewService(identityRepository, identity.HashPassword)
 
 	handler := httpserver.New(httpserver.Dependencies{
-		AppName:     cfg.AppName,
-		Environment: cfg.Environment,
-		Logger:      logger,
-		Database:    db,
-		Cache:       redisClient,
+		AppName:       cfg.AppName,
+		Environment:   cfg.Environment,
+		Logger:        logger,
+		Database:      db,
+		Cache:         redisClient,
+		Auth:          authService,
+		Access:        accessService,
+		UserAdmin:     userAdminService,
+		SessionCookie: cfg.SessionCookie,
 	})
 
 	return &Application{

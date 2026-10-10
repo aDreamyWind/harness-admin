@@ -1,7 +1,6 @@
 import {
   ApiOutlined,
   CheckCircleFilled,
-  ClockCircleOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   SafetyCertificateOutlined,
@@ -21,8 +20,8 @@ const signalSteps = [
 ]
 
 const buildSequence = [
-  { title: '工程与数据底座', description: '启动、迁移、健康检查、前端外壳', state: 'active' },
-  { title: '身份与权限', description: '登录、组织、用户、角色、会话', state: 'next' },
+  { title: '工程与数据底座', description: '启动、迁移、健康检查、前端外壳', state: 'done' },
+  { title: '身份与权限', description: '登录、组织、用户、角色、会话', state: 'active' },
   { title: 'Harness 统一登录', description: 'OIDC、PKCE、设备身份与吊销', state: 'planned' },
   { title: 'AI 治理链路', description: '模型网关、额度、审计与追踪', state: 'planned' },
 ]
@@ -106,7 +105,7 @@ export function DashboardPage() {
           />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <StatusCard icon={<SafetyCertificateOutlined />} label="身份模块" value="建设中" tone="active" />
+          <StatusCard icon={<SafetyCertificateOutlined />} label="身份模块" value="用户管理可用" tone="success" />
         </Col>
         <Col xs={24} sm={12} xl={6}>
           <StatusCard icon={<DeploymentUnitOutlined />} label="模型网关" value="待开始" tone="neutral" />
@@ -121,19 +120,19 @@ export function DashboardPage() {
                 <Text className="eyebrow">BUILD SEQUENCE</Text>
                 <Title level={3}>建设序列</Title>
               </div>
-              <Progress type="circle" percent={18} size={52} strokeColor="#2457d6" />
+              <Progress type="circle" percent={35} size={52} strokeColor="#2457d6" />
             </div>
             <div className="build-sequence">
               {buildSequence.map((item, index) => (
                 <div className={`sequence-row ${item.state}`} key={item.title}>
                   <div className="sequence-index">
-                    {item.state === 'active' ? <CheckCircleFilled /> : String(index + 1).padStart(2, '0')}
+                    {item.state === 'active' || item.state === 'done' ? <CheckCircleFilled /> : String(index + 1).padStart(2, '0')}
                   </div>
                   <div>
                     <strong>{item.title}</strong>
                     <span>{item.description}</span>
                   </div>
-                  <Tag>{item.state === 'active' ? '当前' : item.state === 'next' ? '下一步' : '规划中'}</Tag>
+                  <Tag>{item.state === 'done' ? '已完成' : item.state === 'active' ? '当前' : '规划中'}</Tag>
                 </div>
               ))}
             </div>
@@ -151,7 +150,7 @@ export function DashboardPage() {
                 <li><CheckCircleFilled /> SQL 与数据库迁移显式提交</li>
                 <li><CheckCircleFilled /> 每次请求携带 Request ID</li>
                 <li><CheckCircleFilled /> PostgreSQL 与 Redis 有就绪检查</li>
-                <li><ClockCircleOutlined /> OpenAPI 契约将在身份模块同步建立</li>
+                <li><CheckCircleFilled /> OpenAPI 契约随接口同步维护</li>
               </ul>
             )}
             <div className="runtime-stack">
