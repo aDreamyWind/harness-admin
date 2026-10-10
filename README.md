@@ -85,6 +85,13 @@ go run ./cmd/server
 - `PUT /api/v1/roles/{roleId}`
 - `GET /api/v1/permissions`
 
+审计追踪接口：
+
+- `GET /api/v1/audit-events`
+- `GET /api/v1/audit-events/{eventId}`
+
+审计查询按当前登录企业隔离，需要 `audit.event.read` 权限，支持按关键字、动作、结果和发生时间筛选。无权限访问管理接口时也会写入一条 `denied` 审计事件。
+
 接口契约见 [`api/openapi.yaml`](api/openapi.yaml)。
 
 登录请求需要提供 `organizationCode`、`username` 和 `password`。登录成功后服务端写入仅限 `/api`、前端不可读取的 HttpOnly 会话 Cookie，同时写入同源前端可读取的 `harness_admin_csrf` Cookie。管理端会在退出及后续写接口中自动把该值放入 `X-CSRF-Token` 请求头；非浏览器客户端也可以使用登录响应中的 `csrfToken`。

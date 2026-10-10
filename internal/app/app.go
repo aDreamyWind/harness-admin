@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"harness-admin/internal/access"
+	"harness-admin/internal/auditadmin"
 	"harness-admin/internal/cache"
 	"harness-admin/internal/config"
 	"harness-admin/internal/database"
@@ -56,6 +57,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	userAdminService := useradmin.NewService(identityRepository, identity.HashPassword)
 	roleAdminService := roleadmin.NewService(identityRepository)
 	departmentAdminService := departmentadmin.NewService(identityRepository)
+	auditEventService := auditadmin.NewService(identityRepository)
 
 	handler := httpserver.New(httpserver.Dependencies{
 		AppName:         cfg.AppName,
@@ -68,6 +70,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		UserAdmin:       userAdminService,
 		RoleAdmin:       roleAdminService,
 		DepartmentAdmin: departmentAdminService,
+		AuditEvents:     auditEventService,
+		AuditRecorder:   identityRepository,
 		SessionCookie:   cfg.SessionCookie,
 	})
 

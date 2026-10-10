@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.2.0
+  version: 0.3.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -357,6 +357,66 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PermissionListEnvelope' }
+  /audit-events:
+    get:
+      summary: 查询当前企业审计事件
+      operationId: listAuditEvents
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: search
+          in: query
+          description: 模糊匹配动作、资源、请求 ID 或操作人。
+          schema: { type: string }
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: result
+          in: query
+          schema: { type: string, enum: [success, denied, failed] }
+        - name: startedAt
+          in: query
+          schema: { type: string, format: date-time }
+        - name: endedAt
+          in: query
+          schema: { type: string, format: date-time }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 分页审计事件列表，需要 `audit.event.read` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditEventListEnvelope' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /audit-events/{eventId}:
+    get:
+      summary: 查询审计事件详情
+      operationId: getAuditEvent
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[1-9][0-9]*$' }
+      responses:
+        '200':
+          description: 当前企业内的审计事件详情，需要 `audit.event.read` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditEventEnvelope' }
+        '404':
+          description: 审计事件不存在或不属于当前企业。
 components:
   securitySchemes:
     sessionCookie:
@@ -500,6 +560,32 @@ components:
         status: { type: string, enum: [active, disabled] }
         userCount: { type: integer, format: int64 }
         createdAt: { type: string, format: date-time }
+    AuditEvent:
+      type: object
+      required: [id, action, resourceType, result, detail, createdAt]
+      properties:
+        id: { type: string, pattern: '^[1-9][0-9]*$' }
+        actorId: { type: string, format: uuid }
+        actorUsername: { type: string }
+        actorDisplayName: { type: string }
+        requestId: { type: string }
+        action: { type: string }
+        resourceType: { type: string }
+        resourceId: { type: string }
+        result: { type: string, enum: [success, denied, failed] }
+        sourceIp: { type: string }
+        detail: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+    AuditEventList:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AuditEvent' }
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        pageSize: { type: integer }
     LoginResult:
       type: object
       required: [user, csrfToken, expiresAt]
@@ -580,3 +666,13 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/Department' }
+    AuditEventEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/AuditEvent' }
+    AuditEventListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/AuditEventList' }

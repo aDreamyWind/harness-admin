@@ -17,6 +17,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 
 import { useAuth } from './auth/AuthContext'
 import { DashboardPage } from './pages/DashboardPage'
+import { AuditPage } from './pages/AuditPage'
 import { DepartmentsPage } from './pages/DepartmentsPage'
 import { LoginPage } from './pages/LoginPage'
 import { RolesPage } from './pages/RolesPage'
@@ -39,7 +40,7 @@ const menuItems = [
   { key: 'models', icon: <AppstoreOutlined />, label: '模型目录', disabled: true },
   { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关', disabled: true },
   { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },
-  { key: 'audit', icon: <AuditOutlined />, label: '审计追踪', disabled: true },
+  { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' },
   { key: 'settings', icon: <SettingOutlined />, label: '系统设置', disabled: true },
 ]
 
@@ -48,6 +49,7 @@ const menuRoutes: Record<string, string> = {
   users: '/identity/users',
   departments: '/identity/departments',
   roles: '/identity/roles',
+  audit: '/audit',
 }
 
 function Navigation({ selectedKey, onNavigate }: { selectedKey: string; onNavigate: (path: string) => void }) {
@@ -95,7 +97,9 @@ export function App() {
     ? 'users'
     : location.pathname.startsWith('/identity/departments')
       ? 'departments'
-      : location.pathname.startsWith('/identity/roles') ? 'roles' : 'overview'
+      : location.pathname.startsWith('/identity/roles')
+        ? 'roles'
+        : location.pathname.startsWith('/audit') ? 'audit' : 'overview'
 
   function navigateFromMenu(path: string) {
     navigate(path)
@@ -185,6 +189,7 @@ export function App() {
               <Route path="/identity/users" element={<UsersPage />} />
               <Route path="/identity/departments" element={<DepartmentsPage />} />
               <Route path="/identity/roles" element={<RolesPage />} />
+              <Route path="/audit" element={<AuditPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Content>
