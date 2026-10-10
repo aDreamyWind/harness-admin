@@ -1,0 +1,23 @@
+.DS_Store
+.env
+*.log
+
+# Go
+bin/
+coverage.out
+
+# Frontend
+node_modules/
+web/node_modules/
+web/dist/
+web/.vite/
+.pnpm-store/
+*.tsbuildinfo
+
+# Local verification artifacts
+.playwright-cli/
+output/playwright/
+
+# Editors
+.idea/
+.vscode/
