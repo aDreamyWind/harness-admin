@@ -25,6 +25,7 @@ Harness Admin 是面向企业 Harness 的控制平面。项目从零构建，不
 cp .env.example .env
 make infra-up
 BOOTSTRAP_ADMIN_PASSWORD='请替换为至少3位的密码' make bootstrap-admin
+make seed-test-organization
 make dev
 ```
 
@@ -53,6 +54,8 @@ go run ./cmd/server
 很多小型 Go 项目把 `main.go` 放在仓库根目录，所以可以直接执行 `go run .`。本项目把不同的可执行程序分别放在 `cmd/` 下，目前包括 HTTP 服务 `cmd/server` 和初始化管理员 `cmd/bootstrap-admin`，因此需要明确运行哪一个。你可以完全不用 Make，直接执行对应的 Go 命令；使用 Make 只是为了统一入口，并自动读取本地 `.env`。
 
 常用命令可以通过 `make help` 查看。
+
+`make seed-test-organization` 仅允许在 `development` 或 `test` 环境执行，会为指定企业写入一套常见企业组织树，包括集团总部、总经理办公室、人力资源、财务、产品、研发、营销、法务等 17 个部门。该命令可重复执行：已有部门会按代码更新层级、名称、排序和启用状态，不会重复创建。默认使用 `default` 企业和 `admin` 操作人，可通过 `TEST_ORG_CODE`、`TEST_ORG_ACTOR_USERNAME` 配置。
 
 身份接口：
 
