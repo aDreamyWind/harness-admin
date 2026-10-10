@@ -17,6 +17,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 
 import { useAuth } from './auth/AuthContext'
 import { DashboardPage } from './pages/DashboardPage'
+import { DepartmentsPage } from './pages/DepartmentsPage'
 import { LoginPage } from './pages/LoginPage'
 import { RolesPage } from './pages/RolesPage'
 import { UsersPage } from './pages/UsersPage'
@@ -31,7 +32,7 @@ const menuItems = [
     label: '身份与组织',
     children: [
       { key: 'users', label: '用户' },
-      { key: 'departments', label: '部门', disabled: true },
+      { key: 'departments', label: '部门' },
       { key: 'roles', label: '角色与权限' },
     ],
   },
@@ -45,6 +46,7 @@ const menuItems = [
 const menuRoutes: Record<string, string> = {
   overview: '/',
   users: '/identity/users',
+  departments: '/identity/departments',
   roles: '/identity/roles',
 }
 
@@ -91,7 +93,9 @@ export function App() {
   const [messageApi, messageContext] = message.useMessage()
   const selectedMenuKey = location.pathname.startsWith('/identity/users')
     ? 'users'
-    : location.pathname.startsWith('/identity/roles') ? 'roles' : 'overview'
+    : location.pathname.startsWith('/identity/departments')
+      ? 'departments'
+      : location.pathname.startsWith('/identity/roles') ? 'roles' : 'overview'
 
   function navigateFromMenu(path: string) {
     navigate(path)
@@ -179,6 +183,7 @@ export function App() {
             <Routes>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/identity/users" element={<UsersPage />} />
+              <Route path="/identity/departments" element={<DepartmentsPage />} />
               <Route path="/identity/roles" element={<RolesPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

@@ -175,6 +175,119 @@ paths:
           description: 用户或角色不存在。
         '409':
           description: 不能修改当前登录账号的角色。
+  /users/{userId}/department:
+    patch:
+      summary: 调整用户所属部门
+      operationId: assignUserDepartment
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [departmentId]
+              properties:
+                departmentId:
+                  type: string
+                  description: 部门 UUID；空字符串表示清除部门归属。
+      responses:
+        '200':
+          description: 用户部门已更新，需要 `iam.user.write` 权限。
+        '404':
+          description: 用户不存在。
+  /departments:
+    get:
+      summary: 查询当前企业部门
+      operationId: listDepartments
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 部门平铺列表，通过 parentId 表达层级，需要 `iam.department.read` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentListEnvelope' }
+    post:
+      summary: 创建部门
+      operationId: createDepartment
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDepartmentRequest' }
+      responses:
+        '201':
+          description: 部门创建成功，需要 `iam.department.write` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentEnvelope' }
+        '409':
+          description: 部门代码已存在。
+  /departments/{departmentId}:
+    put:
+      summary: 修改部门
+      operationId: updateDepartment
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: departmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateDepartmentRequest' }
+      responses:
+        '200':
+          description: 部门已更新，需要 `iam.department.write` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentEnvelope' }
+        '409':
+          description: 不能移动到自身或下级部门。
+  /departments/{departmentId}/status:
+    patch:
+      summary: 修改部门状态
+      operationId: changeDepartmentStatus
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: departmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        '200':
+          description: 部门状态已更新，需要 `iam.department.write` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DepartmentEnvelope' }
+        '409':
+          description: 部门下仍有启用中的子部门或用户。
   /roles:
     get:
       summary: 查询当前企业角色
@@ -306,6 +419,21 @@ components:
         permissionCodes:
           type: array
           items: { type: string }
+    CreateDepartmentRequest:
+      type: object
+      required: [code, name, sortOrder]
+      properties:
+        parentId: { type: string, format: uuid }
+        code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,63}$' }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        sortOrder: { type: integer, minimum: 0, maximum: 999999 }
+    UpdateDepartmentRequest:
+      type: object
+      required: [name, sortOrder]
+      properties:
+        parentId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        sortOrder: { type: integer, minimum: 0, maximum: 999999 }
     AuthUser:
       type: object
       required: [id, organizationId, organization, organizationCode, username, displayName]
@@ -360,6 +488,18 @@ components:
         resource: { type: string }
         action: { type: string }
         description: { type: string }
+    Department:
+      type: object
+      required: [id, code, name, sortOrder, status, userCount, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        parentId: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        sortOrder: { type: integer }
+        status: { type: string, enum: [active, disabled] }
+        userCount: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
     LoginResult:
       type: object
       required: [user, csrfToken, expiresAt]
@@ -428,3 +568,15 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/Permission' }
+    DepartmentEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Department' }
+    DepartmentListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Department' }

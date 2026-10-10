@@ -20,6 +20,7 @@ import {
 import { useState } from 'react'
 
 import { ApiError } from '../api/client'
+import { assignUserDepartment, listDepartments } from '../api/departments'
 import { assignUserRoles, listRoles } from '../api/roles'
 import {
   changeUserStatus,
@@ -50,6 +51,8 @@ export function UsersPage() {
   const [page, setPage] = useState(1)
   const [roleUser, setRoleUser] = useState<ManagedUser | null>(null)
   const [selectedRoleIDs, setSelectedRoleIDs] = useState<string[]>([])
+  const [departmentUser, setDepartmentUser] = useState<ManagedUser | null>(null)
+  const [selectedDepartmentID, setSelectedDepartmentID] = useState<string | undefined>()
   const pageSize = 20
 
   const usersQuery = useQuery({
@@ -59,6 +62,7 @@ export function UsersPage() {
   })
 
   const rolesQuery = useQuery({ queryKey: ['roles'], queryFn: listRoles })
+  const departmentsQuery = useQuery({ queryKey: ['departments'], queryFn: listDepartments })
 
   const createMutation = useMutation({
     mutationFn: createUser,
@@ -93,6 +97,19 @@ export function UsersPage() {
     onError: (error) => messageApi.error(error instanceof Error ? error.message : '角色分配失败'),
   })
 
+  const assignDepartmentMutation = useMutation({
+    mutationFn: ({ userId, departmentId }: { userId: string; departmentId?: string }) => assignUserDepartment(userId, departmentId),
+    onSuccess: async () => {
+      messageApi.success('用户部门已更新')
+      setDepartmentUser(null)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['users'] }),
+        queryClient.invalidateQueries({ queryKey: ['departments'] }),
+      ])
+    },
+    onError: (error) => messageApi.error(error instanceof Error ? error.message : '部门调整失败'),
+  })
+
   const columns: TableColumnsType<ManagedUser> = [
     {
       title: '用户',
@@ -116,6 +133,13 @@ export function UsersPage() {
       render: (email?: string) => email || <Text type="secondary">未设置</Text>,
     },
     {
+      title: '部门',
+      dataIndex: 'departmentName',
+      key: 'department',
+      width: 150,
+      render: (name?: string) => name || <Text type="secondary">未分配</Text>,
+    },
+    {
       title: '角色',
       dataIndex: 'roleNames',
       key: 'roles',
@@ -127,7 +151,7 @@ export function UsersPage() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 150,
+      width: 205,
       render: (value: ManagedUser['status']) => <Tag color={statusLabels[value].color}>{statusLabels[value].text}</Tag>,
     },
     {
@@ -154,6 +178,17 @@ export function UsersPage() {
               onClick={() => { setRoleUser(user); setSelectedRoleIDs(user.roleIds); assignRolesMutation.reset() }}
             >
               角色
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              onClick={() => {
+                setDepartmentUser(user)
+                setSelectedDepartmentID(user.departmentId || undefined)
+                assignDepartmentMutation.reset()
+              }}
+            >
+              部门
             </Button>
             <Popconfirm
               title={nextStatus === 'disabled' ? '停用这个用户？' : '启用这个用户？'}
@@ -228,7 +263,7 @@ export function UsersPage() {
             columns={columns}
             dataSource={usersQuery.data?.items ?? []}
             loading={usersQuery.isLoading}
-            scroll={{ x: 1040 }}
+            scroll={{ x: 1240 }}
             pagination={{
               current: page,
               pageSize,
@@ -274,6 +309,17 @@ export function UsersPage() {
           <Form.Item label="邮箱" name="email" rules={[{ type: 'email', message: '请输入正确的邮箱地址' }]}>
             <Input autoComplete="off" placeholder="可选" />
           </Form.Item>
+          <Form.Item label="所属部门" name="departmentId">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="可选"
+              options={(departmentsQuery.data ?? [])
+                .filter((department) => department.status === 'active')
+                .map((department) => ({ value: department.id, label: `${department.name} · ${department.code}` }))}
+            />
+          </Form.Item>
           <Form.Item label="初始密码" name="password" extra="至少 3 位。创建后请通过安全方式交给用户。" rules={[
             { required: true, message: '请输入初始密码' },
             { min: 3, message: '密码不能少于 3 位' },
@@ -310,6 +356,34 @@ export function UsersPage() {
           ))}
         </Checkbox.Group>
         {!rolesQuery.isLoading && !rolesQuery.data?.length ? <Text type="secondary">当前企业还没有可分配角色。</Text> : null}
+      </Modal>
+
+      <Modal
+        title={`调整部门${departmentUser ? ` · ${departmentUser.displayName}` : ''}`}
+        open={Boolean(departmentUser)}
+        okText="保存部门"
+        cancelText="取消"
+        confirmLoading={assignDepartmentMutation.isPending}
+        onCancel={() => { setDepartmentUser(null); assignDepartmentMutation.reset() }}
+        onOk={() => departmentUser && assignDepartmentMutation.mutate({ userId: departmentUser.id, departmentId: selectedDepartmentID })}
+        destroyOnHidden
+      >
+        <Paragraph type="secondary">不选择部门时，用户将保留为未分配状态。</Paragraph>
+        {assignDepartmentMutation.isError ? (
+          <Alert className="form-alert" type="error" showIcon message={assignDepartmentMutation.error instanceof Error ? assignDepartmentMutation.error.message : '部门调整失败'} />
+        ) : null}
+        <Select
+          className="user-department-select"
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          placeholder="选择部门"
+          value={selectedDepartmentID}
+          onChange={setSelectedDepartmentID}
+          options={(departmentsQuery.data ?? [])
+            .filter((department) => department.status === 'active')
+            .map((department) => ({ value: department.id, label: `${department.name} · ${department.code}` }))}
+        />
       </Modal>
     </main>
   )

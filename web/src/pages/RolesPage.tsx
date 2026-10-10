@@ -178,7 +178,7 @@ export function RolesPage() {
         confirmLoading={saveMutation.isPending}
         onCancel={closeModal}
         onOk={() => form.submit()}
-        destroyOnHidden
+        forceRender
       >
         {saveMutation.isError ? (
           <Alert className="form-alert" type="error" showIcon message={saveMutation.error instanceof ApiError ? saveMutation.error.message : '角色保存失败'} />

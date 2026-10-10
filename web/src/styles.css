@@ -514,6 +514,27 @@ select {
   margin-inline-start: 0;
 }
 
+.department-identity-cell strong,
+.department-identity-cell small {
+  display: block;
+}
+
+.department-identity-cell strong {
+  color: #26364b;
+  font-size: 13px;
+}
+
+.department-identity-cell small {
+  margin-top: 2px;
+  color: #8793a2;
+  font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
+}
+
+.sort-order-input,
+.user-department-select {
+  width: 100%;
+}
+
 .user-role-options {
   padding: 6px 0;
 }

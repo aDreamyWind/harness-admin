@@ -33,6 +33,7 @@ export interface CreateUserInput {
   email?: string
   displayName: string
   password: string
+  departmentId?: string
 }
 
 export async function listUsers(query: UserListQuery): Promise<UserList> {
