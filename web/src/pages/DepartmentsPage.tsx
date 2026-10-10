@@ -31,7 +31,7 @@ import { useAuth } from '../auth/AuthContext'
 import { DepartmentSelect } from '../components/DepartmentSelect'
 import { StatusIndicator } from '../components/StatusIndicator'
 
-const { Paragraph, Text, Title } = Typography
+const { Text } = Typography
 
 interface DepartmentNode extends Department {
   children?: DepartmentNode[]
@@ -153,8 +153,6 @@ export function DepartmentsPage() {
       <section className="module-heading">
         <div>
           <Text className="module-kicker">身份与组织 / 部门</Text>
-          <Title level={1}>部门结构</Title>
-          <Paragraph>维护当前企业的部门层级与用户归属。</Paragraph>
         </div>
         {canWrite
           ? <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>新建部门</Button>

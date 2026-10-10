@@ -18,7 +18,7 @@ import { useState } from 'react'
 import { getAuditEvent, listAuditEvents, type AuditEvent } from '../api/audit'
 import { StatusIndicator } from '../components/StatusIndicator'
 
-const { Paragraph, Text, Title } = Typography
+const { Text } = Typography
 
 const actionLabels: Record<string, string> = {
   'auth.login': '登录',
@@ -176,8 +176,6 @@ export function AuditPage() {
       <section className="module-heading">
         <div>
           <Text className="module-kicker">安全与审计 / 操作记录</Text>
-          <Title level={1}>审计追踪</Title>
-          <Paragraph>按时间还原当前企业内的登录、授权和管理操作。</Paragraph>
         </div>
         <div className="audit-total-block">
           <span>当前条件</span>

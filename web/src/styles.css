@@ -398,29 +398,15 @@ select {
 
 .module-heading {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 22px;
+  margin-bottom: 14px;
 }
 
 .module-kicker {
   color: #5f6f83;
   font-size: 12px;
-}
-
-.module-heading h1.ant-typography {
-  margin: 6px 0 4px;
-  color: #152238;
-  font-size: 30px;
-  font-weight: 650;
-  letter-spacing: -0.035em;
-}
-
-.module-heading p.ant-typography {
-  margin: 0;
-  color: #718096;
-  font-size: 13px;
 }
 
 .directory-card {
@@ -1389,10 +1375,6 @@ select {
   font: 600 10px/1.2 "SFMono-Regular", Menlo, monospace;
 }
 
-.organization-heading {
-  margin-bottom: 24px;
-}
-
 .organization-identity-card,
 .organization-name-card {
   min-height: 356px;
@@ -1612,10 +1594,6 @@ select {
   .security-state {
     width: 100%;
     margin-top: 18px;
-  }
-
-  .module-heading h1.ant-typography {
-    font-size: 26px;
   }
 
   .directory-toolbar {

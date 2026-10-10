@@ -37,7 +37,7 @@ import { useAuth } from '../auth/AuthContext'
 import { DepartmentSelect } from '../components/DepartmentSelect'
 import { StatusIndicator } from '../components/StatusIndicator'
 
-const { Paragraph, Text, Title } = Typography
+const { Paragraph, Text } = Typography
 
 const statusLabels: Record<ManagedUser['status'], { text: string; tone: 'success' | 'warning' | 'muted' }> = {
   active: { text: '正常', tone: 'success' },
@@ -309,8 +309,6 @@ export function UsersPage() {
       <section className="module-heading">
         <div>
           <Text className="module-kicker">身份与组织 / 用户</Text>
-          <Title level={1}>用户目录</Title>
-          <Paragraph>管理当前企业内可以登录控制面的账号。</Paragraph>
         </div>
         {canWrite ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>

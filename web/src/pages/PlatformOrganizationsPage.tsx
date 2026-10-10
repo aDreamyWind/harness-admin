@@ -26,7 +26,7 @@ import {
 import { usePlatformAuth } from '../auth/PlatformAuthContext'
 import { StatusIndicator } from '../components/StatusIndicator'
 
-const { Paragraph, Text, Title } = Typography
+const { Text } = Typography
 
 interface OrganizationForm extends CreatePlatformOrganizationInput {
   confirmPassword: string
@@ -102,8 +102,6 @@ export function PlatformOrganizationsPage() {
         <div className="module-heading">
           <div>
             <Text className="module-kicker">平台管理 / 企业</Text>
-            <Title level={1}>企业管理</Title>
-            <Paragraph>维护可登录企业，并为新企业建立首位企业管理员。</Paragraph>
           </div>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { createMutation.reset(); setModalOpen(true) }}>新建企业</Button>
         </div>

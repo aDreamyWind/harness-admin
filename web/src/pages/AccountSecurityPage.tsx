@@ -95,8 +95,6 @@ export function AccountSecurityPage() {
       <section className="module-heading security-heading">
         <div>
           <Text className="module-kicker">个人账号 / 账号与安全</Text>
-          <Title level={1}>账号与安全</Title>
-          <Paragraph>维护个人资料、登录密码和当前活跃设备。</Paragraph>
         </div>
         <div className="security-state">
           <SafetyCertificateOutlined />

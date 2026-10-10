@@ -28,7 +28,7 @@ import {
 } from '../api/roles'
 import { useAuth } from '../auth/AuthContext'
 
-const { Paragraph, Text, Title } = Typography
+const { Text } = Typography
 
 export function RolesPage() {
   const { hasPermission } = useAuth()
@@ -146,8 +146,6 @@ export function RolesPage() {
       <section className="module-heading">
         <div>
           <Text className="module-kicker">身份与组织 / 角色与权限</Text>
-          <Title level={1}>角色权限</Title>
-          <Paragraph>通过角色组合系统权限，再将角色分配给企业用户。</Paragraph>
         </div>
         {canWrite
           ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建角色</Button>

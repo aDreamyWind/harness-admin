@@ -51,8 +51,6 @@ export function OrganizationSettingsPage() {
       <section className="module-heading organization-heading">
         <div>
           <Text className="module-kicker">系统设置 / 企业资料</Text>
-          <Title level={1}>企业设置</Title>
-          <Paragraph>维护当前企业在控制面中展示的名称和企业编码。</Paragraph>
         </div>
         {!canWrite ? <Tag>只读</Tag> : null}
       </section>
