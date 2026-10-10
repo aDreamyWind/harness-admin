@@ -82,6 +82,37 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 	return user, nil
 }
 
+func (s *Service) Update(ctx context.Context, input UpdateInput) (User, error) {
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if input.OrganizationID == "" || input.ActorID == "" || input.UserID == "" ||
+		!validLength(input.DisplayName, 1, 120) {
+		return User{}, ErrInvalidInput
+	}
+	if input.Email != "" {
+		address, err := mail.ParseAddress(input.Email)
+		if err != nil || address.Address != input.Email {
+			return User{}, ErrInvalidInput
+		}
+	}
+	user, err := s.repository.UpdateUser(ctx, ProfileUpdate{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.ActorID,
+		UserID:         input.UserID,
+		Email:          input.Email,
+		DisplayName:    input.DisplayName,
+		RequestID:      input.RequestID,
+		SourceIP:       input.SourceIP,
+	})
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrUserConflict) {
+			return User{}, err
+		}
+		return User{}, fmt.Errorf("修改用户资料失败: %w", err)
+	}
+	return user, nil
+}
+
 func (s *Service) ChangeStatus(ctx context.Context, input ChangeStatusInput) (User, error) {
 	if input.Status != "active" && input.Status != "disabled" {
 		return User{}, ErrInvalidUserStatus

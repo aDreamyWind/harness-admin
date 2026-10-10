@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.4.0
+  version: 0.5.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -183,6 +183,38 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           description: 用户名或邮箱已存在。
+  /users/{userId}:
+    put:
+      summary: 修改用户资料
+      description: 修改显示名称和邮箱；登录用户名创建后不可修改。需要 `iam.user.write` 权限。
+      operationId: updateUser
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: 用户资料修改成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedUserEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: 用户不存在。
+        '409':
+          description: 邮箱已被当前企业内其他用户使用。
   /users/{userId}/status:
     patch:
       summary: 修改用户状态
@@ -560,6 +592,14 @@ components:
         email: { type: string, format: email }
         departmentId: { type: string, format: uuid }
         password: { type: string, format: password, minLength: 3 }
+    UpdateUserRequest:
+      type: object
+      required: [displayName, email]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        email:
+          type: string
+          description: 电子邮箱；空字符串表示清除邮箱。
     ChangePasswordRequest:
       type: object
       required: [currentPassword, newPassword]

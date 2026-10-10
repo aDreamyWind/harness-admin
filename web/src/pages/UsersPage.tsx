@@ -1,4 +1,4 @@
-import { KeyOutlined, PlusOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
+import { EditOutlined, KeyOutlined, PlusOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -27,8 +27,10 @@ import {
   createUser,
   listUsers,
   resetUserPassword,
+  updateUser,
   type CreateUserInput,
   type ManagedUser,
+  type UpdateUserInput,
 } from '../api/users'
 import { useAuth } from '../auth/AuthContext'
 
@@ -41,12 +43,13 @@ const statusLabels: Record<ManagedUser['status'], { text: string; color: string 
 }
 
 export function UsersPage() {
-  const { user: currentUser, hasPermission } = useAuth()
+  const { user: currentUser, hasPermission, refreshUser } = useAuth()
   const canWrite = hasPermission('iam.user.write')
   const canReadRoles = hasPermission('iam.role.read')
   const canReadDepartments = hasPermission('iam.department.read')
   const queryClient = useQueryClient()
   const [form] = Form.useForm<CreateUserInput>()
+  const [editForm] = Form.useForm<UpdateUserInput>()
   const [passwordForm] = Form.useForm<{ password: string; confirmPassword: string }>()
   const [messageApi, messageContext] = message.useMessage()
   const [createOpen, setCreateOpen] = useState(false)
@@ -54,6 +57,7 @@ export function UsersPage() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null)
   const [roleUser, setRoleUser] = useState<ManagedUser | null>(null)
   const [selectedRoleIDs, setSelectedRoleIDs] = useState<string[]>([])
   const [departmentUser, setDepartmentUser] = useState<ManagedUser | null>(null)
@@ -88,6 +92,20 @@ export function UsersPage() {
       await queryClient.invalidateQueries({ queryKey: ['users'] })
     },
     onError: (error) => messageApi.error(error instanceof Error ? error.message : '状态修改失败'),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ userId, input }: { userId: string; input: UpdateUserInput }) => updateUser(userId, input),
+    onSuccess: async (updatedUser) => {
+      messageApi.success('用户资料已更新')
+      setEditingUser(null)
+      editForm.resetFields()
+      await queryClient.invalidateQueries({ queryKey: ['users'] })
+      if (updatedUser.id === currentUser?.id) {
+        await refreshUser()
+      }
+    },
+    onError: (error) => messageApi.error(error instanceof Error ? error.message : '用户资料修改失败'),
   })
 
   const assignRolesMutation = useMutation({
@@ -183,12 +201,24 @@ export function UsersPage() {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 190,
+      width: 250,
       render: (_, user) => {
         const nextStatus = user.status === 'active' ? 'disabled' : 'active'
         const isSelf = user.id === currentUser?.id
         return (
           <Space size={0}>
+            <Button
+              type="link"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => {
+                setEditingUser(user)
+                editForm.setFieldsValue({ displayName: user.displayName, email: user.email ?? '' })
+                updateMutation.reset()
+              }}
+            >
+              资料
+            </Button>
             {canReadRoles ? (
               <Button
                 type="link"
@@ -223,7 +253,7 @@ export function UsersPage() {
                 resetPasswordMutation.reset()
               }}
             >
-              重置密码
+              密码
             </Button>
             <Popconfirm
               title={nextStatus === 'disabled' ? '停用这个用户？' : '启用这个用户？'}
@@ -299,7 +329,7 @@ export function UsersPage() {
             columns={columns}
             dataSource={usersQuery.data?.items ?? []}
             loading={usersQuery.isLoading}
-            scroll={{ x: 1240 }}
+            scroll={{ x: 1300 }}
             pagination={{
               current: page,
               pageSize,
@@ -363,6 +393,39 @@ export function UsersPage() {
             { min: 3, message: '密码不能少于 3 位' },
           ]}>
             <Input.Password autoComplete="new-password" placeholder="至少 3 位" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`编辑资料${editingUser ? ` · ${editingUser.displayName}` : ''}`}
+        open={Boolean(editingUser)}
+        okText="保存资料"
+        cancelText="取消"
+        confirmLoading={updateMutation.isPending}
+        onCancel={() => { setEditingUser(null); editForm.resetFields(); updateMutation.reset() }}
+        onOk={() => editForm.submit()}
+        destroyOnHidden
+      >
+        <Form<UpdateUserInput>
+          form={editForm}
+          layout="vertical"
+          requiredMark={false}
+          onFinish={(values) => editingUser && updateMutation.mutate({ userId: editingUser.id, input: values })}
+        >
+          <Form.Item label="登录用户名" extra="用户名用于登录和审计，创建后不可修改。">
+            <Input value={editingUser?.username} disabled />
+          </Form.Item>
+          <Form.Item label="显示名称" name="displayName" rules={[
+            { required: true, whitespace: true, message: '请输入显示名称' },
+            { max: 120, message: '显示名称不能超过 120 个字符' },
+          ]}>
+            <Input autoComplete="off" placeholder="例如：张三" />
+          </Form.Item>
+          <Form.Item label="邮箱" name="email" extra="留空表示清除邮箱。" rules={[
+            { type: 'email', message: '请输入正确的邮箱地址' },
+          ]}>
+            <Input autoComplete="off" placeholder="可选" />
           </Form.Item>
         </Form>
       </Modal>

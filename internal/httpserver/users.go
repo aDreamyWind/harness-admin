@@ -18,6 +18,7 @@ import (
 type UserAdminService interface {
 	List(context.Context, useradmin.ListFilter) (useradmin.UserList, error)
 	Create(context.Context, useradmin.CreateInput) (useradmin.User, error)
+	Update(context.Context, useradmin.UpdateInput) (useradmin.User, error)
 	ChangeStatus(context.Context, useradmin.ChangeStatusInput) (useradmin.User, error)
 	ResetPassword(context.Context, useradmin.ResetPasswordInput) error
 }
@@ -32,6 +33,11 @@ type createUserRequest struct {
 
 type changeUserStatusRequest struct {
 	Status string `json:"status"`
+}
+
+type updateUserRequest struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
 }
 
 type resetUserPasswordRequest struct {
@@ -63,8 +69,39 @@ func registerUserRoutes(router *gin.Engine, deps Dependencies) {
 	group := router.Group("/api/v1/users", requireSession(deps))
 	group.GET("", requirePermission(deps, "iam.user.read"), listUsersHandler(deps))
 	group.POST("", requirePermission(deps, "iam.user.write"), requireCSRF(deps), createUserHandler(deps))
+	group.PUT("/:id", requirePermission(deps, "iam.user.write"), requireCSRF(deps), updateUserHandler(deps))
 	group.PATCH("/:id/status", requirePermission(deps, "iam.user.write"), requireCSRF(deps), changeUserStatusHandler(deps))
 	group.PUT("/:id/password", requirePermission(deps, "iam.user.write"), requireCSRF(deps), resetUserPasswordHandler(deps))
+}
+
+func updateUserHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if _, err := uuid.Parse(ctx.Param("id")); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "用户标识格式不正确")
+			return
+		}
+		ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 16*1024)
+		var request updateUserRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "用户资料参数格式不正确")
+			return
+		}
+		session := currentSession(ctx)
+		user, err := deps.UserAdmin.Update(ctx.Request.Context(), useradmin.UpdateInput{
+			OrganizationID: session.User.OrganizationID,
+			ActorID:        session.User.ID,
+			UserID:         ctx.Param("id"),
+			Email:          request.Email,
+			DisplayName:    request.DisplayName,
+			RequestID:      contextString(ctx, "request_id"),
+			SourceIP:       ctx.ClientIP(),
+		})
+		if err != nil {
+			handleUserAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, presentManagedUser(user))
+	}
 }
 
 func resetUserPasswordHandler(deps Dependencies) gin.HandlerFunc {

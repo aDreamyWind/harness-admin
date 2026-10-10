@@ -70,6 +70,26 @@ type NewUser struct {
 	SourceIP       string
 }
 
+type UpdateInput struct {
+	OrganizationID string
+	ActorID        string
+	UserID         string
+	Email          string
+	DisplayName    string
+	RequestID      string
+	SourceIP       string
+}
+
+type ProfileUpdate struct {
+	OrganizationID string
+	ActorID        string
+	UserID         string
+	Email          string
+	DisplayName    string
+	RequestID      string
+	SourceIP       string
+}
+
 type ChangeStatusInput struct {
 	OrganizationID string
 	ActorID        string
@@ -100,6 +120,7 @@ type PasswordReset struct {
 type Repository interface {
 	ListUsers(ctx context.Context, filter ListFilter) (UserList, error)
 	CreateUser(ctx context.Context, input NewUser) (User, error)
+	UpdateUser(ctx context.Context, input ProfileUpdate) (User, error)
 	ChangeUserStatus(ctx context.Context, input ChangeStatusInput) (User, error)
 	ResetUserPassword(ctx context.Context, input PasswordReset) error
 }

@@ -36,6 +36,11 @@ export interface CreateUserInput {
   departmentId?: string
 }
 
+export interface UpdateUserInput {
+  displayName: string
+  email: string
+}
+
 export async function listUsers(query: UserListQuery): Promise<UserList> {
   const search = new URLSearchParams({
     page: String(query.page),
@@ -49,6 +54,14 @@ export async function listUsers(query: UserListQuery): Promise<UserList> {
 export function createUser(input: CreateUserInput): Promise<ManagedUser> {
   return request<ManagedUser>('/api/v1/users', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateUser(userId: string, input: UpdateUserInput): Promise<ManagedUser> {
+  return request<ManagedUser>(`/api/v1/users/${userId}`, {
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
     body: JSON.stringify(input),
   })

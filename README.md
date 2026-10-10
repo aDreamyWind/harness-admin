@@ -71,6 +71,7 @@ go run ./cmd/server
 
 - `GET /api/v1/users`
 - `POST /api/v1/users`
+- `PUT /api/v1/users/{userId}`
 - `PATCH /api/v1/users/{userId}/status`
 - `PUT /api/v1/users/{userId}/password`
 - `PUT /api/v1/users/{userId}/roles`

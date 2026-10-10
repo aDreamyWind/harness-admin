@@ -116,6 +116,60 @@ func (r *IdentityRepository) CreateUser(ctx context.Context, input useradmin.New
 	return user, nil
 }
 
+func (r *IdentityRepository) UpdateUser(ctx context.Context, input useradmin.ProfileUpdate) (useradmin.User, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return useradmin.User{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var previousEmail, previousDisplayName string
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE(email, ''), display_name
+		FROM users
+		WHERE id = $1 AND organization_id = $2
+		FOR UPDATE
+	`, input.UserID, input.OrganizationID).Scan(&previousEmail, &previousDisplayName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return useradmin.User{}, useradmin.ErrUserNotFound
+	}
+	if err != nil {
+		return useradmin.User{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET email = $1, display_name = $2, updated_at = NOW()
+		WHERE id = $3 AND organization_id = $4
+	`, nullableString(input.Email), input.DisplayName, input.UserID, input.OrganizationID); err != nil {
+		return useradmin.User{}, translateUserWriteError(err)
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.ActorID,
+		RequestID:      input.RequestID,
+		Action:         "identity.user.update",
+		ResourceType:   "user",
+		ResourceID:     input.UserID,
+		Result:         "success",
+		SourceIP:       input.SourceIP,
+		Detail: map[string]any{
+			"previousDisplayName": previousDisplayName,
+			"displayName":         input.DisplayName,
+			"previousEmail":       previousEmail,
+			"email":               input.Email,
+		},
+	}); err != nil {
+		return useradmin.User{}, err
+	}
+	user, err := findManagedUser(ctx, tx, input.OrganizationID, input.UserID)
+	if err != nil {
+		return useradmin.User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return useradmin.User{}, err
+	}
+	return user, nil
+}
+
 func (r *IdentityRepository) ChangeUserStatus(ctx context.Context, input useradmin.ChangeStatusInput) (useradmin.User, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

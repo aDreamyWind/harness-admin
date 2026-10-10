@@ -29,6 +29,7 @@ const actionLabels: Record<string, string> = {
   'authorization.permission.denied': '权限拒绝',
   'identity.bootstrap_admin': '初始化管理员',
   'identity.user.create': '创建用户',
+  'identity.user.update': '修改用户资料',
   'identity.user.status_change': '修改用户状态',
   'identity.user.password_reset': '重置用户密码',
   'identity.user.roles_change': '调整用户角色',

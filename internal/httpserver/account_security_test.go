@@ -52,8 +52,9 @@ func (*accountAuthStub) RevokeOtherSessions(context.Context, identity.Session, s
 }
 
 type accountUserAdminStub struct {
-	resetInput useradmin.ResetPasswordInput
-	resetErr   error
+	updateInput useradmin.UpdateInput
+	resetInput  useradmin.ResetPasswordInput
+	resetErr    error
 }
 
 func (*accountUserAdminStub) List(context.Context, useradmin.ListFilter) (useradmin.UserList, error) {
@@ -62,6 +63,11 @@ func (*accountUserAdminStub) List(context.Context, useradmin.ListFilter) (userad
 
 func (*accountUserAdminStub) Create(context.Context, useradmin.CreateInput) (useradmin.User, error) {
 	return useradmin.User{}, nil
+}
+
+func (s *accountUserAdminStub) Update(_ context.Context, input useradmin.UpdateInput) (useradmin.User, error) {
+	s.updateInput = input
+	return useradmin.User{ID: input.UserID, Email: input.Email, DisplayName: input.DisplayName}, nil
 }
 
 func (*accountUserAdminStub) ChangeStatus(context.Context, useradmin.ChangeStatusInput) (useradmin.User, error) {
@@ -174,6 +180,30 @@ func TestResetUserPasswordHandlerUsesCurrentOrganizationAndActor(t *testing.T) {
 	input := users.resetInput
 	if input.OrganizationID != "org-1" || input.ActorID != "user-1" || input.Password != "789" || input.RequestID != "request-2" {
 		t.Fatalf("重置密码参数不完整: %#v", input)
+	}
+}
+
+func TestUpdateUserHandlerUsesCurrentOrganizationAndActor(t *testing.T) {
+	auth := &accountAuthStub{session: accountTestSession()}
+	users := &accountUserAdminStub{}
+	router := newAccountSecurityTestRouter(auth, users)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/users/917e4f53-3cb0-4df2-8027-c0a49fd58d25",
+		strings.NewReader(`{"displayName":"新名称","email":"user@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.Header.Set("X-Request-ID", "request-3")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 %d；响应 = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	input := users.updateInput
+	if input.OrganizationID != "org-1" || input.ActorID != "user-1" ||
+		input.UserID != "917e4f53-3cb0-4df2-8027-c0a49fd58d25" || input.DisplayName != "新名称" ||
+		input.Email != "user@example.com" || input.RequestID != "request-3" {
+		t.Fatalf("修改用户资料参数不完整: %#v", input)
 	}
 }
 
