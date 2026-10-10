@@ -22,6 +22,7 @@ import { AuditPage } from './pages/AuditPage'
 import { AccountSecurityPage } from './pages/AccountSecurityPage'
 import { DepartmentsPage } from './pages/DepartmentsPage'
 import { LoginPage } from './pages/LoginPage'
+import { OrganizationSettingsPage } from './pages/OrganizationSettingsPage'
 import { RolesPage } from './pages/RolesPage'
 import { UsersPage } from './pages/UsersPage'
 
@@ -33,6 +34,7 @@ const menuRoutes: Record<string, string> = {
   departments: '/identity/departments',
   roles: '/identity/roles',
   audit: '/audit',
+  settings: '/settings/organization',
 }
 
 function Navigation({ items, selectedKey, onNavigate }: { items: MenuProps['items']; selectedKey: string; onNavigate: (path: string) => void }) {
@@ -84,6 +86,8 @@ export function App() {
         ? 'roles'
         : location.pathname.startsWith('/audit')
           ? 'audit'
+          : location.pathname.startsWith('/settings/organization')
+            ? 'settings'
           : location.pathname.startsWith('/account/security') ? 'account-security' : 'overview'
 
   function navigateFromMenu(path: string) {
@@ -182,6 +186,7 @@ export function App() {
               <Route path="/identity/departments" element={<PermissionPage permission="iam.department.read"><DepartmentsPage /></PermissionPage>} />
               <Route path="/identity/roles" element={<PermissionPage permission="iam.role.read"><RolesPage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
+              <Route path="/settings/organization" element={<PermissionPage permission="iam.organization.read"><OrganizationSettingsPage /></PermissionPage>} />
               <Route path="/account/security" element={<AccountSecurityPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
@@ -208,7 +213,7 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
     { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关', disabled: true },
     { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },
     hasPermission('audit.event.read') ? { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' } : null,
-    { key: 'settings', icon: <SettingOutlined />, label: '系统设置', disabled: true },
+    hasPermission('iam.organization.read') ? { key: 'settings', icon: <SettingOutlined />, label: '企业设置' } : null,
   ].filter(Boolean) as NonNullable<MenuProps['items']>
 }
 

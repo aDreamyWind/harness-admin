@@ -17,6 +17,7 @@ import (
 	"harness-admin/internal/departmentadmin"
 	"harness-admin/internal/httpserver"
 	"harness-admin/internal/identity"
+	"harness-admin/internal/organizationadmin"
 	"harness-admin/internal/roleadmin"
 	pgstore "harness-admin/internal/store/postgres"
 	"harness-admin/internal/useradmin"
@@ -57,22 +58,24 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	userAdminService := useradmin.NewService(identityRepository, identity.HashPassword)
 	roleAdminService := roleadmin.NewService(identityRepository)
 	departmentAdminService := departmentadmin.NewService(identityRepository)
+	organizationAdminService := organizationadmin.NewService(identityRepository)
 	auditEventService := auditadmin.NewService(identityRepository)
 
 	handler := httpserver.New(httpserver.Dependencies{
-		AppName:         cfg.AppName,
-		Environment:     cfg.Environment,
-		Logger:          logger,
-		Database:        db,
-		Cache:           redisClient,
-		Auth:            authService,
-		Access:          accessService,
-		UserAdmin:       userAdminService,
-		RoleAdmin:       roleAdminService,
-		DepartmentAdmin: departmentAdminService,
-		AuditEvents:     auditEventService,
-		AuditRecorder:   identityRepository,
-		SessionCookie:   cfg.SessionCookie,
+		AppName:           cfg.AppName,
+		Environment:       cfg.Environment,
+		Logger:            logger,
+		Database:          db,
+		Cache:             redisClient,
+		Auth:              authService,
+		Access:            accessService,
+		UserAdmin:         userAdminService,
+		RoleAdmin:         roleAdminService,
+		DepartmentAdmin:   departmentAdminService,
+		OrganizationAdmin: organizationAdminService,
+		AuditEvents:       auditEventService,
+		AuditRecorder:     identityRepository,
+		SessionCookie:     cfg.SessionCookie,
 	})
 
 	return &Application{

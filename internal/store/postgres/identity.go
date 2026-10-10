@@ -297,18 +297,6 @@ func (r *IdentityRepository) BootstrapAdmin(ctx context.Context, input identity.
 		return identity.BootstrapAdminResult{}, fmt.Errorf("创建企业失败: %w", err)
 	}
 
-	var existingUserID string
-	err = tx.QueryRow(ctx, `
-		SELECT id FROM users
-		WHERE organization_id = $1 AND LOWER(username) = LOWER($2)
-	`, organizationID, input.Username).Scan(&existingUserID)
-	if err == nil {
-		return identity.BootstrapAdminResult{OrganizationID: organizationID, UserID: existingUserID, Created: false}, tx.Commit(ctx)
-	}
-	if !errorsIsNoRows(err) {
-		return identity.BootstrapAdminResult{}, err
-	}
-
 	roleID := uuid.NewString()
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO roles (id, organization_id, code, name, description, built_in)
@@ -320,6 +308,8 @@ func (r *IdentityRepository) BootstrapAdmin(ctx context.Context, input identity.
 	}
 
 	permissions := []struct{ code, name, resource, action string }{
+		{"iam.organization.read", "查看企业设置", "organization", "read"},
+		{"iam.organization.write", "管理企业设置", "organization", "write"},
 		{"iam.user.read", "查看用户", "user", "read"},
 		{"iam.user.write", "管理用户", "user", "write"},
 		{"iam.department.read", "查看部门", "department", "read"},
@@ -344,6 +334,27 @@ func (r *IdentityRepository) BootstrapAdmin(ctx context.Context, input identity.
 		`, roleID, permissionID); err != nil {
 			return identity.BootstrapAdminResult{}, fmt.Errorf("分配权限 %s 失败: %w", permission.code, err)
 		}
+	}
+
+	var existingUserID string
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM users
+		WHERE organization_id = $1 AND LOWER(username) = LOWER($2)
+	`, organizationID, input.Username).Scan(&existingUserID)
+	if err == nil {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role_id)
+			VALUES ($1, $2) ON CONFLICT DO NOTHING
+		`, existingUserID, roleID); err != nil {
+			return identity.BootstrapAdminResult{}, fmt.Errorf("同步管理员角色失败: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return identity.BootstrapAdminResult{}, err
+		}
+		return identity.BootstrapAdminResult{OrganizationID: organizationID, UserID: existingUserID, Created: false}, nil
+	}
+	if !errorsIsNoRows(err) {
+		return identity.BootstrapAdminResult{}, err
 	}
 
 	userID := uuid.NewString()

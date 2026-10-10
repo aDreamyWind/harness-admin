@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.5.0
+  version: 0.6.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -335,6 +335,51 @@ paths:
           description: 用户部门已更新，需要 `iam.user.write` 权限。
         '404':
           description: 用户不存在。
+  /organization:
+    get:
+      summary: 获取当前企业资料
+      operationId: getOrganization
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 当前登录用户所属企业，需要 `iam.organization.read` 权限。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      summary: 修改当前企业资料
+      description: 仅修改企业展示名称；企业代码作为登录和数据隔离标识不可修改。需要 `iam.organization.write` 权限。
+      operationId: updateOrganization
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrganizationRequest'
+      responses:
+        '200':
+          description: 企业资料修改成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: 企业不存在。
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /departments:
     get:
       summary: 查询当前企业部门
@@ -600,6 +645,11 @@ components:
         email:
           type: string
           description: 电子邮箱；空字符串表示清除邮箱。
+    UpdateOrganizationRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 160 }
     ChangePasswordRequest:
       type: object
       required: [currentPassword, newPassword]
@@ -679,6 +729,16 @@ components:
           items: { type: string }
         lastLoginAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
+    Organization:
+      type: object
+      required: [id, code, name, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, disabled] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     Role:
       type: object
       required: [id, code, name, description, builtIn, userCount, permissionCodes, createdAt]
@@ -827,6 +887,11 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/UserList' }
+    OrganizationEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Organization' }
     RoleEnvelope:
       type: object
       required: [data]

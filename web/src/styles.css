@@ -1244,6 +1244,130 @@ select {
   font: 600 10px/1.2 "SFMono-Regular", Menlo, monospace;
 }
 
+.organization-heading {
+  margin-bottom: 24px;
+}
+
+.organization-identity-card,
+.organization-name-card {
+  min-height: 356px;
+}
+
+.organization-identity-card {
+  overflow: hidden;
+  border: 1px solid #243652;
+  background: #17253a;
+  color: #fff;
+}
+
+.organization-identity-card .ant-card-body {
+  padding: 28px;
+}
+
+.organization-card-label,
+.organization-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.organization-card-label > span:first-child {
+  color: #9eb0c8;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.organization-code {
+  margin-top: 28px;
+  color: #fff;
+  font: 650 27px/1.2 "SFMono-Regular", Menlo, monospace;
+  letter-spacing: -0.04em;
+  overflow-wrap: anywhere;
+}
+
+.organization-lock-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 15px;
+  color: #9eacc0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.organization-lock-note .anticon {
+  margin-top: 3px;
+  color: #d3a96d;
+}
+
+.organization-metadata {
+  display: grid;
+  gap: 14px;
+  margin: 32px 0 0;
+  padding-top: 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.organization-metadata div {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.organization-metadata dt {
+  color: #8294ad;
+  font-size: 11px;
+}
+
+.organization-metadata dd {
+  margin: 0;
+  color: #dce5f0;
+  font: 500 11px/1.5 "SFMono-Regular", Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.organization-name-card .ant-card-body {
+  padding: 34px 36px;
+}
+
+.organization-form-heading {
+  margin-bottom: 30px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #e2e9ef;
+}
+
+.organization-form-heading h3.ant-typography {
+  margin: 7px 0 6px;
+  color: #17243a;
+  font-size: 21px;
+}
+
+.organization-form-heading p.ant-typography {
+  margin: 0;
+  color: #748297;
+  font-size: 13px;
+}
+
+.organization-name-card .ant-form-item {
+  margin-bottom: 30px;
+}
+
+.organization-name-card .ant-form-item-label > label {
+  color: #34445a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.organization-form-actions {
+  padding-top: 20px;
+  border-top: 1px solid #e8edf2;
+}
+
+.organization-form-actions .ant-typography {
+  font-size: 12px;
+}
+
 @media (max-width: 960px) {
   .desktop-sider {
     display: none;
@@ -1280,6 +1404,11 @@ select {
 
   .security-layout {
     grid-template-columns: 1fr;
+  }
+
+  .organization-identity-card,
+  .organization-name-card {
+    min-height: auto;
   }
 }
 
@@ -1404,6 +1533,16 @@ select {
 
   .sequence-row .ant-tag {
     display: none;
+  }
+
+  .organization-name-card .ant-card-body,
+  .organization-identity-card .ant-card-body {
+    padding: 24px 20px;
+  }
+
+  .organization-form-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

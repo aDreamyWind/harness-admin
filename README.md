@@ -77,6 +77,11 @@ go run ./cmd/server
 - `PUT /api/v1/users/{userId}/roles`
 - `PATCH /api/v1/users/{userId}/department`
 
+企业设置接口：
+
+- `GET /api/v1/organization`
+- `PUT /api/v1/organization`
+
 部门管理接口：
 
 - `GET /api/v1/departments`
