@@ -61,3 +61,11 @@ export function changeUserStatus(userId: string, status: 'active' | 'disabled'):
     body: JSON.stringify({ status }),
   })
 }
+
+export function resetUserPassword(userId: string, password: string): Promise<void> {
+  return request(`/api/v1/users/${userId}/password`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+    body: JSON.stringify({ password }),
+  })
+}

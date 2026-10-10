@@ -4,6 +4,7 @@ import {
   AuditOutlined,
   DashboardOutlined,
   LogoutOutlined,
+  LockOutlined,
   MenuOutlined,
   NodeIndexOutlined,
   SafetyCertificateOutlined,
@@ -18,6 +19,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useAuth } from './auth/AuthContext'
 import { DashboardPage } from './pages/DashboardPage'
 import { AuditPage } from './pages/AuditPage'
+import { AccountSecurityPage } from './pages/AccountSecurityPage'
 import { DepartmentsPage } from './pages/DepartmentsPage'
 import { LoginPage } from './pages/LoginPage'
 import { RolesPage } from './pages/RolesPage'
@@ -99,7 +101,9 @@ export function App() {
       ? 'departments'
       : location.pathname.startsWith('/identity/roles')
         ? 'roles'
-        : location.pathname.startsWith('/audit') ? 'audit' : 'overview'
+        : location.pathname.startsWith('/audit')
+          ? 'audit'
+          : location.pathname.startsWith('/account/security') ? 'account-security' : 'overview'
 
   function navigateFromMenu(path: string) {
     navigate(path)
@@ -131,10 +135,15 @@ export function App() {
       ),
     },
     { type: 'divider' },
+    { key: 'security', icon: <LockOutlined />, label: '密码与会话' },
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
   ]
 
   async function handleAccountAction(info: { key: string }) {
+    if (info.key === 'security') {
+      navigate('/account/security')
+      return
+    }
     if (info.key !== 'logout' || loggingOut) return
     setLoggingOut(true)
     try {
@@ -190,6 +199,7 @@ export function App() {
               <Route path="/identity/departments" element={<DepartmentsPage />} />
               <Route path="/identity/roles" element={<RolesPage />} />
               <Route path="/audit" element={<AuditPage />} />
+              <Route path="/account/security" element={<AccountSecurityPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Content>

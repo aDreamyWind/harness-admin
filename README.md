@@ -62,12 +62,17 @@ go run ./cmd/server
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
 - `POST /api/v1/auth/logout`
+- `PUT /api/v1/auth/password`
+- `GET /api/v1/auth/sessions`
+- `DELETE /api/v1/auth/sessions/{sessionId}`
+- `POST /api/v1/auth/sessions/revoke-others`
 
 用户管理接口：
 
 - `GET /api/v1/users`
 - `POST /api/v1/users`
 - `PATCH /api/v1/users/{userId}/status`
+- `PUT /api/v1/users/{userId}/password`
 - `PUT /api/v1/users/{userId}/roles`
 - `PATCH /api/v1/users/{userId}/department`
 
@@ -95,6 +100,8 @@ go run ./cmd/server
 接口契约见 [`api/openapi.yaml`](api/openapi.yaml)。
 
 登录请求需要提供 `organizationCode`、`username` 和 `password`。登录成功后服务端写入仅限 `/api`、前端不可读取的 HttpOnly 会话 Cookie，同时写入同源前端可读取的 `harness_admin_csrf` Cookie。管理端会在退出及后续写接口中自动把该值放入 `X-CSRF-Token` 请求头；非浏览器客户端也可以使用登录响应中的 `csrfToken`。
+
+当前账号可在“密码与会话”中修改密码和管理登录设备。自己修改密码会保留当前会话并吊销其他会话；管理员为其他用户重置密码会吊销该用户的全部会话。密码最少 3 位。
 
 ## 验证
 

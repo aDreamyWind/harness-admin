@@ -30,6 +30,18 @@ func (auditAuthStub) ValidateCSRF(identity.Session, string) error { return nil }
 func (auditAuthStub) Logout(context.Context, identity.Session, string, string) error {
 	return nil
 }
+func (auditAuthStub) ChangePassword(context.Context, identity.ChangePasswordInput) (int64, error) {
+	return 0, nil
+}
+func (auditAuthStub) ListSessions(context.Context, identity.Session) ([]identity.UserSession, error) {
+	return nil, nil
+}
+func (auditAuthStub) RevokeManagedSession(context.Context, identity.Session, string, string, string) error {
+	return nil
+}
+func (auditAuthStub) RevokeOtherSessions(context.Context, identity.Session, string, string) (int64, error) {
+	return 0, nil
+}
 
 type auditAccessStub struct{ allowed bool }
 

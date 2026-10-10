@@ -18,6 +18,21 @@ export interface LoginInput {
   password: string
 }
 
+export interface UserSession {
+  id: string
+  userAgent: string
+  sourceIp?: string
+  expiresAt: string
+  lastSeenAt: string
+  createdAt: string
+  current: boolean
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string
+  newPassword: string
+}
+
 interface LoginResult {
   user: AuthUser
   csrfToken: string
@@ -46,6 +61,32 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 
 export async function logout(): Promise<void> {
   await request<{ loggedOut: boolean }>('/api/v1/auth/logout', {
+    method: 'POST',
+    headers: csrfHeaders(),
+  })
+}
+
+export function changePassword(input: ChangePasswordInput): Promise<{ changed: boolean; revokedSessions: number }> {
+  return request('/api/v1/auth/password', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+    body: JSON.stringify(input),
+  })
+}
+
+export function listSessions(): Promise<UserSession[]> {
+  return request<UserSession[]>('/api/v1/auth/sessions')
+}
+
+export function revokeSession(sessionId: string): Promise<void> {
+  return request(`/api/v1/auth/sessions/${sessionId}`, {
+    method: 'DELETE',
+    headers: csrfHeaders(),
+  })
+}
+
+export function revokeOtherSessions(): Promise<{ revokedSessions: number }> {
+  return request('/api/v1/auth/sessions/revoke-others', {
     method: 'POST',
     headers: csrfHeaders(),
   })

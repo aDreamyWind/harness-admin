@@ -1,4 +1,4 @@
-import { PlusOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
+import { KeyOutlined, PlusOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -26,6 +26,7 @@ import {
   changeUserStatus,
   createUser,
   listUsers,
+  resetUserPassword,
   type CreateUserInput,
   type ManagedUser,
 } from '../api/users'
@@ -43,6 +44,7 @@ export function UsersPage() {
   const { user: currentUser } = useAuth()
   const queryClient = useQueryClient()
   const [form] = Form.useForm<CreateUserInput>()
+  const [passwordForm] = Form.useForm<{ password: string; confirmPassword: string }>()
   const [messageApi, messageContext] = message.useMessage()
   const [createOpen, setCreateOpen] = useState(false)
   const [searchInput, setSearchInput] = useState('')
@@ -53,6 +55,7 @@ export function UsersPage() {
   const [selectedRoleIDs, setSelectedRoleIDs] = useState<string[]>([])
   const [departmentUser, setDepartmentUser] = useState<ManagedUser | null>(null)
   const [selectedDepartmentID, setSelectedDepartmentID] = useState<string | undefined>()
+  const [passwordUser, setPasswordUser] = useState<ManagedUser | null>(null)
   const pageSize = 20
 
   const usersQuery = useQuery({
@@ -110,6 +113,16 @@ export function UsersPage() {
     onError: (error) => messageApi.error(error instanceof Error ? error.message : '部门调整失败'),
   })
 
+  const resetPasswordMutation = useMutation({
+    mutationFn: ({ userId, password }: { userId: string; password: string }) => resetUserPassword(userId, password),
+    onSuccess: () => {
+      messageApi.success('密码已重置，该用户的登录会话已全部退出')
+      setPasswordUser(null)
+      passwordForm.resetFields()
+    },
+    onError: (error) => messageApi.error(error instanceof Error ? error.message : '密码重置失败'),
+  })
+
   const columns: TableColumnsType<ManagedUser> = [
     {
       title: '用户',
@@ -165,7 +178,7 @@ export function UsersPage() {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 100,
+      width: 190,
       render: (_, user) => {
         const nextStatus = user.status === 'active' ? 'disabled' : 'active'
         const isSelf = user.id === currentUser?.id
@@ -189,6 +202,19 @@ export function UsersPage() {
               }}
             >
               部门
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              icon={<KeyOutlined />}
+              disabled={isSelf}
+              onClick={() => {
+                setPasswordUser(user)
+                passwordForm.resetFields()
+                resetPasswordMutation.reset()
+              }}
+            >
+              重置密码
             </Button>
             <Popconfirm
               title={nextStatus === 'disabled' ? '停用这个用户？' : '启用这个用户？'}
@@ -325,6 +351,54 @@ export function UsersPage() {
             { min: 3, message: '密码不能少于 3 位' },
           ]}>
             <Input.Password autoComplete="new-password" placeholder="至少 3 位" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`重置密码${passwordUser ? ` · ${passwordUser.displayName}` : ''}`}
+        open={Boolean(passwordUser)}
+        okText="重置密码"
+        cancelText="取消"
+        confirmLoading={resetPasswordMutation.isPending}
+        onCancel={() => { setPasswordUser(null); passwordForm.resetFields(); resetPasswordMutation.reset() }}
+        onOk={() => passwordForm.submit()}
+        destroyOnHidden
+      >
+        <Alert
+          className="form-alert"
+          type="warning"
+          showIcon
+          message="重置后，该用户在所有设备上的登录都会立即失效。"
+        />
+        <Form<{ password: string; confirmPassword: string }>
+          form={passwordForm}
+          layout="vertical"
+          requiredMark={false}
+          onFinish={(values) => passwordUser && resetPasswordMutation.mutate({ userId: passwordUser.id, password: values.password })}
+        >
+          <Form.Item label="新密码" name="password" rules={[
+            { required: true, message: '请输入新密码' },
+            { min: 3, message: '密码不能少于 3 位' },
+          ]}>
+            <Input.Password autoComplete="new-password" placeholder="至少 3 位" />
+          </Form.Item>
+          <Form.Item
+            label="确认新密码"
+            name="confirmPassword"
+            dependencies={['password']}
+            rules={[
+              { required: true, message: '请再次输入新密码' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  return !value || getFieldValue('password') === value
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('两次输入的新密码不一致'))
+                },
+              }),
+            ]}
+          >
+            <Input.Password autoComplete="new-password" placeholder="再次输入" />
           </Form.Item>
         </Form>
       </Modal>

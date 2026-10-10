@@ -153,6 +153,88 @@ func (s *Service) Logout(ctx context.Context, session Session, requestID, source
 	})
 }
 
+func (s *Service) ChangePassword(ctx context.Context, input ChangePasswordInput) (int64, error) {
+	if input.Session.User.ID == "" || input.Session.User.OrganizationID == "" || input.Session.ID == "" ||
+		input.CurrentPassword == "" || input.NewPassword == "" || len(input.CurrentPassword) > 1024 || len(input.NewPassword) > 1024 {
+		return 0, ErrInvalidPassword
+	}
+	passwordHash, err := s.repository.FindUserPassword(ctx, input.Session.User.OrganizationID, input.Session.User.ID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return 0, ErrUnauthorized
+		}
+		return 0, fmt.Errorf("查询当前密码失败: %w", err)
+	}
+	if !VerifyPassword(passwordHash, input.CurrentPassword) {
+		return 0, ErrCurrentPassword
+	}
+	if VerifyPassword(passwordHash, input.NewPassword) {
+		return 0, ErrPasswordUnchanged
+	}
+	newHash, err := HashPassword(input.NewPassword)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrInvalidPassword, err)
+	}
+	revoked, err := s.repository.UpdateOwnPassword(ctx, PasswordUpdate{
+		OrganizationID:   input.Session.User.OrganizationID,
+		UserID:           input.Session.User.ID,
+		CurrentSessionID: input.Session.ID,
+		PasswordHash:     newHash,
+		RequestID:        input.RequestID,
+		SourceIP:         input.SourceIP,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("修改密码失败: %w", err)
+	}
+	return revoked, nil
+}
+
+func (s *Service) ListSessions(ctx context.Context, session Session) ([]UserSession, error) {
+	items, err := s.repository.ListUserSessions(ctx, session.User.ID, session.ID)
+	if err != nil {
+		return nil, fmt.Errorf("查询登录会话失败: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Service) RevokeManagedSession(ctx context.Context, session Session, targetSessionID, requestID, sourceIP string) error {
+	if targetSessionID == "" {
+		return ErrSessionNotFound
+	}
+	if targetSessionID == session.ID {
+		return ErrCannotRevokeCurrent
+	}
+	err := s.repository.RevokeUserSession(ctx, SessionActionInput{
+		OrganizationID:   session.User.OrganizationID,
+		UserID:           session.User.ID,
+		CurrentSessionID: session.ID,
+		TargetSessionID:  targetSessionID,
+		RequestID:        requestID,
+		SourceIP:         sourceIP,
+	})
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return err
+		}
+		return fmt.Errorf("吊销登录会话失败: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) RevokeOtherSessions(ctx context.Context, session Session, requestID, sourceIP string) (int64, error) {
+	revoked, err := s.repository.RevokeOtherUserSessions(ctx, SessionActionInput{
+		OrganizationID:   session.User.OrganizationID,
+		UserID:           session.User.ID,
+		CurrentSessionID: session.ID,
+		RequestID:        requestID,
+		SourceIP:         sourceIP,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("退出其他设备失败: %w", err)
+	}
+	return revoked, nil
+}
+
 func (s *Service) recordFailedLogin(ctx context.Context, limitKey string, input LoginInput, reason string) {
 	_ = s.limiter.RecordFailure(ctx, limitKey)
 	_ = s.repository.RecordAudit(ctx, AuditEvent{

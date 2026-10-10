@@ -99,6 +99,34 @@ func (s *Service) ChangeStatus(ctx context.Context, input ChangeStatusInput) (Us
 	return user, nil
 }
 
+func (s *Service) ResetPassword(ctx context.Context, input ResetPasswordInput) error {
+	if input.OrganizationID == "" || input.ActorID == "" || input.UserID == "" || len(input.Password) > 1024 {
+		return ErrInvalidInput
+	}
+	if input.ActorID == input.UserID {
+		return ErrCannotResetSelf
+	}
+	passwordHash, err := s.hashPassword(input.Password)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	err = s.repository.ResetUserPassword(ctx, PasswordReset{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.ActorID,
+		UserID:         input.UserID,
+		PasswordHash:   passwordHash,
+		RequestID:      input.RequestID,
+		SourceIP:       input.SourceIP,
+	})
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return err
+		}
+		return fmt.Errorf("重置用户密码失败: %w", err)
+	}
+	return nil
+}
+
 func validLength(value string, minimum, maximum int) bool {
 	length := utf8.RuneCountInString(value)
 	return length >= minimum && length <= maximum

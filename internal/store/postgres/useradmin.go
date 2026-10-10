@@ -175,6 +175,57 @@ func (r *IdentityRepository) ChangeUserStatus(ctx context.Context, input useradm
 	return user, nil
 }
 
+func (r *IdentityRepository) ResetUserPassword(ctx context.Context, input useradmin.PasswordReset) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var username string
+	err = tx.QueryRow(ctx, `
+		SELECT username FROM users
+		WHERE id = $1 AND organization_id = $2
+		FOR UPDATE
+	`, input.UserID, input.OrganizationID).Scan(&username)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return useradmin.ErrUserNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW()
+		WHERE id = $2 AND organization_id = $3
+	`, input.PasswordHash, input.UserID, input.OrganizationID); err != nil {
+		return err
+	}
+	revokedCommand, err := tx.Exec(ctx, `
+		UPDATE sessions SET revoked_at = NOW()
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, input.UserID)
+	if err != nil {
+		return err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.ActorID,
+		RequestID:      input.RequestID,
+		Action:         "identity.user.password_reset",
+		ResourceType:   "user",
+		ResourceID:     input.UserID,
+		Result:         "success",
+		SourceIP:       input.SourceIP,
+		Detail: map[string]any{
+			"username":        username,
+			"revokedSessions": revokedCommand.RowsAffected(),
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func findManagedUser(ctx context.Context, queryer interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, organizationID, userID string) (useradmin.User, error) {

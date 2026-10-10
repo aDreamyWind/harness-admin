@@ -19,6 +19,7 @@ type UserAdminService interface {
 	List(context.Context, useradmin.ListFilter) (useradmin.UserList, error)
 	Create(context.Context, useradmin.CreateInput) (useradmin.User, error)
 	ChangeStatus(context.Context, useradmin.ChangeStatusInput) (useradmin.User, error)
+	ResetPassword(context.Context, useradmin.ResetPasswordInput) error
 }
 
 type createUserRequest struct {
@@ -31,6 +32,10 @@ type createUserRequest struct {
 
 type changeUserStatusRequest struct {
 	Status string `json:"status"`
+}
+
+type resetUserPasswordRequest struct {
+	Password string `json:"password"`
 }
 
 type managedUserResponse struct {
@@ -59,6 +64,35 @@ func registerUserRoutes(router *gin.Engine, deps Dependencies) {
 	group.GET("", requirePermission(deps, "iam.user.read"), listUsersHandler(deps))
 	group.POST("", requirePermission(deps, "iam.user.write"), requireCSRF(deps), createUserHandler(deps))
 	group.PATCH("/:id/status", requirePermission(deps, "iam.user.write"), requireCSRF(deps), changeUserStatusHandler(deps))
+	group.PUT("/:id/password", requirePermission(deps, "iam.user.write"), requireCSRF(deps), resetUserPasswordHandler(deps))
+}
+
+func resetUserPasswordHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if _, err := uuid.Parse(ctx.Param("id")); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "用户标识格式不正确")
+			return
+		}
+		ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 8*1024)
+		var request resetUserPasswordRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil || len(request.Password) > 1024 {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "密码参数格式不正确")
+			return
+		}
+		session := currentSession(ctx)
+		if err := deps.UserAdmin.ResetPassword(ctx.Request.Context(), useradmin.ResetPasswordInput{
+			OrganizationID: session.User.OrganizationID,
+			ActorID:        session.User.ID,
+			UserID:         ctx.Param("id"),
+			Password:       request.Password,
+			RequestID:      contextString(ctx, "request_id"),
+			SourceIP:       ctx.ClientIP(),
+		}); err != nil {
+			handleUserAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, gin.H{"reset": true})
+	}
 }
 
 func listUsersHandler(deps Dependencies) gin.HandlerFunc {
@@ -164,6 +198,8 @@ func handleUserAdminError(ctx *gin.Context, logger *slog.Logger, err error) {
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_department", "所选部门不存在")
 	case errors.Is(err, useradmin.ErrCannotDisableSelf):
 		httpx.Fail(ctx, http.StatusConflict, "cannot_disable_self", "不能停用当前登录账号")
+	case errors.Is(err, useradmin.ErrCannotResetSelf):
+		httpx.Fail(ctx, http.StatusConflict, "cannot_reset_self", err.Error())
 	case errors.Is(err, useradmin.ErrUserNotFound):
 		httpx.Fail(ctx, http.StatusNotFound, "user_not_found", "用户不存在")
 	default:

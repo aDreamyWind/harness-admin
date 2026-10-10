@@ -7,9 +7,10 @@ import (
 )
 
 type repositoryStub struct {
-	listFilter  ListFilter
-	created     NewUser
-	statusInput ChangeStatusInput
+	listFilter    ListFilter
+	created       NewUser
+	statusInput   ChangeStatusInput
+	passwordReset PasswordReset
 }
 
 func (r *repositoryStub) ListUsers(_ context.Context, filter ListFilter) (UserList, error) {
@@ -25,6 +26,11 @@ func (r *repositoryStub) CreateUser(_ context.Context, input NewUser) (User, err
 func (r *repositoryStub) ChangeUserStatus(_ context.Context, input ChangeStatusInput) (User, error) {
 	r.statusInput = input
 	return User{ID: input.UserID, Status: input.Status}, nil
+}
+
+func (r *repositoryStub) ResetUserPassword(_ context.Context, input PasswordReset) error {
+	r.passwordReset = input
+	return nil
 }
 
 func TestListAppliesPaginationDefaults(t *testing.T) {
@@ -82,5 +88,28 @@ func TestChangeStatusRejectsDisablingSelf(t *testing.T) {
 	})
 	if !errors.Is(err, ErrCannotDisableSelf) {
 		t.Fatalf("错误 = %v，期望 ErrCannotDisableSelf", err)
+	}
+}
+
+func TestResetPasswordHashesPasswordAndRejectsSelf(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository, func(password string) (string, error) {
+		if password != "123" {
+			t.Fatalf("收到的密码 = %q", password)
+		}
+		return "password-hash", nil
+	})
+	if err := service.ResetPassword(context.Background(), ResetPasswordInput{
+		OrganizationID: "org-1", ActorID: "admin-1", UserID: "user-1", Password: "123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if repository.passwordReset.PasswordHash != "password-hash" || repository.passwordReset.UserID != "user-1" {
+		t.Fatalf("重置密码参数不正确: %#v", repository.passwordReset)
+	}
+	if err := service.ResetPassword(context.Background(), ResetPasswordInput{
+		OrganizationID: "org-1", ActorID: "admin-1", UserID: "admin-1", Password: "123",
+	}); !errors.Is(err, ErrCannotResetSelf) {
+		t.Fatalf("错误 = %v，期望 ErrCannotResetSelf", err)
 	}
 }

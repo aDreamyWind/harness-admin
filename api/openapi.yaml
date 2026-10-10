@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.3.0
+  version: 0.4.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -56,6 +56,78 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /auth/password:
+    put:
+      summary: 修改当前账号密码
+      description: 修改成功后保留当前会话，并吊销当前账号的其他会话。
+      operationId: changeCurrentPassword
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: 密码已修改。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordChangeEnvelope'
+        '400':
+          description: 密码参数不正确或当前密码错误。
+        '409':
+          description: 新密码与当前密码相同。
+  /auth/sessions:
+    get:
+      summary: 查询当前账号的活跃会话
+      operationId: listCurrentUserSessions
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 未过期且未吊销的会话，当前会话优先返回。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSessionListEnvelope'
+  /auth/sessions/{sessionId}:
+    delete:
+      summary: 吊销指定会话
+      description: 只能吊销当前账号名下的非当前会话。
+      operationId: revokeCurrentUserSession
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 会话已吊销。
+        '404':
+          description: 会话不存在或已经失效。
+        '409':
+          description: 不能通过会话管理吊销当前会话。
+  /auth/sessions/revoke-others:
+    post:
+      summary: 吊销当前账号的其他会话
+      operationId: revokeOtherCurrentUserSessions
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        '200':
+          description: 其他会话已吊销，当前会话保持登录。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionRevocationEnvelope'
   /users:
     get:
       summary: 查询当前企业用户
@@ -145,6 +217,34 @@ paths:
           description: 用户不存在。
         '409':
           description: 不能停用当前登录账号。
+  /users/{userId}/password:
+    put:
+      summary: 重置用户密码
+      description: 重置成功后吊销目标用户的全部会话；不能通过该接口重置当前登录账号。
+      operationId: resetUserPassword
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: 密码已重置，需要 `iam.user.write` 权限。
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: 用户不存在。
+        '409':
+          description: 不能重置当前登录账号的密码。
   /users/{userId}/roles:
     put:
       summary: 设置用户角色
@@ -460,6 +560,17 @@ components:
         email: { type: string, format: email }
         departmentId: { type: string, format: uuid }
         password: { type: string, format: password, minLength: 3 }
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, format: password }
+        newPassword: { type: string, format: password, minLength: 3, maxLength: 1024 }
+    ResetPasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, format: password, minLength: 3, maxLength: 1024 }
     CreateRoleRequest:
       type: object
       required: [code, name, permissionCodes]
@@ -576,6 +687,17 @@ components:
         sourceIp: { type: string }
         detail: { type: object, additionalProperties: true }
         createdAt: { type: string, format: date-time }
+    UserSession:
+      type: object
+      required: [id, userAgent, expiresAt, lastSeenAt, createdAt, current]
+      properties:
+        id: { type: string, format: uuid }
+        userAgent: { type: string }
+        sourceIp: { type: string }
+        expiresAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        current: { type: boolean }
     AuditEventList:
       type: object
       required: [items, total, page, pageSize]
@@ -625,6 +747,32 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/LoginResult' }
+    PasswordChangeEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [changed, revokedSessions]
+          properties:
+            changed: { type: boolean }
+            revokedSessions: { type: integer, format: int64 }
+    SessionRevocationEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [revokedSessions]
+          properties:
+            revokedSessions: { type: integer, format: int64 }
+    UserSessionListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/UserSession' }
     ManagedUserEnvelope:
       type: object
       required: [data]

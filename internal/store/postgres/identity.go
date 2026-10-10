@@ -83,6 +83,14 @@ func (r *IdentityRepository) FindSessionByTokenHash(ctx context.Context, tokenHa
 	if err == pgx.ErrNoRows {
 		return identity.Session{}, identity.ErrSessionNotFound
 	}
+	if err == nil {
+		if _, updateErr := r.pool.Exec(ctx, `
+			UPDATE sessions SET last_seen_at = NOW()
+			WHERE id = $1 AND last_seen_at < NOW() - INTERVAL '1 minute'
+		`, session.ID); updateErr != nil {
+			return identity.Session{}, updateErr
+		}
+	}
 	return session, err
 }
 
@@ -108,6 +116,152 @@ func (r *IdentityRepository) RevokeSession(ctx context.Context, sessionID string
 
 func (r *IdentityRepository) RecordAudit(ctx context.Context, event identity.AuditEvent) error {
 	return insertAudit(ctx, r.pool, event)
+}
+
+func (r *IdentityRepository) FindUserPassword(ctx context.Context, organizationID, userID string) (string, error) {
+	var passwordHash string
+	err := r.pool.QueryRow(ctx, `
+		SELECT password_hash FROM users WHERE organization_id = $1 AND id = $2
+	`, organizationID, userID).Scan(&passwordHash)
+	if err == pgx.ErrNoRows {
+		return "", identity.ErrUserNotFound
+	}
+	return passwordHash, err
+}
+
+func (r *IdentityRepository) UpdateOwnPassword(ctx context.Context, input identity.PasswordUpdate) (int64, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	command, err := tx.Exec(ctx, `
+		UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW()
+		WHERE organization_id = $2 AND id = $3
+	`, input.PasswordHash, input.OrganizationID, input.UserID)
+	if err != nil {
+		return 0, err
+	}
+	if command.RowsAffected() == 0 {
+		return 0, identity.ErrUserNotFound
+	}
+	revokedCommand, err := tx.Exec(ctx, `
+		UPDATE sessions SET revoked_at = NOW()
+		WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
+	`, input.UserID, input.CurrentSessionID)
+	if err != nil {
+		return 0, err
+	}
+	revoked := revokedCommand.RowsAffected()
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.UserID,
+		RequestID:      input.RequestID,
+		Action:         "auth.password.change",
+		ResourceType:   "user",
+		ResourceID:     input.UserID,
+		Result:         "success",
+		SourceIP:       input.SourceIP,
+		Detail:         map[string]any{"revokedOtherSessions": revoked},
+	}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return revoked, nil
+}
+
+func (r *IdentityRepository) ListUserSessions(ctx context.Context, userID, currentSessionID string) ([]identity.UserSession, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, user_agent, COALESCE(HOST(source_ip), ''), expires_at, last_seen_at, created_at,
+		       id = $2
+		FROM sessions
+		WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW()
+		ORDER BY (id = $2) DESC, last_seen_at DESC, created_at DESC
+	`, userID, currentSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]identity.UserSession, 0)
+	for rows.Next() {
+		var item identity.UserSession
+		if err := rows.Scan(&item.ID, &item.UserAgent, &item.SourceIP, &item.ExpiresAt, &item.LastSeenAt, &item.CreatedAt, &item.Current); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *IdentityRepository) RevokeUserSession(ctx context.Context, input identity.SessionActionInput) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	command, err := tx.Exec(ctx, `
+		UPDATE sessions SET revoked_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND id <> $3 AND revoked_at IS NULL AND expires_at > NOW()
+	`, input.TargetSessionID, input.UserID, input.CurrentSessionID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() == 0 {
+		return identity.ErrSessionNotFound
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.UserID,
+		RequestID:      input.RequestID,
+		Action:         "auth.session.revoke",
+		ResourceType:   "session",
+		ResourceID:     input.TargetSessionID,
+		Result:         "success",
+		SourceIP:       input.SourceIP,
+		Detail:         map[string]any{},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *IdentityRepository) RevokeOtherUserSessions(ctx context.Context, input identity.SessionActionInput) (int64, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	command, err := tx.Exec(ctx, `
+		UPDATE sessions SET revoked_at = NOW()
+		WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
+	`, input.UserID, input.CurrentSessionID)
+	if err != nil {
+		return 0, err
+	}
+	revoked := command.RowsAffected()
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID,
+		ActorID:        input.UserID,
+		RequestID:      input.RequestID,
+		Action:         "auth.session.revoke_others",
+		ResourceType:   "session",
+		ResourceID:     input.CurrentSessionID,
+		Result:         "success",
+		SourceIP:       input.SourceIP,
+		Detail:         map[string]any{"revokedSessions": revoked},
+	}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return revoked, nil
 }
 
 func (r *IdentityRepository) BootstrapAdmin(ctx context.Context, input identity.BootstrapAdminInput) (identity.BootstrapAdminResult, error) {

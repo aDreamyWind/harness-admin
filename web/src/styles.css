@@ -562,6 +562,173 @@ select {
   word-break: break-word;
 }
 
+.security-heading {
+  align-items: center;
+}
+
+.security-state {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 238px;
+  padding: 13px 16px;
+  border: 1px solid #d6e1e9;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #2457d6;
+}
+
+.security-state > .anticon {
+  font-size: 20px;
+}
+
+.security-state span,
+.security-state strong,
+.security-state small {
+  display: block;
+}
+
+.security-state strong {
+  color: #2b3b50;
+  font-size: 12px;
+}
+
+.security-state small {
+  margin-top: 2px;
+  color: #78869a;
+  font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
+}
+
+.security-layout {
+  display: grid;
+  grid-template-columns: minmax(330px, 430px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.security-card {
+  border: 1px solid #dce4eb !important;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.security-section-title {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e4eaf0;
+}
+
+.security-section-title > .anticon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 5px;
+  background: #eaf0f7;
+  color: #31547d;
+  font-size: 16px;
+}
+
+.security-section-title h3.ant-typography {
+  margin: 0 0 3px;
+  color: #233248;
+  font-size: 17px;
+}
+
+.security-section-title p.ant-typography {
+  margin: 0;
+  color: #78869a;
+  font-size: 12px;
+}
+
+.sessions-title {
+  grid-template-columns: 36px 1fr auto;
+}
+
+.password-card .ant-form-item-label > label {
+  color: #425168;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.session-list {
+  border-top: 1px solid #e4eaf0;
+}
+
+.session-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 13px;
+  align-items: center;
+  min-height: 104px;
+  padding: 17px 4px;
+  border-bottom: 1px solid #e4eaf0;
+}
+
+.session-row.current::before {
+  position: absolute;
+  top: 20px;
+  bottom: 20px;
+  left: -22px;
+  width: 3px;
+  border-radius: 2px;
+  background: #2457d6;
+  content: "";
+}
+
+.session-device-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid #dce4eb;
+  border-radius: 6px;
+  background: #f5f7f9;
+  color: #536a83;
+}
+
+.session-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.session-name strong {
+  color: #29394e;
+  font-size: 13px;
+}
+
+.session-main > .ant-typography {
+  display: block;
+  max-width: 590px;
+  color: #8692a1;
+  font: 10px/1.45 "SFMono-Regular", Menlo, monospace;
+}
+
+.session-meta {
+  margin-top: 9px;
+  color: #617086;
+  font-size: 11px;
+}
+
+.session-meta .anticon {
+  margin-right: 4px;
+}
+
+.security-loading,
+.security-empty {
+  padding: 42px 18px;
+  color: #7d8998;
+  text-align: center;
+  font-size: 12px;
+}
+
 .directory-card .ant-table-wrapper {
   padding: 0 18px 8px;
 }
@@ -1079,6 +1246,10 @@ select {
   .signal-path::before {
     display: none;
   }
+
+  .security-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {
@@ -1119,6 +1290,15 @@ select {
     align-items: flex-start;
   }
 
+  .security-heading {
+    display: block;
+  }
+
+  .security-state {
+    width: 100%;
+    margin-top: 18px;
+  }
+
   .module-heading h1.ant-typography {
     font-size: 26px;
   }
@@ -1141,6 +1321,19 @@ select {
   .audit-date-range {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
+  }
+
+  .sessions-title,
+  .session-row {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .sessions-title > .ant-btn,
+  .sessions-title > .ant-popconfirm,
+  .sessions-title > *:last-child,
+  .session-row > *:last-child {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .directory-total {

@@ -15,6 +15,11 @@ type repositoryStub struct {
 	savedSession   NewSession
 	audits         []AuditEvent
 	revokedID      string
+	passwordHash   string
+	passwordUpdate PasswordUpdate
+	updateRevoked  int64
+	sessions       []UserSession
+	sessionAction  SessionActionInput
 }
 
 func (r *repositoryStub) FindUserForLogin(context.Context, string, string) (User, error) {
@@ -40,6 +45,29 @@ func (r *repositoryStub) RevokeSession(_ context.Context, sessionID string, even
 func (r *repositoryStub) RecordAudit(_ context.Context, event AuditEvent) error {
 	r.audits = append(r.audits, event)
 	return nil
+}
+
+func (r *repositoryStub) FindUserPassword(context.Context, string, string) (string, error) {
+	return r.passwordHash, r.findUserErr
+}
+
+func (r *repositoryStub) UpdateOwnPassword(_ context.Context, input PasswordUpdate) (int64, error) {
+	r.passwordUpdate = input
+	return r.updateRevoked, nil
+}
+
+func (r *repositoryStub) ListUserSessions(context.Context, string, string) ([]UserSession, error) {
+	return r.sessions, nil
+}
+
+func (r *repositoryStub) RevokeUserSession(_ context.Context, input SessionActionInput) error {
+	r.sessionAction = input
+	return r.findSessionErr
+}
+
+func (r *repositoryStub) RevokeOtherUserSessions(_ context.Context, input SessionActionInput) (int64, error) {
+	r.sessionAction = input
+	return r.updateRevoked, r.findSessionErr
 }
 
 type limiterStub struct {
@@ -176,5 +204,53 @@ func TestAuthenticateRejectsExpiredSession(t *testing.T) {
 
 	if _, err := service.Authenticate(context.Background(), "expired"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("错误 = %v，期望 ErrUnauthorized", err)
+	}
+}
+
+func TestChangePasswordVerifiesCurrentAndKeepsCurrentSession(t *testing.T) {
+	oldHash, err := HashPassword("old-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &repositoryStub{passwordHash: oldHash, updateRevoked: 2}
+	service := NewService(repository, &limiterStub{allowed: true}, time.Hour)
+	revoked, err := service.ChangePassword(context.Background(), ChangePasswordInput{
+		Session:         Session{ID: "session-current", User: User{ID: "user-1", OrganizationID: "org-1"}},
+		CurrentPassword: "old-password",
+		NewPassword:     "new-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked != 2 || repository.passwordUpdate.CurrentSessionID != "session-current" {
+		t.Fatalf("密码更新结果不正确: revoked=%d input=%#v", revoked, repository.passwordUpdate)
+	}
+	if !VerifyPassword(repository.passwordUpdate.PasswordHash, "new-password") {
+		t.Fatal("新密码未正确哈希")
+	}
+}
+
+func TestChangePasswordRejectsIncorrectAndUnchangedPassword(t *testing.T) {
+	oldHash, err := HashPassword("old-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(&repositoryStub{passwordHash: oldHash}, &limiterStub{allowed: true}, time.Hour)
+	input := ChangePasswordInput{Session: Session{ID: "session-1", User: User{ID: "user-1", OrganizationID: "org-1"}}}
+	input.CurrentPassword, input.NewPassword = "wrong", "new-password"
+	if _, err := service.ChangePassword(context.Background(), input); !errors.Is(err, ErrCurrentPassword) {
+		t.Fatalf("错误 = %v，期望 ErrCurrentPassword", err)
+	}
+	input.CurrentPassword, input.NewPassword = "old-password", "old-password"
+	if _, err := service.ChangePassword(context.Background(), input); !errors.Is(err, ErrPasswordUnchanged) {
+		t.Fatalf("错误 = %v，期望 ErrPasswordUnchanged", err)
+	}
+}
+
+func TestRevokeManagedSessionProtectsCurrentSession(t *testing.T) {
+	service := NewService(&repositoryStub{}, &limiterStub{allowed: true}, time.Hour)
+	session := Session{ID: "session-current", User: User{ID: "user-1", OrganizationID: "org-1"}}
+	if err := service.RevokeManagedSession(context.Background(), session, "session-current", "", ""); !errors.Is(err, ErrCannotRevokeCurrent) {
+		t.Fatalf("错误 = %v，期望 ErrCannotRevokeCurrent", err)
 	}
 }

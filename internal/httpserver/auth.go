@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"harness-admin/internal/httpx"
 	"harness-admin/internal/identity"
@@ -22,6 +23,10 @@ type AuthService interface {
 	Authenticate(context.Context, string) (identity.Session, error)
 	ValidateCSRF(identity.Session, string) error
 	Logout(context.Context, identity.Session, string, string) error
+	ChangePassword(context.Context, identity.ChangePasswordInput) (int64, error)
+	ListSessions(context.Context, identity.Session) ([]identity.UserSession, error)
+	RevokeManagedSession(context.Context, identity.Session, string, string, string) error
+	RevokeOtherSessions(context.Context, identity.Session, string, string) (int64, error)
 }
 
 type loginRequest struct {
@@ -46,11 +51,30 @@ type loginResponse struct {
 	ExpiresAt time.Time    `json:"expiresAt"`
 }
 
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+type userSessionResponse struct {
+	ID         string    `json:"id"`
+	UserAgent  string    `json:"userAgent"`
+	SourceIP   string    `json:"sourceIp,omitempty"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+	CreatedAt  time.Time `json:"createdAt"`
+	Current    bool      `json:"current"`
+}
+
 func registerAuthRoutes(router *gin.Engine, deps Dependencies) {
 	group := router.Group("/api/v1/auth")
 	group.POST("/login", loginHandler(deps))
 	group.GET("/me", requireSession(deps), meHandler())
 	group.POST("/logout", requireSession(deps), requireCSRF(deps), logoutHandler(deps))
+	group.PUT("/password", requireSession(deps), requireCSRF(deps), changePasswordHandler(deps))
+	group.GET("/sessions", requireSession(deps), listSessionsHandler(deps))
+	group.DELETE("/sessions/:id", requireSession(deps), requireCSRF(deps), revokeSessionHandler(deps))
+	group.POST("/sessions/revoke-others", requireSession(deps), requireCSRF(deps), revokeOtherSessionsHandler(deps))
 }
 
 func loginHandler(deps Dependencies) gin.HandlerFunc {
@@ -111,6 +135,93 @@ func logoutHandler(deps Dependencies) gin.HandlerFunc {
 		clearSessionCookie(ctx, deps)
 		clearCSRFCookie(ctx, deps)
 		httpx.OK(ctx, http.StatusOK, gin.H{"loggedOut": true})
+	}
+}
+
+func changePasswordHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 8*1024)
+		var request changePasswordRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil || len(request.CurrentPassword) > 1024 || len(request.NewPassword) > 1024 {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "密码参数格式不正确")
+			return
+		}
+		revoked, err := deps.Auth.ChangePassword(ctx.Request.Context(), identity.ChangePasswordInput{
+			Session:         currentSession(ctx),
+			CurrentPassword: request.CurrentPassword,
+			NewPassword:     request.NewPassword,
+			RequestID:       contextString(ctx, "request_id"),
+			SourceIP:        ctx.ClientIP(),
+		})
+		if err != nil {
+			handleAccountSecurityError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, gin.H{"changed": true, "revokedSessions": revoked})
+	}
+}
+
+func listSessionsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		items, err := deps.Auth.ListSessions(ctx.Request.Context(), currentSession(ctx))
+		if err != nil {
+			handleAccountSecurityError(ctx, deps.Logger, err)
+			return
+		}
+		response := make([]userSessionResponse, 0, len(items))
+		for _, item := range items {
+			response = append(response, userSessionResponse{
+				ID: item.ID, UserAgent: item.UserAgent, SourceIP: item.SourceIP,
+				ExpiresAt: item.ExpiresAt, LastSeenAt: item.LastSeenAt,
+				CreatedAt: item.CreatedAt, Current: item.Current,
+			})
+		}
+		httpx.OK(ctx, http.StatusOK, response)
+	}
+}
+
+func revokeSessionHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if _, err := uuid.Parse(ctx.Param("id")); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "会话标识格式不正确")
+			return
+		}
+		if err := deps.Auth.RevokeManagedSession(ctx.Request.Context(), currentSession(ctx), ctx.Param("id"),
+			contextString(ctx, "request_id"), ctx.ClientIP()); err != nil {
+			handleAccountSecurityError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, gin.H{"revoked": true})
+	}
+}
+
+func revokeOtherSessionsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		revoked, err := deps.Auth.RevokeOtherSessions(ctx.Request.Context(), currentSession(ctx),
+			contextString(ctx, "request_id"), ctx.ClientIP())
+		if err != nil {
+			handleAccountSecurityError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, gin.H{"revokedSessions": revoked})
+	}
+}
+
+func handleAccountSecurityError(ctx *gin.Context, logger *slog.Logger, err error) {
+	switch {
+	case errors.Is(err, identity.ErrInvalidPassword):
+		httpx.Fail(ctx, http.StatusBadRequest, "invalid_password", err.Error())
+	case errors.Is(err, identity.ErrCurrentPassword):
+		httpx.Fail(ctx, http.StatusBadRequest, "current_password_incorrect", err.Error())
+	case errors.Is(err, identity.ErrPasswordUnchanged):
+		httpx.Fail(ctx, http.StatusConflict, "password_unchanged", err.Error())
+	case errors.Is(err, identity.ErrCannotRevokeCurrent):
+		httpx.Fail(ctx, http.StatusConflict, "cannot_revoke_current_session", err.Error())
+	case errors.Is(err, identity.ErrSessionNotFound):
+		httpx.Fail(ctx, http.StatusNotFound, "session_not_found", "会话不存在或已经失效")
+	default:
+		logger.Error("账号安全接口处理失败", "error", err, "request_id", contextString(ctx, "request_id"))
+		httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "服务暂时不可用")
 	}
 }
 
