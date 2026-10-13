@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"harness-admin/internal/httpx"
 	"harness-admin/internal/modelgateway"
@@ -23,10 +25,11 @@ const maxGatewayResponseBody = 32 * 1024 * 1024
 type ModelGatewayService interface {
 	ListAPIKeys(context.Context, string) ([]modelgateway.APIKey, error)
 	CreateAPIKey(context.Context, modelgateway.CreateAPIKeyInput) (modelgateway.CreatedAPIKey, error)
+	UpdateAPIKey(context.Context, modelgateway.UpdateAPIKeyInput) (modelgateway.APIKey, error)
 	RevokeAPIKey(context.Context, modelgateway.RevokeAPIKeyInput) (modelgateway.APIKey, error)
 	Prepare(context.Context, string, []byte) (modelgateway.PreparedRequest, error)
 	RecordCall(context.Context, modelgateway.RecordCallInput) error
-	ListCalls(context.Context, string, int) ([]modelgateway.Call, error)
+	ListCalls(context.Context, modelgateway.CallQuery) (modelgateway.CallPage, error)
 }
 
 type ModelGatewayForwarder interface {
@@ -34,20 +37,34 @@ type ModelGatewayForwarder interface {
 }
 
 type createGatewayAPIKeyRequest struct {
-	Name      string     `json:"name"`
-	ExpiresAt *time.Time `json:"expiresAt"`
+	Name              string     `json:"name"`
+	ExpiresAt         *time.Time `json:"expiresAt"`
+	RequestsPerMinute *int       `json:"requestsPerMinute"`
+	MonthlyTokenLimit *int64     `json:"monthlyTokenLimit"`
+	AllowedModelCodes []string   `json:"allowedModelCodes"`
 }
 
 type gatewayAPIKeyResponse struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	KeyPrefix  string     `json:"keyPrefix"`
-	Status     string     `json:"status"`
-	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
-	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
-	Secret     string     `json:"secret,omitempty"`
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	KeyPrefix         string     `json:"keyPrefix"`
+	Status            string     `json:"status"`
+	ExpiresAt         *time.Time `json:"expiresAt,omitempty"`
+	LastUsedAt        *time.Time `json:"lastUsedAt,omitempty"`
+	RequestsPerMinute int        `json:"requestsPerMinute"`
+	MonthlyTokenLimit int64      `json:"monthlyTokenLimit"`
+	MonthlyTokenUsed  int64      `json:"monthlyTokenUsed"`
+	AllowedModelCodes []string   `json:"allowedModelCodes"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	RevokedAt         *time.Time `json:"revokedAt,omitempty"`
+	Secret            string     `json:"secret,omitempty"`
+}
+
+type gatewayCallPageResponse struct {
+	Items    []gatewayCallResponse `json:"items"`
+	Total    int64                 `json:"total"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"pageSize"`
 }
 
 type gatewayCallResponse struct {
@@ -73,6 +90,7 @@ func registerModelGatewayRoutes(router *gin.Engine, deps Dependencies) {
 	admin := router.Group("/api/v1/model-gateway", requireSession(deps))
 	admin.GET("/api-keys", requirePermission(deps, "model.gateway.read"), listGatewayAPIKeysHandler(deps))
 	admin.POST("/api-keys", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), createGatewayAPIKeyHandler(deps))
+	admin.PUT("/api-keys/:id", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), updateGatewayAPIKeyHandler(deps))
 	admin.PATCH("/api-keys/:id/revoke", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), revokeGatewayAPIKeyHandler(deps))
 	admin.GET("/calls", requirePermission(deps, "model.gateway.read"), listGatewayCallsHandler(deps))
 
@@ -101,15 +119,53 @@ func createGatewayAPIKeyHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		session := currentSession(ctx)
+		requestsPerMinute := 60
+		if request.RequestsPerMinute != nil {
+			requestsPerMinute = *request.RequestsPerMinute
+		}
+		monthlyTokenLimit := int64(0)
+		if request.MonthlyTokenLimit != nil {
+			monthlyTokenLimit = *request.MonthlyTokenLimit
+		}
 		created, err := deps.ModelGateway.CreateAPIKey(ctx.Request.Context(), modelgateway.CreateAPIKeyInput{
 			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, Name: request.Name,
-			ExpiresAt: request.ExpiresAt, RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+			ExpiresAt: request.ExpiresAt, RequestsPerMinute: requestsPerMinute,
+			MonthlyTokenLimit: monthlyTokenLimit, AllowedModelCodes: request.AllowedModelCodes,
+			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
 		})
 		if err != nil {
 			handleModelGatewayAdminError(ctx, deps.Logger, err)
 			return
 		}
 		httpx.OK(ctx, http.StatusCreated, presentGatewayAPIKey(created.APIKey, created.Secret))
+	}
+}
+
+func updateGatewayAPIKeyHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !validUUIDParam(ctx, "调用密钥") {
+			return
+		}
+		var request createGatewayAPIKeyRequest
+		if !bindModelJSON(ctx, &request) {
+			return
+		}
+		if request.RequestsPerMinute == nil || request.MonthlyTokenLimit == nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "修改调用密钥时必须提供限流和额度设置")
+			return
+		}
+		session := currentSession(ctx)
+		item, err := deps.ModelGateway.UpdateAPIKey(ctx.Request.Context(), modelgateway.UpdateAPIKeyInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, APIKeyID: ctx.Param("id"),
+			Name: request.Name, ExpiresAt: request.ExpiresAt, RequestsPerMinute: *request.RequestsPerMinute,
+			MonthlyTokenLimit: *request.MonthlyTokenLimit, AllowedModelCodes: request.AllowedModelCodes,
+			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if err != nil {
+			handleModelGatewayAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, presentGatewayAPIKey(item, ""))
 	}
 }
 
@@ -133,22 +189,40 @@ func revokeGatewayAPIKeyHandler(deps Dependencies) gin.HandlerFunc {
 
 func listGatewayCallsHandler(deps Dependencies) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		limit := 100
-		if raw := ctx.Query("limit"); raw != "" {
-			value, err := strconv.Atoi(raw)
-			if err != nil {
-				httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "limit 必须是整数")
+		page, ok := positiveQueryInt(ctx, "page", 1)
+		if !ok {
+			return
+		}
+		pageSize, ok := positiveQueryInt(ctx, "pageSize", 20)
+		if !ok {
+			return
+		}
+		startedAt, ok := optionalQueryTime(ctx, "startedAt")
+		if !ok {
+			return
+		}
+		endedAt, ok := optionalQueryTime(ctx, "endedAt")
+		if !ok {
+			return
+		}
+		apiKeyID := strings.TrimSpace(ctx.Query("apiKeyId"))
+		if apiKeyID != "" {
+			if _, err := uuid.Parse(apiKeyID); err != nil {
+				httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "调用密钥标识格式不正确")
 				return
 			}
-			limit = value
 		}
-		items, err := deps.ModelGateway.ListCalls(ctx.Request.Context(), currentSession(ctx).User.OrganizationID, limit)
+		result, err := deps.ModelGateway.ListCalls(ctx.Request.Context(), modelgateway.CallQuery{
+			OrganizationID: currentSession(ctx).User.OrganizationID, APIKeyID: apiKeyID,
+			ModelCode: ctx.Query("modelCode"), Result: ctx.Query("result"), StartedAt: startedAt, EndedAt: endedAt,
+			Page: page, PageSize: pageSize,
+		})
 		if err != nil {
 			handleModelGatewayAdminError(ctx, deps.Logger, err)
 			return
 		}
-		response := make([]gatewayCallResponse, 0, len(items))
-		for _, item := range items {
+		response := make([]gatewayCallResponse, 0, len(result.Items))
+		for _, item := range result.Items {
 			response = append(response, gatewayCallResponse{
 				ID: item.ID, APIKeyID: item.APIKeyID, APIKeyName: item.APIKeyName, RequestID: item.RequestID,
 				ModelCode: item.ModelCode, UpstreamModelID: item.UpstreamModelID, Streaming: item.Streaming,
@@ -157,7 +231,7 @@ func listGatewayCallsHandler(deps Dependencies) gin.HandlerFunc {
 				ErrorCode: item.ErrorCode, SourceIP: item.SourceIP, CreatedAt: item.CreatedAt,
 			})
 		}
-		httpx.OK(ctx, http.StatusOK, response)
+		httpx.OK(ctx, http.StatusOK, gatewayCallPageResponse{Items: response, Total: result.Total, Page: result.Page, PageSize: result.PageSize})
 	}
 }
 
@@ -188,12 +262,12 @@ func chatCompletionsGatewayHandler(deps Dependencies) gin.HandlerFunc {
 
 		if prepared.Streaming {
 			ctx.Status(upstream.StatusCode)
-			copyErr := streamGatewayResponse(ctx, upstream.Body)
+			usage, copyErr := streamGatewayResponse(ctx, upstream.Body)
 			errorCode := upstreamErrorCode(upstream.StatusCode, nil)
 			if copyErr != nil {
 				errorCode = "stream_interrupted"
 			}
-			recordGatewayCall(deps, ctx, prepared, upstream.StatusCode, time.Since(startedAt), tokenUsage{}, errorCode)
+			recordGatewayCall(deps, ctx, prepared, upstream.StatusCode, time.Since(startedAt), usage, errorCode)
 			return
 		}
 
@@ -208,23 +282,34 @@ func chatCompletionsGatewayHandler(deps Dependencies) gin.HandlerFunc {
 	}
 }
 
-func streamGatewayResponse(ctx *gin.Context, source io.Reader) error {
-	buffer := make([]byte, 16*1024)
-	for {
-		read, readErr := source.Read(buffer)
-		if read > 0 {
-			if _, writeErr := ctx.Writer.Write(buffer[:read]); writeErr != nil {
-				return writeErr
-			}
-			ctx.Writer.Flush()
+func streamGatewayResponse(ctx *gin.Context, source io.Reader) (tokenUsage, error) {
+	var usage tokenUsage
+	scanner := bufio.NewScanner(source)
+	scanner.Buffer(make([]byte, 16*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if _, err := io.WriteString(ctx.Writer, line+"\n"); err != nil {
+			return usage, err
 		}
-		if errors.Is(readErr, io.EOF) {
-			return nil
-		}
-		if readErr != nil {
-			return readErr
+		ctx.Writer.Flush()
+		if parsed, ok := parseSSETokenUsage(line); ok {
+			usage = parsed
 		}
 	}
+	return usage, scanner.Err()
+}
+
+func parseSSETokenUsage(line string) (tokenUsage, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "data:") {
+		return tokenUsage{}, false
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "" || payload == "[DONE]" {
+		return tokenUsage{}, false
+	}
+	usage := parseTokenUsage([]byte(payload))
+	return usage, usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0
 }
 
 type tokenUsage struct {
@@ -302,9 +387,38 @@ func copyGatewayHeaders(target http.Header, source http.Header) {
 func presentGatewayAPIKey(item modelgateway.APIKey, secret string) gatewayAPIKeyResponse {
 	return gatewayAPIKeyResponse{
 		ID: item.ID, Name: item.Name, KeyPrefix: item.KeyPrefix, Status: item.Status,
-		ExpiresAt: item.ExpiresAt, LastUsedAt: item.LastUsedAt, CreatedAt: item.CreatedAt,
+		ExpiresAt: item.ExpiresAt, LastUsedAt: item.LastUsedAt,
+		RequestsPerMinute: item.RequestsPerMinute, MonthlyTokenLimit: item.MonthlyTokenLimit,
+		MonthlyTokenUsed: item.MonthlyTokenUsed, AllowedModelCodes: item.AllowedModelCodes,
+		CreatedAt: item.CreatedAt,
 		RevokedAt: item.RevokedAt, Secret: secret,
 	}
+}
+
+func positiveQueryInt(ctx *gin.Context, name string, fallback int) (int, bool) {
+	raw := strings.TrimSpace(ctx.Query(name))
+	if raw == "" {
+		return fallback, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", name+" 必须是正整数")
+		return 0, false
+	}
+	return value, true
+}
+
+func optionalQueryTime(ctx *gin.Context, name string) (*time.Time, bool) {
+	raw := strings.TrimSpace(ctx.Query(name))
+	if raw == "" {
+		return nil, true
+	}
+	value, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", name+" 必须是 RFC 3339 时间")
+		return nil, false
+	}
+	return &value, true
 }
 
 func handleModelGatewayAdminError(ctx *gin.Context, logger *slog.Logger, err error) {
@@ -329,6 +443,13 @@ func handleGatewayRequestError(ctx *gin.Context, logger *slog.Logger, err error)
 		writeGatewayError(ctx, http.StatusNotFound, "model_not_found", "请求的模型编码不存在")
 	case errors.Is(err, modelgateway.ErrModelDisabled), errors.Is(err, modelgateway.ErrProviderDisabled):
 		writeGatewayError(ctx, http.StatusConflict, "model_unavailable", err.Error())
+	case errors.Is(err, modelgateway.ErrModelNotAllowed):
+		writeGatewayError(ctx, http.StatusForbidden, "model_not_allowed", err.Error())
+	case errors.Is(err, modelgateway.ErrRateLimited):
+		ctx.Header("Retry-After", "60")
+		writeGatewayError(ctx, http.StatusTooManyRequests, "rate_limit_exceeded", err.Error())
+	case errors.Is(err, modelgateway.ErrMonthlyQuota):
+		writeGatewayError(ctx, http.StatusTooManyRequests, "insufficient_quota", err.Error())
 	default:
 		logger.Error("模型网关请求处理失败", "error", err, "request_id", contextString(ctx, "request_id"))
 		writeGatewayError(ctx, http.StatusInternalServerError, "internal_error", "模型网关暂时不可用")
@@ -339,6 +460,8 @@ func writeGatewayError(ctx *gin.Context, status int, code, message string) {
 	errorType := "invalid_request_error"
 	if status == http.StatusUnauthorized {
 		errorType = "authentication_error"
+	} else if status == http.StatusTooManyRequests {
+		errorType = "rate_limit_error"
 	} else if status >= 500 {
 		errorType = "api_error"
 	}

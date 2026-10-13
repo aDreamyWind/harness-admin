@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.11.0
+  version: 0.12.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -980,23 +980,69 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/GatewayAPIKeyEnvelope' }
         '404': { description: 调用密钥不存在或不属于当前企业。 }
+  /model-gateway/api-keys/{apiKeyId}:
+    put:
+      summary: 修改模型网关调用密钥
+      description: 修改名称、过期时间、限流、月度 Token 额度和可用模型范围，不更换密钥值。
+      operationId: updateModelGatewayAPIKey
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: apiKeyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateGatewayAPIKeyRequest' }
+      responses:
+        '200':
+          description: 调用密钥设置已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayAPIKeyEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { description: 调用密钥不存在或不属于当前企业。 }
   /model-gateway/calls:
     get:
       summary: 查询当前企业的模型网关调用记录
-      description: 不保存提示词与模型回答，默认返回最近 100 条。
+      description: 不保存提示词与模型回答，支持按调用密钥、模型编码、结果和时间范围查询。
       operationId: listModelGatewayCalls
       security:
         - sessionCookie: []
       parameters:
-        - name: limit
+        - name: page
           in: query
-          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: apiKeyId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: modelCode
+          in: query
+          schema: { type: string }
+        - name: result
+          in: query
+          schema: { type: string, enum: [success, failed] }
+        - name: startedAt
+          in: query
+          schema: { type: string, format: date-time }
+        - name: endedAt
+          in: query
+          schema: { type: string, format: date-time }
       responses:
         '200':
           description: 网关调用记录，需要 `model.gateway.read` 权限。
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GatewayCallListEnvelope' }
+              schema: { $ref: '#/components/schemas/GatewayCallPageEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /v1/chat/completions:
     servers:
       - url: /
@@ -1025,8 +1071,10 @@ paths:
           description: 上游 OpenAI 兼容响应，流式调用返回 `text/event-stream`。
         '400': { description: 请求格式不正确。 }
         '401': { description: 调用密钥无效、已吊销或已过期。 }
+        '403': { description: 调用密钥无权访问请求的模型。 }
         '404': { description: 模型编码不存在。 }
         '409': { description: 模型或供应商连接已停用。 }
+        '429': { description: 超过每分钟请求限制，或当月 Token 额度已用尽。 }
         '502': { description: 无法连接模型供应商。 }
 components:
   securitySchemes:
@@ -1299,9 +1347,20 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         expiresAt: { type: string, format: date-time, description: 省略时永不过期，必须晚于当前时间。 }
+        requestsPerMinute: { type: integer, minimum: 0, maximum: 100000, default: 60, description: 0 表示不限制。 }
+        monthlyTokenLimit: { type: integer, format: int64, minimum: 0, default: 0, description: UTC 自然月 Token 额度，0 表示不限制。 }
+        allowedModelCodes:
+          type: array
+          description: 允许调用的模型编码；空数组表示所有已启用模型。
+          items: { type: string }
+    UpdateGatewayAPIKeyRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateGatewayAPIKeyRequest'
+        - type: object
+          required: [name, requestsPerMinute, monthlyTokenLimit, allowedModelCodes]
     GatewayAPIKey:
       type: object
-      required: [id, name, keyPrefix, status, createdAt]
+      required: [id, name, keyPrefix, status, requestsPerMinute, monthlyTokenLimit, monthlyTokenUsed, allowedModelCodes, createdAt]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -1309,6 +1368,12 @@ components:
         status: { type: string, enum: [active, revoked] }
         expiresAt: { type: string, format: date-time }
         lastUsedAt: { type: string, format: date-time }
+        requestsPerMinute: { type: integer, minimum: 0 }
+        monthlyTokenLimit: { type: integer, format: int64, minimum: 0 }
+        monthlyTokenUsed: { type: integer, format: int64, minimum: 0 }
+        allowedModelCodes:
+          type: array
+          items: { type: string }
         createdAt: { type: string, format: date-time }
         revokedAt: { type: string, format: date-time }
     CreatedGatewayAPIKey:
@@ -1338,6 +1403,16 @@ components:
         errorCode: { type: string }
         sourceIp: { type: string }
         createdAt: { type: string, format: date-time }
+    GatewayCallPage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/GatewayCall' }
+        total: { type: integer, format: int64, minimum: 0 }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
     AuthUser:
       type: object
       required: [id, organizationId, organization, organizationCode, username, displayName, permissionCodes]
@@ -1653,13 +1728,11 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/GatewayAPIKey' }
-    GatewayCallListEnvelope:
+    GatewayCallPageEnvelope:
       type: object
       required: [data]
       properties:
-        data:
-          type: array
-          items: { $ref: '#/components/schemas/GatewayCall' }
+        data: { $ref: '#/components/schemas/GatewayCallPage' }
     AuditEventEnvelope:
       type: object
       required: [data]

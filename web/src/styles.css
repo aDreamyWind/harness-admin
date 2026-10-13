@@ -1781,6 +1781,67 @@ select {
   font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
 }
 
+.gateway-limit-cell span,
+.gateway-limit-cell small {
+  display: block;
+}
+
+.gateway-limit-cell span {
+  color: #34465c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gateway-limit-cell small {
+  margin-top: 4px;
+  color: #7c8999;
+  font-size: 10px;
+}
+
+.gateway-model-scope {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gateway-model-scope .ant-tag {
+  overflow: hidden;
+  max-width: 82px;
+  margin: 0;
+  text-overflow: ellipsis;
+}
+
+.gateway-call-filters {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.85fr) minmax(140px, 1fr) minmax(120px, 0.75fr) 190px 190px auto;
+  align-items: start;
+  gap: 10px 0;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e5ebf0;
+  background: #fafbfd;
+}
+
+.gateway-call-filters .ant-form-item {
+  margin-right: 10px;
+  margin-bottom: 0;
+}
+
+.gateway-call-filters .ant-select,
+.gateway-call-filters .ant-input {
+  width: 100%;
+}
+
+.gateway-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.gateway-limit-grid .ant-input-number {
+  width: 100%;
+}
+
 .gateway-call-flow {
   display: flex;
   align-items: center;
@@ -1884,6 +1945,10 @@ select {
 
   .gateway-endpoint-strip > .anticon {
     display: none;
+  }
+
+  .gateway-call-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -2052,6 +2117,15 @@ select {
   .gateway-endpoint-strip {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  .gateway-limit-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .gateway-call-filters {
+    grid-template-columns: 1fr;
   }
 
   .gateway-secret-box {

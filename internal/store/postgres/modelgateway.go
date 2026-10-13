@@ -25,7 +25,12 @@ func NewModelGatewayRepository(pool *pgxpool.Pool, cipher *secret.Cipher) *Model
 
 const gatewayAPIKeyColumns = `
 	k.id, k.organization_id, k.name, k.key_prefix, k.status, k.expires_at,
-	k.last_used_at, k.created_at, k.revoked_at
+	k.last_used_at, k.requests_per_minute, k.monthly_token_limit,
+	COALESCE((
+		SELECT u.total_tokens FROM model_gateway_monthly_usage u
+		WHERE u.organization_id = k.organization_id AND u.api_key_id = k.id
+		  AND u.usage_month = DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::DATE
+	), 0), k.allowed_model_codes, k.created_at, k.revoked_at
 `
 
 func (r *ModelGatewayRepository) ListAPIKeys(ctx context.Context, organizationID string) ([]modelgateway.APIKey, error) {
@@ -59,9 +64,11 @@ func (r *ModelGatewayRepository) CreateAPIKey(ctx context.Context, input modelga
 	apiKeyID := uuid.NewString()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO model_gateway_api_keys (
-			id, organization_id, name, key_prefix, secret_hash, expires_at, created_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, apiKeyID, input.OrganizationID, input.Name, input.KeyPrefix, input.SecretHash, input.ExpiresAt, input.ActorID)
+			id, organization_id, name, key_prefix, secret_hash, expires_at, created_by,
+			requests_per_minute, monthly_token_limit, allowed_model_codes
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, apiKeyID, input.OrganizationID, input.Name, input.KeyPrefix, input.SecretHash, input.ExpiresAt,
+		input.ActorID, input.RequestsPerMinute, input.MonthlyTokenLimit, input.AllowedModelCodes)
 	if err != nil {
 		return modelgateway.APIKey{}, err
 	}
@@ -69,11 +76,52 @@ func (r *ModelGatewayRepository) CreateAPIKey(ctx context.Context, input modelga
 		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
 		Action: "model.gateway_api_key.create", ResourceType: "model_gateway_api_key", ResourceID: apiKeyID,
 		Result: "success", SourceIP: input.SourceIP,
-		Detail: map[string]any{"name": input.Name, "keyPrefix": input.KeyPrefix, "expiresAt": input.ExpiresAt},
+		Detail: map[string]any{"name": input.Name, "keyPrefix": input.KeyPrefix, "expiresAt": input.ExpiresAt,
+			"requestsPerMinute": input.RequestsPerMinute, "monthlyTokenLimit": input.MonthlyTokenLimit,
+			"allowedModelCodes": input.AllowedModelCodes},
 	}); err != nil {
 		return modelgateway.APIKey{}, err
 	}
 	item, err := findGatewayAPIKey(ctx, tx, input.OrganizationID, apiKeyID)
+	if err != nil {
+		return modelgateway.APIKey{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return modelgateway.APIKey{}, err
+	}
+	return item, nil
+}
+
+func (r *ModelGatewayRepository) UpdateAPIKey(ctx context.Context, input modelgateway.UpdateAPIKeyInput) (modelgateway.APIKey, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return modelgateway.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
+	command, err := tx.Exec(ctx, `
+		UPDATE model_gateway_api_keys
+		SET name = $1, expires_at = $2, requests_per_minute = $3,
+		    monthly_token_limit = $4, allowed_model_codes = $5, updated_at = NOW()
+		WHERE organization_id = $6 AND id = $7
+	`, input.Name, input.ExpiresAt, input.RequestsPerMinute, input.MonthlyTokenLimit,
+		input.AllowedModelCodes, input.OrganizationID, input.APIKeyID)
+	if err != nil {
+		return modelgateway.APIKey{}, err
+	}
+	if command.RowsAffected() == 0 {
+		return modelgateway.APIKey{}, modelgateway.ErrAPIKeyNotFound
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
+		Action: "model.gateway_api_key.update", ResourceType: "model_gateway_api_key", ResourceID: input.APIKeyID,
+		Result: "success", SourceIP: input.SourceIP,
+		Detail: map[string]any{"name": input.Name, "expiresAt": input.ExpiresAt,
+			"requestsPerMinute": input.RequestsPerMinute, "monthlyTokenLimit": input.MonthlyTokenLimit,
+			"allowedModelCodes": input.AllowedModelCodes},
+	}); err != nil {
+		return modelgateway.APIKey{}, err
+	}
+	item, err := findGatewayAPIKey(ctx, tx, input.OrganizationID, input.APIKeyID)
 	if err != nil {
 		return modelgateway.APIKey{}, err
 	}
@@ -166,7 +214,12 @@ func (r *ModelGatewayRepository) FindRoute(ctx context.Context, organizationID, 
 }
 
 func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgateway.RecordCallInput) error {
-	_, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		INSERT INTO model_gateway_calls (
 			id, organization_id, api_key_id, model_catalog_entry_id, provider_connection_id,
 			request_id, model_code, upstream_model_id, streaming, result, http_status, latency_ms,
@@ -176,10 +229,39 @@ func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgate
 		input.RequestID, input.ModelCode, input.UpstreamModelID, input.Streaming, input.Result,
 		input.HTTPStatus, input.LatencyMS, input.PromptTokens, input.CompletionTokens,
 		input.TotalTokens, input.ErrorCode, input.SourceIP)
-	return err
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO model_gateway_monthly_usage (
+			organization_id, api_key_id, usage_month, request_count, total_tokens
+		) VALUES ($1, $2, DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::DATE, 1, $3)
+		ON CONFLICT (organization_id, api_key_id, usage_month) DO UPDATE
+		SET request_count = model_gateway_monthly_usage.request_count + 1,
+		    total_tokens = model_gateway_monthly_usage.total_tokens + EXCLUDED.total_tokens,
+		    updated_at = NOW()
+	`, input.OrganizationID, input.APIKeyID, input.TotalTokens)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-func (r *ModelGatewayRepository) ListCalls(ctx context.Context, organizationID string, limit int) ([]modelgateway.Call, error) {
+func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgateway.CallQuery) (modelgateway.CallPage, error) {
+	const filters = `
+		WHERE c.organization_id = $1
+		  AND ($2 = '' OR c.api_key_id::TEXT = $2)
+		  AND ($3 = '' OR LOWER(c.model_code) = LOWER($3))
+		  AND ($4 = '' OR c.result = $4)
+		  AND ($5::TIMESTAMPTZ IS NULL OR c.created_at >= $5)
+		  AND ($6::TIMESTAMPTZ IS NULL OR c.created_at <= $6)
+	`
+	arguments := []any{query.OrganizationID, query.APIKeyID, query.ModelCode, query.Result, query.StartedAt, query.EndedAt}
+	var total int64
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM model_gateway_calls c `+filters, arguments...).Scan(&total); err != nil {
+		return modelgateway.CallPage{}, err
+	}
+	offset := (query.Page - 1) * query.PageSize
 	rows, err := r.pool.Query(ctx, `
 		SELECT c.id, c.api_key_id, k.name, c.request_id, c.model_code, c.upstream_model_id,
 		       c.streaming, c.result, c.http_status, c.latency_ms, c.prompt_tokens,
@@ -187,12 +269,12 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, organizationID s
 		FROM model_gateway_calls c
 		JOIN model_gateway_api_keys k
 		  ON k.organization_id = c.organization_id AND k.id = c.api_key_id
-		WHERE c.organization_id = $1
-		ORDER BY c.created_at DESC
-		LIMIT $2
-	`, organizationID, limit)
+		`+filters+`
+		ORDER BY c.created_at DESC, c.id DESC
+		LIMIT $7 OFFSET $8
+	`, append(arguments, query.PageSize, offset)...)
 	if err != nil {
-		return nil, err
+		return modelgateway.CallPage{}, err
 	}
 	defer rows.Close()
 	items := make([]modelgateway.Call, 0)
@@ -204,11 +286,14 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, organizationID s
 			&item.PromptTokens, &item.CompletionTokens, &item.TotalTokens, &item.ErrorCode,
 			&item.SourceIP, &item.CreatedAt,
 		); err != nil {
-			return nil, err
+			return modelgateway.CallPage{}, err
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return modelgateway.CallPage{}, err
+	}
+	return modelgateway.CallPage{Items: items, Total: total, Page: query.Page, PageSize: query.PageSize}, nil
 }
 
 func findGatewayAPIKey(ctx context.Context, queryer interface {
@@ -229,7 +314,8 @@ func scanGatewayAPIKey(row interface{ Scan(...any) error }) (modelgateway.APIKey
 	var item modelgateway.APIKey
 	err := row.Scan(
 		&item.ID, &item.OrganizationID, &item.Name, &item.KeyPrefix, &item.Status,
-		&item.ExpiresAt, &item.LastUsedAt, &item.CreatedAt, &item.RevokedAt,
+		&item.ExpiresAt, &item.LastUsedAt, &item.RequestsPerMinute, &item.MonthlyTokenLimit,
+		&item.MonthlyTokenUsed, &item.AllowedModelCodes, &item.CreatedAt, &item.RevokedAt,
 	)
 	return item, err
 }

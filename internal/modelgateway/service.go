@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -15,14 +17,17 @@ import (
 
 const gatewayKeyPrefix = "harness_sk_"
 
+var gatewayModelCodePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,79}$`)
+
 type Service struct {
 	repository Repository
+	limiter    RequestLimiter
 	now        func() time.Time
 	newSecret  func() (string, error)
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository, now: time.Now, newSecret: generateSecret}
+func NewService(repository Repository, limiter RequestLimiter) *Service {
+	return &Service{repository: repository, limiter: limiter, now: time.Now, newSecret: generateSecret}
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context, organizationID string) ([]APIKey, error) {
@@ -38,8 +43,9 @@ func (s *Service) ListAPIKeys(ctx context.Context, organizationID string) ([]API
 
 func (s *Service) CreateAPIKey(ctx context.Context, input CreateAPIKeyInput) (CreatedAPIKey, error) {
 	input.Name = strings.TrimSpace(input.Name)
+	input.AllowedModelCodes = normalizeModelCodes(input.AllowedModelCodes)
 	now := s.now().UTC()
-	if input.OrganizationID == "" || input.ActorID == "" || utf8.RuneCountInString(input.Name) < 1 || utf8.RuneCountInString(input.Name) > 120 || (input.ExpiresAt != nil && !input.ExpiresAt.After(now)) {
+	if !validAPIKeySettings(input.OrganizationID, input.ActorID, input.Name, input.ExpiresAt, input.RequestsPerMinute, input.MonthlyTokenLimit, input.AllowedModelCodes, now) {
 		return CreatedAPIKey{}, ErrInvalidInput
 	}
 	secret, err := s.newSecret()
@@ -54,6 +60,22 @@ func (s *Service) CreateAPIKey(ctx context.Context, input CreateAPIKeyInput) (Cr
 		return CreatedAPIKey{}, fmt.Errorf("创建模型网关调用密钥失败: %w", err)
 	}
 	return CreatedAPIKey{APIKey: created, Secret: secret}, nil
+}
+
+func (s *Service) UpdateAPIKey(ctx context.Context, input UpdateAPIKeyInput) (APIKey, error) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.AllowedModelCodes = normalizeModelCodes(input.AllowedModelCodes)
+	if input.APIKeyID == "" || !validAPIKeySettings(input.OrganizationID, input.ActorID, input.Name, input.ExpiresAt, input.RequestsPerMinute, input.MonthlyTokenLimit, input.AllowedModelCodes, s.now().UTC()) {
+		return APIKey{}, ErrInvalidInput
+	}
+	item, err := s.repository.UpdateAPIKey(ctx, input)
+	if err != nil {
+		if errors.Is(err, ErrAPIKeyNotFound) {
+			return APIKey{}, err
+		}
+		return APIKey{}, fmt.Errorf("修改模型网关调用密钥失败: %w", err)
+	}
+	return item, nil
 }
 
 func (s *Service) RevokeAPIKey(ctx context.Context, input RevokeAPIKeyInput) (APIKey, error) {
@@ -99,6 +121,24 @@ func (s *Service) Prepare(ctx context.Context, credential string, body []byte) (
 		return PreparedRequest{}, ErrInvalidInput
 	}
 	modelCode = strings.ToLower(strings.TrimSpace(modelCode))
+	if !modelAllowed(apiKey.AllowedModelCodes, modelCode) {
+		return PreparedRequest{}, ErrModelNotAllowed
+	}
+	if apiKey.MonthlyTokenLimit > 0 && apiKey.MonthlyTokenUsed >= apiKey.MonthlyTokenLimit {
+		return PreparedRequest{}, ErrMonthlyQuota
+	}
+	if apiKey.RequestsPerMinute > 0 {
+		if s.limiter == nil {
+			return PreparedRequest{}, errors.New("模型网关限流器未配置")
+		}
+		allowed, err := s.limiter.Allow(ctx, apiKey.ID, apiKey.RequestsPerMinute)
+		if err != nil {
+			return PreparedRequest{}, fmt.Errorf("检查模型网关调用频率失败: %w", err)
+		}
+		if !allowed {
+			return PreparedRequest{}, ErrRateLimited
+		}
+	}
 	var streaming bool
 	if raw, ok := payload["stream"]; ok && json.Unmarshal(raw, &streaming) != nil {
 		return PreparedRequest{}, ErrInvalidInput
@@ -144,21 +184,60 @@ func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
 	return nil
 }
 
-func (s *Service) ListCalls(ctx context.Context, organizationID string, limit int) ([]Call, error) {
-	if organizationID == "" {
-		return nil, ErrInvalidInput
+func (s *Service) ListCalls(ctx context.Context, query CallQuery) (CallPage, error) {
+	query.ModelCode = strings.ToLower(strings.TrimSpace(query.ModelCode))
+	query.Result = strings.ToLower(strings.TrimSpace(query.Result))
+	if query.Page == 0 {
+		query.Page = 1
 	}
-	if limit == 0 {
-		limit = 100
+	if query.PageSize == 0 {
+		query.PageSize = 20
 	}
-	if limit < 1 || limit > 200 {
-		return nil, ErrInvalidInput
+	if query.OrganizationID == "" || query.Page < 1 || query.PageSize < 1 || query.PageSize > 100 || (query.Result != "" && query.Result != "success" && query.Result != "failed") || (query.StartedAt != nil && query.EndedAt != nil && query.StartedAt.After(*query.EndedAt)) {
+		return CallPage{}, ErrInvalidInput
 	}
-	items, err := s.repository.ListCalls(ctx, organizationID, limit)
+	items, err := s.repository.ListCalls(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("查询模型网关调用记录失败: %w", err)
+		return CallPage{}, fmt.Errorf("查询模型网关调用记录失败: %w", err)
 	}
 	return items, nil
+}
+
+func normalizeModelCodes(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; !exists {
+			seen[value] = struct{}{}
+			result = append(result, value)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func validAPIKeySettings(organizationID, actorID, name string, expiresAt *time.Time, requestsPerMinute int, monthlyTokenLimit int64, allowedModelCodes []string, now time.Time) bool {
+	if organizationID == "" || actorID == "" || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 120 || requestsPerMinute < 0 || requestsPerMinute > 100000 || monthlyTokenLimit < 0 || len(allowedModelCodes) > 100 || (expiresAt != nil && !expiresAt.After(now)) {
+		return false
+	}
+	for _, code := range allowedModelCodes {
+		if !gatewayModelCodePattern.MatchString(code) {
+			return false
+		}
+	}
+	return true
+}
+
+func modelAllowed(allowed []string, modelCode string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	index := sort.SearchStrings(allowed, modelCode)
+	return index < len(allowed) && allowed[index] == modelCode
 }
 
 func generateSecret() (string, error) {

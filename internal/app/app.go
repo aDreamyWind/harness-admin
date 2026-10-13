@@ -76,7 +76,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelRepository := pgstore.NewModelAdminRepository(db, credentialCipher)
 	modelAdminService := modeladmin.NewService(modelRepository, modelprovider.NewProber(cfg.ModelPrivateHosts))
 	modelGatewayRepository := pgstore.NewModelGatewayRepository(db, credentialCipher)
-	modelGatewayService := modelgateway.NewService(modelGatewayRepository)
+	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient))
 
 	handler := httpserver.New(httpserver.Dependencies{
 		AppName:               cfg.AppName,

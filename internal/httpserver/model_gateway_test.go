@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ type modelGatewayStub struct {
 	credential  string
 	requestBody string
 	recorded    modelgateway.RecordCallInput
+	listQuery   modelgateway.CallQuery
 }
 
 func (*modelGatewayStub) ListAPIKeys(context.Context, string) ([]modelgateway.APIKey, error) {
@@ -29,6 +31,9 @@ func (s *modelGatewayStub) CreateAPIKey(_ context.Context, input modelgateway.Cr
 		APIKey: modelgateway.APIKey{ID: "30000000-0000-4000-8000-000000000001", OrganizationID: input.OrganizationID, Name: input.Name, KeyPrefix: "harness_sk_abcdefg", Status: "active", CreatedAt: time.Now()},
 		Secret: "harness_sk_abcdefghijklmnopqrstuvwxyz0123456789",
 	}, nil
+}
+func (*modelGatewayStub) UpdateAPIKey(context.Context, modelgateway.UpdateAPIKeyInput) (modelgateway.APIKey, error) {
+	return modelgateway.APIKey{}, nil
 }
 func (*modelGatewayStub) RevokeAPIKey(context.Context, modelgateway.RevokeAPIKeyInput) (modelgateway.APIKey, error) {
 	return modelgateway.APIKey{}, nil
@@ -46,8 +51,9 @@ func (s *modelGatewayStub) RecordCall(_ context.Context, input modelgateway.Reco
 	s.recorded = input
 	return nil
 }
-func (*modelGatewayStub) ListCalls(context.Context, string, int) ([]modelgateway.Call, error) {
-	return []modelgateway.Call{}, nil
+func (s *modelGatewayStub) ListCalls(_ context.Context, query modelgateway.CallQuery) (modelgateway.CallPage, error) {
+	s.listQuery = query
+	return modelgateway.CallPage{Items: []modelgateway.Call{}, Total: 21, Page: query.Page, PageSize: query.PageSize}, nil
 }
 
 type gatewayForwarderStub struct{}
@@ -75,8 +81,42 @@ func TestCreateGatewayAPIKeyReturnsSecretAndUsesCurrentOrganization(t *testing.T
 	if gateway.createInput.OrganizationID != "org-1" || gateway.createInput.ActorID != "user-1" {
 		t.Fatalf("创建密钥参数不完整: %#v", gateway.createInput)
 	}
+	if gateway.createInput.RequestsPerMinute != 60 || gateway.createInput.MonthlyTokenLimit != 0 {
+		t.Fatalf("默认限流与额度不正确: %#v", gateway.createInput)
+	}
 	if !strings.Contains(response.Body.String(), "harness_sk_abcdefghijklmnopqrstuvwxyz0123456789") {
 		t.Fatalf("首次创建响应未返回完整密钥: %s", response.Body.String())
+	}
+}
+
+func TestListGatewayCallsParsesFiltersAndPagination(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	router := newGatewayTestRouter(gateway)
+	startedAt := "2026-10-01T00:00:00+08:00"
+	endedAt := "2026-10-13T12:00:00+08:00"
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/model-gateway/calls?page=2&pageSize=10&apiKeyId=30000000-0000-4000-8000-000000000001&modelCode=Main&result=failed&startedAt="+url.QueryEscape(startedAt)+"&endedAt="+url.QueryEscape(endedAt), nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d；响应 = %s", response.Code, response.Body.String())
+	}
+	query := gateway.listQuery
+	if query.OrganizationID != "org-1" || query.Page != 2 || query.PageSize != 10 || query.APIKeyID == "" || query.ModelCode != "Main" || query.Result != "failed" || query.StartedAt == nil || query.EndedAt == nil {
+		t.Fatalf("调用记录查询参数不完整: %#v", query)
+	}
+	if !strings.Contains(response.Body.String(), `"total":21`) || !strings.Contains(response.Body.String(), `"page":2`) {
+		t.Fatalf("分页响应不正确: %s", response.Body.String())
+	}
+}
+
+func TestParseSSETokenUsage(t *testing.T) {
+	usage, ok := parseSSETokenUsage(`data: {"id":"chat-1","usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`)
+	if !ok || usage.PromptTokens != 3 || usage.CompletionTokens != 5 || usage.TotalTokens != 8 {
+		t.Fatalf("流式 Token 用量解析失败: %#v, %v", usage, ok)
+	}
+	if _, ok := parseSSETokenUsage("data: [DONE]"); ok {
+		t.Fatal("[DONE] 不应被识别为 Token 用量")
 	}
 }
 

@@ -143,9 +143,12 @@ go run ./cmd/server
 
 - `GET /api/v1/model-gateway/api-keys`
 - `POST /api/v1/model-gateway/api-keys`
+- `PUT /api/v1/model-gateway/api-keys/{apiKeyId}`
 - `PATCH /api/v1/model-gateway/api-keys/{apiKeyId}/revoke`
 - `GET /api/v1/model-gateway/calls`
 - `POST /v1/chat/completions`
+
+调用密钥可配置每分钟请求上限、按 UTC 自然月统计的 Token 额度和允许访问的模型编码范围。调用记录支持按调用密钥、模型编码、调用结果和发生时间筛选，并使用服务端分页。
 
 调用方使用创建密钥时返回的完整调用密钥访问 OpenAI 兼容入口，并把模型目录中的“模型编码”填入 `model`：
 
@@ -187,4 +190,4 @@ make web-build
 - PostgreSQL 迁移与中文注释、Redis 缓存、OpenAPI 契约及后端自动化测试；
 - React 管理端、响应式布局、侧边栏折叠和统一的企业编码、部门层级展示。
 
-第二阶段已形成“供应商连接 → 模型目录 → 调用密钥 → OpenAI 兼容网关 → 调用记录”的最小闭环。当前路由保持一个模型编码对应一个上游模型，不包含权重路由、自动故障转移、额度、Skills、MCP、审批和执行环境；这些能力继续按独立模块推进，避免与已经稳定的身份权限底座耦合。
+第二阶段已形成“供应商连接 → 模型目录 → 调用密钥 → OpenAI 兼容网关 → 调用记录”的闭环，并已支持密钥级请求限流、月度 Token 额度和模型访问范围。当前路由保持一个模型编码对应一个上游模型，不包含权重路由、自动故障转移、Skills、MCP、审批和执行环境；这些能力继续按独立模块推进，避免与已经稳定的身份权限底座耦合。
