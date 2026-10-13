@@ -112,18 +112,6 @@ func (s *Service) Prepare(ctx context.Context, credential string, body []byte) (
 		return PreparedRequest{}, ErrAPIKeyExpired
 	}
 
-	var payload map[string]json.RawMessage
-	if len(body) == 0 || json.Unmarshal(body, &payload) != nil || payload == nil {
-		return PreparedRequest{}, ErrInvalidInput
-	}
-	var modelCode string
-	if raw, ok := payload["model"]; !ok || json.Unmarshal(raw, &modelCode) != nil || strings.TrimSpace(modelCode) == "" {
-		return PreparedRequest{}, ErrInvalidInput
-	}
-	modelCode = strings.ToLower(strings.TrimSpace(modelCode))
-	if !modelAllowed(apiKey.AllowedModelCodes, modelCode) {
-		return PreparedRequest{}, ErrModelNotAllowed
-	}
 	if apiKey.MonthlyTokenLimit > 0 && apiKey.MonthlyTokenUsed >= apiKey.MonthlyTokenLimit {
 		return PreparedRequest{}, ErrMonthlyQuota
 	}
@@ -139,11 +127,41 @@ func (s *Service) Prepare(ctx context.Context, credential string, body []byte) (
 			return PreparedRequest{}, ErrRateLimited
 		}
 	}
+	prepared, err := s.prepareForCaller(ctx, Caller{OrganizationID: apiKey.OrganizationID, APIKeyID: apiKey.ID, AuthType: "api_key"}, body, apiKey.AllowedModelCodes)
+	if err != nil {
+		return PreparedRequest{}, err
+	}
+	if err := s.repository.TouchAPIKey(ctx, apiKey.ID); err != nil {
+		return PreparedRequest{}, fmt.Errorf("更新模型网关调用密钥使用时间失败: %w", err)
+	}
+	return prepared, nil
+}
+
+func (s *Service) PrepareForUser(ctx context.Context, organizationID, userID string, body []byte) (PreparedRequest, error) {
+	if organizationID == "" || userID == "" {
+		return PreparedRequest{}, ErrInvalidCredential
+	}
+	return s.prepareForCaller(ctx, Caller{OrganizationID: organizationID, UserID: userID, AuthType: "user"}, body, nil)
+}
+
+func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []byte, allowedModelCodes []string) (PreparedRequest, error) {
+	var payload map[string]json.RawMessage
+	if len(body) == 0 || json.Unmarshal(body, &payload) != nil || payload == nil {
+		return PreparedRequest{}, ErrInvalidInput
+	}
+	var modelCode string
+	if raw, ok := payload["model"]; !ok || json.Unmarshal(raw, &modelCode) != nil || strings.TrimSpace(modelCode) == "" {
+		return PreparedRequest{}, ErrInvalidInput
+	}
+	modelCode = strings.ToLower(strings.TrimSpace(modelCode))
+	if caller.AuthType == "api_key" && !modelAllowed(allowedModelCodes, modelCode) {
+		return PreparedRequest{}, ErrModelNotAllowed
+	}
 	var streaming bool
 	if raw, ok := payload["stream"]; ok && json.Unmarshal(raw, &streaming) != nil {
 		return PreparedRequest{}, ErrInvalidInput
 	}
-	route, err := s.repository.FindRoute(ctx, apiKey.OrganizationID, modelCode)
+	route, err := s.repository.FindRoute(ctx, caller.OrganizationID, modelCode)
 	if err != nil {
 		if errors.Is(err, ErrModelNotFound) {
 			return PreparedRequest{}, err
@@ -162,17 +180,16 @@ func (s *Service) Prepare(ctx context.Context, credential string, body []byte) (
 	if err != nil {
 		return PreparedRequest{}, ErrInvalidInput
 	}
-	if err := s.repository.TouchAPIKey(ctx, apiKey.ID); err != nil {
-		return PreparedRequest{}, fmt.Errorf("更新模型网关调用密钥使用时间失败: %w", err)
-	}
-	return PreparedRequest{
-		Caller: Caller{OrganizationID: apiKey.OrganizationID, APIKeyID: apiKey.ID},
-		Route:  route, Body: rewritten, Streaming: streaming,
-	}, nil
+	return PreparedRequest{Caller: caller, Route: route, Body: rewritten, Streaming: streaming}, nil
 }
 
 func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
-	if input.OrganizationID == "" || input.APIKeyID == "" || input.ModelID == "" || input.ProviderID == "" || input.RequestID == "" || input.HTTPStatus < 100 || input.HTTPStatus > 599 || input.LatencyMS < 0 {
+	if input.AuthType == "" && input.APIKeyID != "" {
+		input.AuthType = "api_key"
+	}
+	validCaller := (input.AuthType == "api_key" && input.APIKeyID != "" && input.UserID == "") ||
+		(input.AuthType == "user" && input.UserID != "" && input.APIKeyID == "")
+	if input.OrganizationID == "" || !validCaller || input.ModelID == "" || input.ProviderID == "" || input.RequestID == "" || input.HTTPStatus < 100 || input.HTTPStatus > 599 || input.LatencyMS < 0 {
 		return ErrInvalidInput
 	}
 	if input.Result != "success" && input.Result != "failed" {

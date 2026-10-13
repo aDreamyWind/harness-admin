@@ -109,6 +109,22 @@ func TestPrepareRewritesModelCodeToUpstreamModelID(t *testing.T) {
 	}
 }
 
+func TestPrepareForUserKeepsOIDCCallerIdentity(t *testing.T) {
+	repository := &repositoryStub{route: Route{
+		ModelID: "model-1", ModelCode: "main", ModelStatus: "active", UpstreamModelID: "upstream-main",
+		ProviderID: "provider-1", ProviderStatus: "active",
+	}}
+	prepared, err := NewService(repository, nil).PrepareForUser(
+		context.Background(), "org-1", "user-1", []byte(`{"model":"main","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Caller.AuthType != "user" || prepared.Caller.OrganizationID != "org-1" || prepared.Caller.UserID != "user-1" || prepared.Caller.APIKeyID != "" {
+		t.Fatalf("OIDC 调用身份不完整: %#v", prepared.Caller)
+	}
+}
+
 func TestPrepareRejectsRevokedAndExpiredKeys(t *testing.T) {
 	now := time.Date(2026, 10, 13, 8, 0, 0, 0, time.UTC)
 	repository := &repositoryStub{apiKey: APIKey{ID: "key-1", OrganizationID: "org-1", Status: "revoked"}}

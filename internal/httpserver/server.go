@@ -32,6 +32,9 @@ type Dependencies struct {
 	ModelAdmin            ModelAdminService
 	ModelGateway          ModelGatewayService
 	GatewayForwarder      ModelGatewayForwarder
+	OIDCAdmin             OIDCAdminService
+	OIDCProvider          OIDCProviderService
+	ConsoleURL            string
 	AuditRecorder         AuditRecorder
 	PlatformAdmin         PlatformAdminService
 	SessionCookie         string
@@ -93,6 +96,12 @@ func New(deps Dependencies) http.Handler {
 	if deps.Auth != nil && deps.Access != nil && deps.ModelGateway != nil && deps.GatewayForwarder != nil {
 		registerModelGatewayRoutes(router, deps)
 	}
+	if deps.Auth != nil && deps.Access != nil && deps.OIDCAdmin != nil {
+		registerOIDCAdminRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.OIDCProvider != nil {
+		registerOIDCProviderRoutes(router, deps)
+	}
 	router.NoRoute(func(ctx *gin.Context) {
 		httpx.Fail(ctx, http.StatusNotFound, "route_not_found", "请求的接口不存在")
 	})
@@ -141,6 +150,7 @@ func bootstrapHandler(deps Dependencies) gin.HandlerFunc {
 				{Key: "access", Name: "组织与权限", Status: "ready"},
 				{Key: "models", Name: "模型目录", Status: "ready"},
 				{Key: "gateway", Name: "模型网关", Status: "building"},
+				{Key: "oidc", Name: "统一登录", Status: "ready"},
 				{Key: "audit", Name: "审计与追踪", Status: "ready"},
 			},
 		})

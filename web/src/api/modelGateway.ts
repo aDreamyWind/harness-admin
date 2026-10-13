@@ -21,8 +21,11 @@ export interface CreatedGatewayAPIKey extends GatewayAPIKey {
 
 export interface GatewayCall {
   id: string
-  apiKeyId: string
-  apiKeyName: string
+  apiKeyId?: string
+  apiKeyName?: string
+  authType: 'api_key' | 'user'
+  userId?: string
+  userName?: string
   requestId: string
   modelCode: string
   upstreamModelId: string

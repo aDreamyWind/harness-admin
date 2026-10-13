@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +24,9 @@ type Config struct {
 	PlatformSessionCookie string
 	ModelCredentialKey    string
 	ModelPrivateHosts     []string
+	OIDCIssuer            string
+	OIDCSigningPrivateKey string
+	ConsoleURL            string
 }
 
 func Load() (Config, error) {
@@ -60,6 +64,9 @@ func Load() (Config, error) {
 		PlatformSessionCookie: value("PLATFORM_SESSION_COOKIE_NAME", "harness_platform_session"),
 		ModelCredentialKey:    value("MODEL_CREDENTIAL_MASTER_KEY", "aGFybmVzcy1hZG1pbi1kZXYtbW9kZWwta2V5LTAwMDE="),
 		ModelPrivateHosts:     csvValue("MODEL_PROVIDER_PRIVATE_HOSTS"),
+		OIDCIssuer:            strings.TrimRight(value("OIDC_ISSUER", "http://localhost:8080"), "/"),
+		OIDCSigningPrivateKey: os.Getenv("OIDC_SIGNING_PRIVATE_KEY"),
+		ConsoleURL:            strings.TrimRight(value("CONSOLE_URL", "http://localhost:5173"), "/"),
 	}
 	if cfg.SessionTTL < 15*time.Minute || cfg.SessionTTL > 30*24*time.Hour {
 		return Config{}, fmt.Errorf("SESSION_TTL 必须在 15 分钟到 30 天之间")
@@ -72,6 +79,23 @@ func Load() (Config, error) {
 	}
 	if cfg.Environment == "production" && os.Getenv("MODEL_CREDENTIAL_MASTER_KEY") == "" {
 		return Config{}, fmt.Errorf("production 环境必须配置 MODEL_CREDENTIAL_MASTER_KEY")
+	}
+	issuerURL, issuerErr := url.Parse(cfg.OIDCIssuer)
+	if issuerErr != nil || !issuerURL.IsAbs() || issuerURL.Host == "" {
+		return Config{}, fmt.Errorf("OIDC_ISSUER 必须是完整地址")
+	}
+	if cfg.Environment == "production" && issuerURL.Scheme != "https" {
+		return Config{}, fmt.Errorf("production 环境的 OIDC_ISSUER 必须使用 HTTPS")
+	}
+	if cfg.Environment == "production" && strings.TrimSpace(cfg.OIDCSigningPrivateKey) == "" {
+		return Config{}, fmt.Errorf("production 环境必须配置 OIDC_SIGNING_PRIVATE_KEY")
+	}
+	consoleURL, consoleErr := url.Parse(cfg.ConsoleURL)
+	if consoleErr != nil || !consoleURL.IsAbs() || consoleURL.Host == "" || consoleURL.RawQuery != "" || consoleURL.Fragment != "" {
+		return Config{}, fmt.Errorf("CONSOLE_URL 必须是完整且不包含查询参数的地址")
+	}
+	if cfg.Environment == "production" && consoleURL.Scheme != "https" {
+		return Config{}, fmt.Errorf("production 环境的 CONSOLE_URL 必须使用 HTTPS")
 	}
 
 	return cfg, nil

@@ -22,6 +22,8 @@ Harness Admin 是面向企业 Harness 的控制平面。项目从零构建，不
 - 企业网关调用密钥，完整密钥只在创建时返回一次，服务端仅保存哈希；
 - OpenAI 兼容聊天补全入口，按企业模型编码路由到上游模型；
 - 不保存提示词和模型回答的调用结果、耗时与 Token 用量记录。
+- 企业统一登录应用登记与 OIDC 授权码登录，客户端密钥、授权码和刷新令牌均不保存明文。
+- OIDC 用户访问令牌可直接调用模型网关，并以用户身份记录 Token 用量。
 
 ## 技术栈
 
@@ -127,6 +129,26 @@ go run ./cmd/server
 - `GET /api/v1/audit-events`
 - `GET /api/v1/audit-events/{eventId}`
 
+应用接入管理接口：
+
+- `GET /api/v1/oidc/clients`
+- `POST /api/v1/oidc/clients`
+- `PUT /api/v1/oidc/clients/{oidcClientId}`
+- `PATCH /api/v1/oidc/clients/{oidcClientId}/status`
+- `POST /api/v1/oidc/clients/{oidcClientId}/rotate-secret`
+
+企业管理员可在“身份与组织 / 应用接入”登记 DeepSeek Harness 等独立系统，配置精确登录回调地址和 `openid`、`profile`、`email`、`model.invoke`、`offline_access` 授权范围。完整客户端密钥只在创建或轮换后返回一次。
+
+OIDC 协议端点：
+
+- `GET /.well-known/openid-configuration`
+- `GET /api/v1/oauth2/authorize`
+- `POST /api/v1/oauth2/token`
+- `GET /api/v1/oauth2/userinfo`
+- `GET /api/v1/oauth2/jwks`
+
+协议采用 Authorization Code + PKCE S256，身份令牌和访问令牌使用 RS256 签名，刷新令牌每次使用后自动轮换。`OIDC_ISSUER` 用于配置外部系统可访问的签发者地址，默认是 `http://localhost:8080`；`CONSOLE_URL` 用于配置未登录时跳转的控制台地址，本地默认是 `http://localhost:5173`。生产环境必须为两者配置 HTTPS 地址，并提供 PEM 格式 RSA 私钥 `OIDC_SIGNING_PRIVATE_KEY`；开发环境未配置私钥时会在启动时生成临时密钥，服务重启后旧令牌会失效。
+
 模型接入接口：
 
 - `GET /api/v1/model-providers`
@@ -150,7 +172,7 @@ go run ./cmd/server
 
 调用密钥可配置每分钟请求上限、按 UTC 自然月统计的 Token 额度和允许访问的模型编码范围。调用记录支持按调用密钥、模型编码、调用结果和发生时间筛选，并使用服务端分页。
 
-调用方使用创建密钥时返回的完整调用密钥访问 OpenAI 兼容入口，并把模型目录中的“模型编码”填入 `model`：
+调用方可以使用创建密钥时返回的完整调用密钥，或包含 `model.invoke` scope 的 OIDC 用户访问令牌访问 OpenAI 兼容入口，并把模型目录中的“模型编码”填入 `model`：
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
@@ -190,4 +212,4 @@ make web-build
 - PostgreSQL 迁移与中文注释、Redis 缓存、OpenAPI 契约及后端自动化测试；
 - React 管理端、响应式布局、侧边栏折叠和统一的企业编码、部门层级展示。
 
-第二阶段已形成“供应商连接 → 模型目录 → 调用密钥 → OpenAI 兼容网关 → 调用记录”的闭环，并已支持密钥级请求限流、月度 Token 额度和模型访问范围。当前路由保持一个模型编码对应一个上游模型，不包含权重路由、自动故障转移、Skills、MCP、审批和执行环境；这些能力继续按独立模块推进，避免与已经稳定的身份权限底座耦合。
+第二阶段已形成“供应商连接 → 模型目录 → 调用身份 → OpenAI 兼容网关 → 调用记录”的闭环，并已支持密钥级请求限流、月度 Token 额度和模型访问范围，以及 OIDC 用户身份调用。用户和部门级模型权限、用户额度仍是下一步，当前 OIDC 用户在取得 `model.invoke` scope 后可以访问企业内全部已启用模型。当前路由保持一个模型编码对应一个上游模型，不包含权重路由、自动故障转移、Skills、MCP、审批和执行环境；这些能力继续按独立模块推进，避免与已经稳定的身份权限底座耦合。

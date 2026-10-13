@@ -42,7 +42,15 @@ func (s *modelGatewayStub) Prepare(_ context.Context, credential string, body []
 	s.credential = credential
 	s.requestBody = string(body)
 	return modelgateway.PreparedRequest{
-		Caller: modelgateway.Caller{OrganizationID: "org-1", APIKeyID: "key-1"},
+		Caller: modelgateway.Caller{OrganizationID: "org-1", APIKeyID: "key-1", AuthType: "api_key"},
+		Route:  modelgateway.Route{ModelID: "model-1", ModelCode: "main", UpstreamModelID: "upstream-main", ProviderID: "provider-1"},
+		Body:   body,
+	}, nil
+}
+func (s *modelGatewayStub) PrepareForUser(_ context.Context, organizationID, userID string, body []byte) (modelgateway.PreparedRequest, error) {
+	s.requestBody = string(body)
+	return modelgateway.PreparedRequest{
+		Caller: modelgateway.Caller{OrganizationID: organizationID, UserID: userID, AuthType: "user"},
 		Route:  modelgateway.Route{ModelID: "model-1", ModelCode: "main", UpstreamModelID: "upstream-main", ProviderID: "provider-1"},
 		Body:   body,
 	}, nil
@@ -136,6 +144,30 @@ func TestChatCompletionsProxiesOpenAIResponseAndRecordsUsage(t *testing.T) {
 	}
 	if gateway.recorded.Result != "success" || gateway.recorded.TotalTokens != 8 || gateway.recorded.ModelCode != "main" {
 		t.Fatalf("调用记录不完整: %#v", gateway.recorded)
+	}
+}
+
+func TestChatCompletionsAcceptsOIDCUserAccessToken(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	provider := &oidcProviderStub{}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
+		ModelGateway: gateway, GatewayForwarder: gatewayForwarderStub{}, OIDCProvider: provider,
+		SessionCookie: "test_session",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"main","messages":[]}`))
+	request.Header.Set("Authorization", "Bearer oidc-access-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d；响应 = %s", response.Code, response.Body.String())
+	}
+	if provider.accessToken != "oidc-access-token" || provider.requiredScope != "model.invoke" {
+		t.Fatalf("OIDC 令牌校验参数不正确: token=%q scope=%q", provider.accessToken, provider.requiredScope)
+	}
+	if gateway.recorded.AuthType != "user" || gateway.recorded.UserID != "user-1" || gateway.recorded.OrganizationID != "org-1" {
+		t.Fatalf("用户调用记录身份不完整: %#v", gateway.recorded)
 	}
 }
 

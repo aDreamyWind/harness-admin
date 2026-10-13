@@ -79,6 +79,8 @@ type RevokeAPIKeyInput struct {
 type Caller struct {
 	OrganizationID string
 	APIKeyID       string
+	UserID         string
+	AuthType       string
 }
 
 type Route struct {
@@ -104,6 +106,9 @@ type Call struct {
 	ID               string
 	APIKeyID         string
 	APIKeyName       string
+	AuthType         string
+	UserID           string
+	UserName         string
 	RequestID        string
 	ModelCode        string
 	UpstreamModelID  string
@@ -140,6 +145,8 @@ type CallPage struct {
 type RecordCallInput struct {
 	OrganizationID   string
 	APIKeyID         string
+	UserID           string
+	AuthType         string
 	ModelID          string
 	ProviderID       string
 	RequestID        string

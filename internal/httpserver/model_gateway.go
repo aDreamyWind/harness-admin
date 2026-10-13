@@ -17,6 +17,7 @@ import (
 
 	"harness-admin/internal/httpx"
 	"harness-admin/internal/modelgateway"
+	oidcmodule "harness-admin/internal/oidc"
 )
 
 const maxGatewayRequestBody = 4 * 1024 * 1024
@@ -28,6 +29,7 @@ type ModelGatewayService interface {
 	UpdateAPIKey(context.Context, modelgateway.UpdateAPIKeyInput) (modelgateway.APIKey, error)
 	RevokeAPIKey(context.Context, modelgateway.RevokeAPIKeyInput) (modelgateway.APIKey, error)
 	Prepare(context.Context, string, []byte) (modelgateway.PreparedRequest, error)
+	PrepareForUser(context.Context, string, string, []byte) (modelgateway.PreparedRequest, error)
 	RecordCall(context.Context, modelgateway.RecordCallInput) error
 	ListCalls(context.Context, modelgateway.CallQuery) (modelgateway.CallPage, error)
 }
@@ -71,6 +73,9 @@ type gatewayCallResponse struct {
 	ID               string    `json:"id"`
 	APIKeyID         string    `json:"apiKeyId"`
 	APIKeyName       string    `json:"apiKeyName"`
+	AuthType         string    `json:"authType"`
+	UserID           string    `json:"userId,omitempty"`
+	UserName         string    `json:"userName,omitempty"`
 	RequestID        string    `json:"requestId"`
 	ModelCode        string    `json:"modelCode"`
 	UpstreamModelID  string    `json:"upstreamModelId"`
@@ -224,7 +229,8 @@ func listGatewayCallsHandler(deps Dependencies) gin.HandlerFunc {
 		response := make([]gatewayCallResponse, 0, len(result.Items))
 		for _, item := range result.Items {
 			response = append(response, gatewayCallResponse{
-				ID: item.ID, APIKeyID: item.APIKeyID, APIKeyName: item.APIKeyName, RequestID: item.RequestID,
+				ID: item.ID, APIKeyID: item.APIKeyID, APIKeyName: item.APIKeyName,
+				AuthType: item.AuthType, UserID: item.UserID, UserName: item.UserName, RequestID: item.RequestID,
 				ModelCode: item.ModelCode, UpstreamModelID: item.UpstreamModelID, Streaming: item.Streaming,
 				Result: item.Result, HTTPStatus: item.HTTPStatus, LatencyMS: item.LatencyMS,
 				PromptTokens: item.PromptTokens, CompletionTokens: item.CompletionTokens, TotalTokens: item.TotalTokens,
@@ -244,7 +250,20 @@ func chatCompletionsGatewayHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		credential := bearerCredential(ctx.GetHeader("Authorization"))
-		prepared, err := deps.ModelGateway.Prepare(ctx.Request.Context(), credential, body)
+		var prepared modelgateway.PreparedRequest
+		if strings.HasPrefix(credential, "harness_sk_") {
+			prepared, err = deps.ModelGateway.Prepare(ctx.Request.Context(), credential, body)
+		} else if deps.OIDCProvider != nil {
+			var subject oidcmodule.Subject
+			subject, err = deps.OIDCProvider.AuthenticateAccessToken(ctx.Request.Context(), credential, "model.invoke")
+			if err == nil {
+				prepared, err = deps.ModelGateway.PrepareForUser(ctx.Request.Context(), subject.OrganizationID, subject.ID, body)
+			} else {
+				err = modelgateway.ErrInvalidCredential
+			}
+		} else {
+			err = modelgateway.ErrInvalidCredential
+		}
 		if err != nil {
 			handleGatewayRequestError(ctx, deps.Logger, err)
 			return
@@ -356,6 +375,7 @@ func recordGatewayCall(deps Dependencies, ctx *gin.Context, prepared modelgatewa
 	}
 	err := deps.ModelGateway.RecordCall(recordCtx, modelgateway.RecordCallInput{
 		OrganizationID: prepared.Caller.OrganizationID, APIKeyID: prepared.Caller.APIKeyID,
+		UserID: prepared.Caller.UserID, AuthType: prepared.Caller.AuthType,
 		ModelID: prepared.Route.ModelID, ProviderID: prepared.Route.ProviderID,
 		RequestID: contextString(ctx, "request_id"), ModelCode: prepared.Route.ModelCode,
 		UpstreamModelID: prepared.Route.UpstreamModelID, Streaming: prepared.Streaming,

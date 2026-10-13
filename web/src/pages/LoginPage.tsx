@@ -28,6 +28,10 @@ export function LoginPage() {
     setErrorMessage('')
     try {
       await login(values)
+      const returnTo = new URLSearchParams(window.location.search).get('returnTo')
+      if (returnTo?.startsWith('/api/v1/oauth2/authorize?')) {
+        window.location.assign(returnTo)
+      }
     } catch (error) {
       setErrorMessage(error instanceof ApiError ? error.message : '登录失败，请稍后重试')
     } finally {

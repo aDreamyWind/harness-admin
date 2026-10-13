@@ -194,7 +194,7 @@ export function ModelGatewayPage() {
       title: '请求流向', key: 'flow', width: 300,
       render: (_, item) => <div className="gateway-call-flow"><strong>{item.modelCode}</strong><SwapOutlined /><span>{item.upstreamModelId}</span>{item.streaming ? <Tag>流式</Tag> : null}</div>,
     },
-    { title: '调用密钥', dataIndex: 'apiKeyName', key: 'apiKeyName', width: 150 },
+    { title: '调用身份', key: 'caller', width: 170, render: (_, item) => item.authType === 'user' ? <span>{item.userName || item.userId}<Tag color="blue">用户</Tag></span> : item.apiKeyName },
     { title: '结果', key: 'result', width: 105, render: (_, item) => <StatusIndicator label={item.result === 'success' ? '成功' : '失败'} tone={item.result === 'success' ? 'success' : 'danger'} /> },
     { title: 'HTTP', dataIndex: 'httpStatus', key: 'httpStatus', width: 80 },
     { title: '耗时', dataIndex: 'latencyMs', key: 'latencyMs', width: 100, render: (value: number) => `${value} ms` },

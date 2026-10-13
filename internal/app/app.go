@@ -20,6 +20,7 @@ import (
 	"harness-admin/internal/modeladmin"
 	"harness-admin/internal/modelgateway"
 	"harness-admin/internal/modelprovider"
+	"harness-admin/internal/oidc"
 	"harness-admin/internal/organizationadmin"
 	"harness-admin/internal/platformadmin"
 	"harness-admin/internal/roleadmin"
@@ -77,6 +78,23 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelAdminService := modeladmin.NewService(modelRepository, modelprovider.NewProber(cfg.ModelPrivateHosts))
 	modelGatewayRepository := pgstore.NewModelGatewayRepository(db, credentialCipher)
 	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient))
+	oidcRepository := pgstore.NewOIDCRepository(db)
+	oidcService := oidc.NewService(oidcRepository)
+	oidcSigner, err := oidc.NewRS256Signer(cfg.OIDCSigningPrivateKey)
+	if err != nil {
+		redisClient.Close()
+		db.Close()
+		return nil, err
+	}
+	if cfg.OIDCSigningPrivateKey == "" {
+		logger.Warn("未配置 OIDC_SIGNING_PRIVATE_KEY，本次启动使用临时签名密钥；重启后现有 OIDC 令牌将失效")
+	}
+	oidcProviderService, err := oidc.NewProviderService(oidcRepository, oidcSigner, cfg.OIDCIssuer)
+	if err != nil {
+		redisClient.Close()
+		db.Close()
+		return nil, err
+	}
 
 	handler := httpserver.New(httpserver.Dependencies{
 		AppName:               cfg.AppName,
@@ -94,6 +112,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		ModelAdmin:            modelAdminService,
 		ModelGateway:          modelGatewayService,
 		GatewayForwarder:      modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts),
+		OIDCAdmin:             oidcService,
+		OIDCProvider:          oidcProviderService,
+		ConsoleURL:            cfg.ConsoleURL,
 		AuditRecorder:         identityRepository,
 		PlatformAdmin:         platformService,
 		SessionCookie:         cfg.SessionCookie,

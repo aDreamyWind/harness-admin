@@ -4,6 +4,7 @@ import {
   DashboardOutlined,
   LogoutOutlined,
   LockOutlined,
+  LinkOutlined,
   MenuFoldOutlined,
   MenuOutlined,
   MenuUnfoldOutlined,
@@ -28,6 +29,7 @@ import { RolesPage } from './pages/RolesPage'
 import { UsersPage } from './pages/UsersPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { ModelGatewayPage } from './pages/ModelGatewayPage'
+import { ApplicationAccessPage } from './pages/ApplicationAccessPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -36,6 +38,7 @@ const menuRoutes: Record<string, string> = {
   users: '/identity/users',
   departments: '/identity/departments',
   roles: '/identity/roles',
+  applications: '/identity/applications',
   models: '/ai-resources/models',
   gateway: '/ai-resources/gateway',
   audit: '/audit',
@@ -80,6 +83,8 @@ export function App() {
       ? 'departments'
       : location.pathname.startsWith('/identity/roles')
         ? 'roles'
+        : location.pathname.startsWith('/identity/applications')
+          ? 'applications'
         : location.pathname.startsWith('/ai-resources/models')
           ? 'models'
           : location.pathname.startsWith('/ai-resources/gateway')
@@ -202,6 +207,7 @@ export function App() {
               <Route path="/identity/users" element={<PermissionPage permission="iam.user.read"><UsersPage /></PermissionPage>} />
               <Route path="/identity/departments" element={<PermissionPage permission="iam.department.read"><DepartmentsPage /></PermissionPage>} />
               <Route path="/identity/roles" element={<PermissionPage permission="iam.role.read"><RolesPage /></PermissionPage>} />
+              <Route path="/identity/applications" element={<PermissionPage permission="oidc.client.read"><ApplicationAccessPage /></PermissionPage>} />
               <Route path="/ai-resources/models" element={<PermissionPage permission={['model.provider.read', 'model.catalog.read']}><ModelsPage /></PermissionPage>} />
               <Route path="/ai-resources/gateway" element={<PermissionPage permission="model.gateway.read"><ModelGatewayPage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
@@ -221,6 +227,7 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
     hasPermission('iam.user.read') ? { key: 'users', label: '用户' } : null,
     hasPermission('iam.department.read') ? { key: 'departments', label: '部门' } : null,
     hasPermission('iam.role.read') ? { key: 'roles', label: '角色与权限' } : null,
+    hasPermission('oidc.client.read') ? { key: 'applications', icon: <LinkOutlined />, label: '应用接入' } : null,
   ].filter(Boolean) as NonNullable<MenuProps['items']>
 
   const canReadModels = hasPermission('model.provider.read') || hasPermission('model.catalog.read')

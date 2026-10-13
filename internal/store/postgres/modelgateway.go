@@ -221,18 +221,19 @@ func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgate
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
 		INSERT INTO model_gateway_calls (
-			id, organization_id, api_key_id, model_catalog_entry_id, provider_connection_id,
+			id, organization_id, api_key_id, auth_type, user_id, model_catalog_entry_id, provider_connection_id,
 			request_id, model_code, upstream_model_id, streaming, result, http_status, latency_ms,
 			prompt_tokens, completion_tokens, total_tokens, error_code, source_ip
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-	`, uuid.NewString(), input.OrganizationID, input.APIKeyID, input.ModelID, input.ProviderID,
+		) VALUES ($1, $2, NULLIF($3, '')::UUID, $4, NULLIF($5, '')::UUID, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+	`, uuid.NewString(), input.OrganizationID, input.APIKeyID, input.AuthType, input.UserID, input.ModelID, input.ProviderID,
 		input.RequestID, input.ModelCode, input.UpstreamModelID, input.Streaming, input.Result,
 		input.HTTPStatus, input.LatencyMS, input.PromptTokens, input.CompletionTokens,
 		input.TotalTokens, input.ErrorCode, input.SourceIP)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `
+	if input.AuthType == "api_key" {
+		_, err = tx.Exec(ctx, `
 		INSERT INTO model_gateway_monthly_usage (
 			organization_id, api_key_id, usage_month, request_count, total_tokens
 		) VALUES ($1, $2, DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::DATE, 1, $3)
@@ -240,9 +241,10 @@ func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgate
 		SET request_count = model_gateway_monthly_usage.request_count + 1,
 		    total_tokens = model_gateway_monthly_usage.total_tokens + EXCLUDED.total_tokens,
 		    updated_at = NOW()
-	`, input.OrganizationID, input.APIKeyID, input.TotalTokens)
-	if err != nil {
-		return err
+		`, input.OrganizationID, input.APIKeyID, input.TotalTokens)
+		if err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -263,12 +265,16 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 	}
 	offset := (query.Page - 1) * query.PageSize
 	rows, err := r.pool.Query(ctx, `
-		SELECT c.id, c.api_key_id, k.name, c.request_id, c.model_code, c.upstream_model_id,
+		SELECT c.id, COALESCE(c.api_key_id::TEXT, ''), COALESCE(k.name, ''),
+		       c.auth_type, COALESCE(c.user_id::TEXT, ''), COALESCE(u.display_name, ''),
+		       c.request_id, c.model_code, c.upstream_model_id,
 		       c.streaming, c.result, c.http_status, c.latency_ms, c.prompt_tokens,
 		       c.completion_tokens, c.total_tokens, c.error_code, c.source_ip, c.created_at
 		FROM model_gateway_calls c
-		JOIN model_gateway_api_keys k
+		LEFT JOIN model_gateway_api_keys k
 		  ON k.organization_id = c.organization_id AND k.id = c.api_key_id
+		LEFT JOIN users u
+		  ON u.organization_id = c.organization_id AND u.id = c.user_id
 		`+filters+`
 		ORDER BY c.created_at DESC, c.id DESC
 		LIMIT $7 OFFSET $8
@@ -281,7 +287,8 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 	for rows.Next() {
 		var item modelgateway.Call
 		if err := rows.Scan(
-			&item.ID, &item.APIKeyID, &item.APIKeyName, &item.RequestID, &item.ModelCode,
+			&item.ID, &item.APIKeyID, &item.APIKeyName, &item.AuthType, &item.UserID, &item.UserName,
+			&item.RequestID, &item.ModelCode,
 			&item.UpstreamModelID, &item.Streaming, &item.Result, &item.HTTPStatus, &item.LatencyMS,
 			&item.PromptTokens, &item.CompletionTokens, &item.TotalTokens, &item.ErrorCode,
 			&item.SourceIP, &item.CreatedAt,
