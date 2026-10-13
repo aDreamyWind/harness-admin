@@ -27,6 +27,7 @@ import { OrganizationSettingsPage } from './pages/OrganizationSettingsPage'
 import { RolesPage } from './pages/RolesPage'
 import { UsersPage } from './pages/UsersPage'
 import { ModelsPage } from './pages/ModelsPage'
+import { ModelGatewayPage } from './pages/ModelGatewayPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -36,6 +37,7 @@ const menuRoutes: Record<string, string> = {
   departments: '/identity/departments',
   roles: '/identity/roles',
   models: '/ai-resources/models',
+  gateway: '/ai-resources/gateway',
   audit: '/audit',
   settings: '/settings/organization',
 }
@@ -80,6 +82,8 @@ export function App() {
         ? 'roles'
         : location.pathname.startsWith('/ai-resources/models')
           ? 'models'
+          : location.pathname.startsWith('/ai-resources/gateway')
+            ? 'gateway'
         : location.pathname.startsWith('/audit')
           ? 'audit'
           : location.pathname.startsWith('/settings/organization')
@@ -199,6 +203,7 @@ export function App() {
               <Route path="/identity/departments" element={<PermissionPage permission="iam.department.read"><DepartmentsPage /></PermissionPage>} />
               <Route path="/identity/roles" element={<PermissionPage permission="iam.role.read"><RolesPage /></PermissionPage>} />
               <Route path="/ai-resources/models" element={<PermissionPage permission={['model.provider.read', 'model.catalog.read']}><ModelsPage /></PermissionPage>} />
+              <Route path="/ai-resources/gateway" element={<PermissionPage permission="model.gateway.read"><ModelGatewayPage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
               <Route path="/settings/organization" element={<PermissionPage permission="iam.organization.read"><OrganizationSettingsPage /></PermissionPage>} />
               <Route path="/account/security" element={<AccountSecurityPage />} />
@@ -219,17 +224,18 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
   ].filter(Boolean) as NonNullable<MenuProps['items']>
 
   const canReadModels = hasPermission('model.provider.read') || hasPermission('model.catalog.read')
+  const canReadGateway = hasPermission('model.gateway.read')
 
   return [
     { key: 'overview', icon: <DashboardOutlined />, label: '首页' },
     identityItems.length ? {
       key: 'identity', icon: <TeamOutlined />, label: '身份与组织', children: identityItems,
     } : null,
-    canReadModels ? {
+    canReadModels || canReadGateway ? {
       key: 'ai-resources', icon: <AppstoreOutlined />, label: 'AI 资源管理', children: [
-        { key: 'models', label: '模型目录' },
-        { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关', disabled: true },
-      ],
+        canReadModels ? { key: 'models', label: '模型目录' } : null,
+        canReadGateway ? { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关' } : null,
+      ].filter(Boolean),
     } : null,
     { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },
     hasPermission('audit.event.read') ? { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' } : null,

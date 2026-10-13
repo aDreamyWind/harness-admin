@@ -18,7 +18,10 @@ Harness Admin 是面向企业 Harness 的控制平面。项目从零构建，不
 - 企业级 OpenAI 兼容供应商连接，内置 OpenAI、DeepSeek、阿里云百炼、Kimi 与 Ollama 地址预设；
 - API Key 加密存储、连接检测和出站地址安全校验；
 - 企业模型目录、能力标记和启停管理；
-- 模型资源权限与审计追踪。
+- 模型资源权限与审计追踪；
+- 企业网关调用密钥，完整密钥只在创建时返回一次，服务端仅保存哈希；
+- OpenAI 兼容聊天补全入口，按企业模型编码路由到上游模型；
+- 不保存提示词和模型回答的调用结果、耗时与 Token 用量记录。
 
 ## 技术栈
 
@@ -136,6 +139,23 @@ go run ./cmd/server
 - `PUT /api/v1/models/{modelId}`
 - `PATCH /api/v1/models/{modelId}/status`
 
+模型网关接口：
+
+- `GET /api/v1/model-gateway/api-keys`
+- `POST /api/v1/model-gateway/api-keys`
+- `PATCH /api/v1/model-gateway/api-keys/{apiKeyId}/revoke`
+- `GET /api/v1/model-gateway/calls`
+- `POST /v1/chat/completions`
+
+调用方使用创建密钥时返回的完整调用密钥访问 OpenAI 兼容入口，并把模型目录中的“模型编码”填入 `model`：
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H 'Authorization: Bearer 请替换为调用密钥' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"请替换为模型编码","messages":[{"role":"user","content":"你好"}]}'
+```
+
 供应商 API Key 使用 `MODEL_CREDENTIAL_MASTER_KEY` 加密保存。生产环境必须设置独立的 Base64 编码 32 字节密钥。私有网络或 HTTP 模型服务必须通过 `MODEL_PROVIDER_PRIVATE_HOSTS` 显式配置精确主机名；连接检测不跟随重定向，也不会发送业务数据。
 
 审计查询按当前登录企业隔离，需要 `audit.event.read` 权限，支持按关键字、动作、结果和发生时间筛选。无权限访问管理接口时也会写入一条 `denied` 审计事件。
@@ -167,4 +187,4 @@ make web-build
 - PostgreSQL 迁移与中文注释、Redis 缓存、OpenAPI 契约及后端自动化测试；
 - React 管理端、响应式布局、侧边栏折叠和统一的企业编码、部门层级展示。
 
-第二阶段第一批只建设模型供应商连接和模型目录，不包含推理代理、模型路由、额度、Skills、MCP、审批和执行环境。这些能力继续按独立模块推进，避免与已经稳定的身份权限底座耦合。
+第二阶段已形成“供应商连接 → 模型目录 → 调用密钥 → OpenAI 兼容网关 → 调用记录”的最小闭环。当前路由保持一个模型编码对应一个上游模型，不包含权重路由、自动故障转移、额度、Skills、MCP、审批和执行环境；这些能力继续按独立模块推进，避免与已经稳定的身份权限底座耦合。

@@ -22,7 +22,7 @@ const signalSteps = [
 const buildSequence = [
   { title: '工程与数据底座', description: '启动、迁移、健康检查、前端外壳', state: 'done' },
   { title: '身份与权限', description: '登录、组织、用户、角色、会话', state: 'done' },
-  { title: 'AI 资源接入', description: '供应商连接、模型目录与凭据保护', state: 'active' },
+  { title: 'AI 资源接入', description: '供应商、模型目录、调用密钥与统一网关', state: 'active' },
   { title: 'Harness 统一登录', description: 'OIDC、PKCE、设备身份与吊销', state: 'planned' },
 ]
 
@@ -108,7 +108,7 @@ export function DashboardPage() {
           <StatusCard icon={<SafetyCertificateOutlined />} label="身份模块" value="用户管理可用" tone="success" />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <StatusCard icon={<DeploymentUnitOutlined />} label="模型接入" value="目录建设中" tone="active" />
+          <StatusCard icon={<DeploymentUnitOutlined />} label="模型接入" value="网关可调用" tone="success" />
         </Col>
       </Row>
 

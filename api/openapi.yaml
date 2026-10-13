@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.10.0
+  version: 0.11.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -929,6 +929,105 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ModelCatalogEnvelope' }
+  /model-gateway/api-keys:
+    get:
+      summary: 查询当前企业的模型网关调用密钥
+      operationId: listModelGatewayAPIKeys
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 调用密钥列表，仅返回非敏感前缀，需要 `model.gateway.read` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayAPIKeyListEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 创建模型网关调用密钥
+      description: 完整密钥只在创建成功的响应中返回一次，服务端仅保存 SHA-256 哈希。
+      operationId: createModelGatewayAPIKey
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGatewayAPIKeyRequest' }
+      responses:
+        '201':
+          description: 调用密钥已创建，响应包含仅展示一次的完整密钥。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedGatewayAPIKeyEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /model-gateway/api-keys/{apiKeyId}/revoke:
+    patch:
+      summary: 吊销模型网关调用密钥
+      operationId: revokeModelGatewayAPIKey
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: apiKeyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 调用密钥已吊销，立即停止接受新调用。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayAPIKeyEnvelope' }
+        '404': { description: 调用密钥不存在或不属于当前企业。 }
+  /model-gateway/calls:
+    get:
+      summary: 查询当前企业的模型网关调用记录
+      description: 不保存提示词与模型回答，默认返回最近 100 条。
+      operationId: listModelGatewayCalls
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        '200':
+          description: 网关调用记录，需要 `model.gateway.read` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayCallListEnvelope' }
+  /v1/chat/completions:
+    servers:
+      - url: /
+    post:
+      summary: OpenAI 兼容聊天补全入口
+      description: 使用企业模型编码选择已启用的模型，支持流式与非流式响应透传。
+      operationId: gatewayChatCompletions
+      security:
+        - gatewayBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model: { type: string, description: 企业模型目录中的模型编码。 }
+                messages:
+                  type: array
+                  items: { type: object, additionalProperties: true }
+                stream: { type: boolean, default: false }
+              additionalProperties: true
+      responses:
+        '200':
+          description: 上游 OpenAI 兼容响应，流式调用返回 `text/event-stream`。
+        '400': { description: 请求格式不正确。 }
+        '401': { description: 调用密钥无效、已吊销或已过期。 }
+        '404': { description: 模型编码不存在。 }
+        '409': { description: 模型或供应商连接已停用。 }
+        '502': { description: 无法连接模型供应商。 }
 components:
   securitySchemes:
     sessionCookie:
@@ -943,6 +1042,10 @@ components:
       type: apiKey
       in: header
       name: X-CSRF-Token
+    gatewayBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Harness gateway key
   responses:
     BadRequest:
       description: 请求参数不正确。
@@ -1127,12 +1230,12 @@ components:
         status: { type: string, enum: [active, disabled] }
     CreateModelRequest:
       type: object
-      required: [providerConnectionId, code, upstreamModelId, name, capabilities]
+      required: [providerConnectionId, code, upstreamModelId, capabilities]
       properties:
         providerConnectionId: { type: string, format: uuid }
         code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,79}$' }
         upstreamModelId: { type: string, minLength: 1, maxLength: 200 }
-        name: { type: string, minLength: 1, maxLength: 120 }
+        name: { type: string, minLength: 1, maxLength: 120, description: 省略或留空时使用上游模型标识。 }
         modelType: { type: string, enum: [chat], default: chat }
         capabilities:
           type: array
@@ -1143,11 +1246,11 @@ components:
     UpdateModelRequest:
       description: 模型编码创建后不可修改。
       type: object
-      required: [providerConnectionId, upstreamModelId, name, capabilities]
+      required: [providerConnectionId, upstreamModelId, capabilities]
       properties:
         providerConnectionId: { type: string, format: uuid }
         upstreamModelId: { type: string, minLength: 1, maxLength: 200 }
-        name: { type: string, minLength: 1, maxLength: 120 }
+        name: { type: string, minLength: 1, maxLength: 120, description: 省略或留空时使用上游模型标识。 }
         modelType: { type: string, enum: [chat], default: chat }
         capabilities:
           type: array
@@ -1190,6 +1293,51 @@ components:
         status: { type: string, enum: [active, disabled] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    CreateGatewayAPIKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        expiresAt: { type: string, format: date-time, description: 省略时永不过期，必须晚于当前时间。 }
+    GatewayAPIKey:
+      type: object
+      required: [id, name, keyPrefix, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        keyPrefix: { type: string, description: 可安全展示的密钥前缀。 }
+        status: { type: string, enum: [active, revoked] }
+        expiresAt: { type: string, format: date-time }
+        lastUsedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        revokedAt: { type: string, format: date-time }
+    CreatedGatewayAPIKey:
+      allOf:
+        - $ref: '#/components/schemas/GatewayAPIKey'
+        - type: object
+          required: [secret]
+          properties:
+            secret: { type: string, writeOnly: true, description: 仅在创建成功时返回一次的完整调用密钥。 }
+    GatewayCall:
+      type: object
+      required: [id, apiKeyId, apiKeyName, requestId, modelCode, upstreamModelId, streaming, result, httpStatus, latencyMs, promptTokens, completionTokens, totalTokens, errorCode, sourceIp, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        apiKeyId: { type: string, format: uuid }
+        apiKeyName: { type: string }
+        requestId: { type: string }
+        modelCode: { type: string }
+        upstreamModelId: { type: string }
+        streaming: { type: boolean }
+        result: { type: string, enum: [success, failed] }
+        httpStatus: { type: integer }
+        latencyMs: { type: integer, format: int64 }
+        promptTokens: { type: integer }
+        completionTokens: { type: integer }
+        totalTokens: { type: integer }
+        errorCode: { type: string }
+        sourceIp: { type: string }
+        createdAt: { type: string, format: date-time }
     AuthUser:
       type: object
       required: [id, organizationId, organization, organizationCode, username, displayName, permissionCodes]
@@ -1488,6 +1636,30 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/ModelCatalogEntry' }
+    GatewayAPIKeyEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/GatewayAPIKey' }
+    CreatedGatewayAPIKeyEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/CreatedGatewayAPIKey' }
+    GatewayAPIKeyListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/GatewayAPIKey' }
+    GatewayCallListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/GatewayCall' }
     AuditEventEnvelope:
       type: object
       required: [data]

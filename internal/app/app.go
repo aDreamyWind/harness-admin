@@ -18,6 +18,7 @@ import (
 	"harness-admin/internal/httpserver"
 	"harness-admin/internal/identity"
 	"harness-admin/internal/modeladmin"
+	"harness-admin/internal/modelgateway"
 	"harness-admin/internal/modelprovider"
 	"harness-admin/internal/organizationadmin"
 	"harness-admin/internal/platformadmin"
@@ -74,6 +75,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	}
 	modelRepository := pgstore.NewModelAdminRepository(db, credentialCipher)
 	modelAdminService := modeladmin.NewService(modelRepository, modelprovider.NewProber(cfg.ModelPrivateHosts))
+	modelGatewayRepository := pgstore.NewModelGatewayRepository(db, credentialCipher)
+	modelGatewayService := modelgateway.NewService(modelGatewayRepository)
 
 	handler := httpserver.New(httpserver.Dependencies{
 		AppName:               cfg.AppName,
@@ -89,6 +92,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		OrganizationAdmin:     organizationAdminService,
 		AuditEvents:           auditEventService,
 		ModelAdmin:            modelAdminService,
+		ModelGateway:          modelGatewayService,
+		GatewayForwarder:      modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts),
 		AuditRecorder:         identityRepository,
 		PlatformAdmin:         platformService,
 		SessionCookie:         cfg.SessionCookie,
@@ -101,8 +106,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 			Handler:           handler,
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       60 * time.Second,
+			// 流式模型响应需要保持连接，写超时由上游响应头超时和请求上下文共同约束。
+			WriteTimeout: 0,
+			IdleTimeout:  60 * time.Second,
 		},
 		DB:    db,
 		Redis: redisClient,

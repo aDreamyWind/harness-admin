@@ -222,6 +222,9 @@ func normalizeModelCreate(input *CreateModelInput) {
 	input.Code = strings.ToLower(strings.TrimSpace(input.Code))
 	input.UpstreamModelID = strings.TrimSpace(input.UpstreamModelID)
 	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" {
+		input.Name = input.UpstreamModelID
+	}
 	input.ModelType = strings.ToLower(strings.TrimSpace(input.ModelType))
 	input.Capabilities = normalizeCapabilities(input.Capabilities)
 }
@@ -229,6 +232,9 @@ func normalizeModelCreate(input *CreateModelInput) {
 func normalizeModelUpdate(input *UpdateModelInput) {
 	input.UpstreamModelID = strings.TrimSpace(input.UpstreamModelID)
 	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" {
+		input.Name = input.UpstreamModelID
+	}
 	input.ModelType = strings.ToLower(strings.TrimSpace(input.ModelType))
 	input.Capabilities = normalizeCapabilities(input.Capabilities)
 }
