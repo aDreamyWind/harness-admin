@@ -17,9 +17,12 @@ import (
 	"harness-admin/internal/departmentadmin"
 	"harness-admin/internal/httpserver"
 	"harness-admin/internal/identity"
+	"harness-admin/internal/modeladmin"
+	"harness-admin/internal/modelprovider"
 	"harness-admin/internal/organizationadmin"
 	"harness-admin/internal/platformadmin"
 	"harness-admin/internal/roleadmin"
+	"harness-admin/internal/secret"
 	pgstore "harness-admin/internal/store/postgres"
 	"harness-admin/internal/useradmin"
 )
@@ -63,6 +66,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	departmentAdminService := departmentadmin.NewService(identityRepository)
 	organizationAdminService := organizationadmin.NewService(identityRepository)
 	auditEventService := auditadmin.NewService(identityRepository)
+	credentialCipher, err := secret.NewCipher(cfg.ModelCredentialKey)
+	if err != nil {
+		redisClient.Close()
+		db.Close()
+		return nil, err
+	}
+	modelRepository := pgstore.NewModelAdminRepository(db, credentialCipher)
+	modelAdminService := modeladmin.NewService(modelRepository, modelprovider.NewProber(cfg.ModelPrivateHosts))
 
 	handler := httpserver.New(httpserver.Dependencies{
 		AppName:               cfg.AppName,
@@ -77,6 +88,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		DepartmentAdmin:       departmentAdminService,
 		OrganizationAdmin:     organizationAdminService,
 		AuditEvents:           auditEventService,
+		ModelAdmin:            modelAdminService,
 		AuditRecorder:         identityRepository,
 		PlatformAdmin:         platformService,
 		SessionCookie:         cfg.SessionCookie,

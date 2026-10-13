@@ -13,6 +13,13 @@ Harness Admin 是面向企业 Harness 的控制平面。项目从零构建，不
 - Argon2id 密码、服务端会话、CSRF 校验与登录限流。
 - 基于角色权限的接口授权、企业用户管理、角色权限配置与部门层级维护。
 
+第二阶段已启动，当前新增模型接入底座：
+
+- 企业级 OpenAI 兼容供应商连接，内置 OpenAI、DeepSeek、阿里云百炼、Kimi 与 Ollama 地址预设；
+- API Key 加密存储、连接检测和出站地址安全校验；
+- 企业模型目录、能力标记和启停管理；
+- 模型资源权限与审计追踪。
+
 ## 技术栈
 
 - Go、Gin、pgx、go-redis、Goose
@@ -117,6 +124,20 @@ go run ./cmd/server
 - `GET /api/v1/audit-events`
 - `GET /api/v1/audit-events/{eventId}`
 
+模型接入接口：
+
+- `GET /api/v1/model-providers`
+- `POST /api/v1/model-providers`
+- `PUT /api/v1/model-providers/{providerId}`
+- `PATCH /api/v1/model-providers/{providerId}/status`
+- `POST /api/v1/model-providers/{providerId}/probe`
+- `GET /api/v1/models`
+- `POST /api/v1/models`
+- `PUT /api/v1/models/{modelId}`
+- `PATCH /api/v1/models/{modelId}/status`
+
+供应商 API Key 使用 `MODEL_CREDENTIAL_MASTER_KEY` 加密保存。生产环境必须设置独立的 Base64 编码 32 字节密钥。私有网络或 HTTP 模型服务必须通过 `MODEL_PROVIDER_PRIVATE_HOSTS` 显式配置精确主机名；连接检测不跟随重定向，也不会发送业务数据。
+
 审计查询按当前登录企业隔离，需要 `audit.event.read` 权限，支持按关键字、动作、结果和发生时间筛选。无权限访问管理接口时也会写入一条 `denied` 审计事件。
 
 接口契约见 [`api/openapi.yaml`](api/openapi.yaml)。
@@ -146,4 +167,4 @@ make web-build
 - PostgreSQL 迁移与中文注释、Redis 缓存、OpenAPI 契约及后端自动化测试；
 - React 管理端、响应式布局、侧边栏折叠和统一的企业编码、部门层级展示。
 
-本阶段不包含模型网关、额度、Skills、MCP、审批和执行环境。这些能力作为后续阶段独立规划，避免与已经稳定的身份权限底座耦合。
+第二阶段第一批只建设模型供应商连接和模型目录，不包含推理代理、模型路由、额度、Skills、MCP、审批和执行环境。这些能力继续按独立模块推进，避免与已经稳定的身份权限底座耦合。

@@ -26,6 +26,7 @@ import { LoginPage } from './pages/LoginPage'
 import { OrganizationSettingsPage } from './pages/OrganizationSettingsPage'
 import { RolesPage } from './pages/RolesPage'
 import { UsersPage } from './pages/UsersPage'
+import { ModelsPage } from './pages/ModelsPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -34,6 +35,7 @@ const menuRoutes: Record<string, string> = {
   users: '/identity/users',
   departments: '/identity/departments',
   roles: '/identity/roles',
+  models: '/ai-resources/models',
   audit: '/audit',
   settings: '/settings/organization',
 }
@@ -52,7 +54,7 @@ function Navigation({ items, selectedKey, onNavigate, collapsed = false }: {
       inlineCollapsed={collapsed}
       triggerSubMenuAction={collapsed ? 'click' : 'hover'}
       selectedKeys={[selectedKey]}
-      defaultOpenKeys={collapsed ? [] : ['identity']}
+      defaultOpenKeys={collapsed ? [] : ['identity', 'ai-resources']}
       items={items}
       onClick={({ key }) => {
         const path = menuRoutes[key]
@@ -76,6 +78,8 @@ export function App() {
       ? 'departments'
       : location.pathname.startsWith('/identity/roles')
         ? 'roles'
+        : location.pathname.startsWith('/ai-resources/models')
+          ? 'models'
         : location.pathname.startsWith('/audit')
           ? 'audit'
           : location.pathname.startsWith('/settings/organization')
@@ -194,6 +198,7 @@ export function App() {
               <Route path="/identity/users" element={<PermissionPage permission="iam.user.read"><UsersPage /></PermissionPage>} />
               <Route path="/identity/departments" element={<PermissionPage permission="iam.department.read"><DepartmentsPage /></PermissionPage>} />
               <Route path="/identity/roles" element={<PermissionPage permission="iam.role.read"><RolesPage /></PermissionPage>} />
+              <Route path="/ai-resources/models" element={<PermissionPage permission={['model.provider.read', 'model.catalog.read']}><ModelsPage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
               <Route path="/settings/organization" element={<PermissionPage permission="iam.organization.read"><OrganizationSettingsPage /></PermissionPage>} />
               <Route path="/account/security" element={<AccountSecurityPage />} />
@@ -213,23 +218,30 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
     hasPermission('iam.role.read') ? { key: 'roles', label: '角色与权限' } : null,
   ].filter(Boolean) as NonNullable<MenuProps['items']>
 
+  const canReadModels = hasPermission('model.provider.read') || hasPermission('model.catalog.read')
+
   return [
     { key: 'overview', icon: <DashboardOutlined />, label: '首页' },
     identityItems.length ? {
       key: 'identity', icon: <TeamOutlined />, label: '身份与组织', children: identityItems,
     } : null,
-    { key: 'models', icon: <AppstoreOutlined />, label: '模型目录', disabled: true },
-    { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关', disabled: true },
+    canReadModels ? {
+      key: 'ai-resources', icon: <AppstoreOutlined />, label: 'AI 资源管理', children: [
+        { key: 'models', label: '模型目录' },
+        { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关', disabled: true },
+      ],
+    } : null,
     { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },
     hasPermission('audit.event.read') ? { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' } : null,
     hasPermission('iam.organization.read') ? { key: 'settings', icon: <SettingOutlined />, label: '企业设置' } : null,
   ].filter(Boolean) as NonNullable<MenuProps['items']>
 }
 
-function PermissionPage({ permission, children }: { permission: string; children: ReactNode }) {
+function PermissionPage({ permission, children }: { permission: string | string[]; children: ReactNode }) {
   const { hasPermission } = useAuth()
   const navigate = useNavigate()
-  if (hasPermission(permission)) return children
+  const permissions = Array.isArray(permission) ? permission : [permission]
+  if (permissions.some(hasPermission)) return children
   return (
     <main>
       <Card className="content-card permission-card" variant="borderless">

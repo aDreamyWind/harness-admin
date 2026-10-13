@@ -21,9 +21,9 @@ const signalSteps = [
 
 const buildSequence = [
   { title: '工程与数据底座', description: '启动、迁移、健康检查、前端外壳', state: 'done' },
-  { title: '身份与权限', description: '登录、组织、用户、角色、会话', state: 'active' },
+  { title: '身份与权限', description: '登录、组织、用户、角色、会话', state: 'done' },
+  { title: 'AI 资源接入', description: '供应商连接、模型目录与凭据保护', state: 'active' },
   { title: 'Harness 统一登录', description: 'OIDC、PKCE、设备身份与吊销', state: 'planned' },
-  { title: 'AI 治理链路', description: '模型网关、额度、审计与追踪', state: 'planned' },
 ]
 
 export function DashboardPage() {
@@ -108,7 +108,7 @@ export function DashboardPage() {
           <StatusCard icon={<SafetyCertificateOutlined />} label="身份模块" value="用户管理可用" tone="success" />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <StatusCard icon={<DeploymentUnitOutlined />} label="模型网关" value="待开始" tone="neutral" />
+          <StatusCard icon={<DeploymentUnitOutlined />} label="模型接入" value="目录建设中" tone="active" />
         </Col>
       </Row>
 
@@ -120,7 +120,7 @@ export function DashboardPage() {
                 <Text className="eyebrow">BUILD SEQUENCE</Text>
                 <Title level={3}>建设序列</Title>
               </div>
-              <Progress type="circle" percent={35} size={52} strokeColor="#2457d6" />
+              <Progress type="circle" percent={55} size={52} strokeColor="#2457d6" />
             </div>
             <div className="build-sequence">
               {buildSequence.map((item, index) => (

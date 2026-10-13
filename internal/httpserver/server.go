@@ -29,6 +29,7 @@ type Dependencies struct {
 	DepartmentAdmin       DepartmentAdminService
 	OrganizationAdmin     OrganizationAdminService
 	AuditEvents           AuditEventService
+	ModelAdmin            ModelAdminService
 	AuditRecorder         AuditRecorder
 	PlatformAdmin         PlatformAdminService
 	SessionCookie         string
@@ -84,6 +85,9 @@ func New(deps Dependencies) http.Handler {
 	if deps.Auth != nil && deps.Access != nil && deps.AuditEvents != nil {
 		registerAuditRoutes(router, deps)
 	}
+	if deps.Auth != nil && deps.Access != nil && deps.ModelAdmin != nil {
+		registerModelRoutes(router, deps)
+	}
 	router.NoRoute(func(ctx *gin.Context) {
 		httpx.Fail(ctx, http.StatusNotFound, "route_not_found", "请求的接口不存在")
 	})
@@ -121,15 +125,16 @@ func bootstrapHandler(deps Dependencies) gin.HandlerFunc {
 		httpx.OK(ctx, http.StatusOK, bootstrapResponse{
 			Name:        deps.AppName,
 			Environment: deps.Environment,
-			Phase:       "foundation",
+			Phase:       "model-access",
 			Services: map[string]bool{
 				"api":      true,
 				"database": deps.Database != nil,
 				"redis":    deps.Cache != nil,
 			},
 			Modules: []moduleStatus{
-				{Key: "identity", Name: "身份与会话", Status: "building"},
-				{Key: "access", Name: "组织与权限", Status: "planned"},
+				{Key: "identity", Name: "身份与会话", Status: "ready"},
+				{Key: "access", Name: "组织与权限", Status: "ready"},
+				{Key: "models", Name: "模型目录", Status: "building"},
 				{Key: "gateway", Name: "模型网关", Status: "planned"},
 				{Key: "audit", Name: "审计与追踪", Status: "ready"},
 			},

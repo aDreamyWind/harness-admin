@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.9.0
+  version: 0.10.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -751,6 +751,184 @@ paths:
               schema: { $ref: '#/components/schemas/AuditEventEnvelope' }
         '404':
           description: 审计事件不存在或不属于当前企业。
+  /model-providers:
+    get:
+      summary: 查询当前企业的模型供应商连接
+      operationId: listModelProviders
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 供应商连接列表，需要 `model.provider.read` 权限；响应不包含访问凭据。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelProviderListEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 创建模型供应商连接
+      operationId: createModelProvider
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateModelProviderRequest' }
+      responses:
+        '201':
+          description: 供应商连接已创建，API Key 已加密保存。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelProviderEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: 企业内供应商连接编码已存在。 }
+  /model-providers/{providerId}:
+    put:
+      summary: 修改模型供应商连接
+      description: "apiKey 省略时保留当前凭据；提供时替换加密凭据。"
+      operationId: updateModelProvider
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateModelProviderRequest' }
+      responses:
+        '200':
+          description: 供应商连接已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelProviderEnvelope' }
+        '404': { description: 供应商连接不存在。 }
+  /model-providers/{providerId}/status:
+    patch:
+      summary: 修改模型供应商连接状态
+      operationId: changeModelProviderStatus
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StatusChangeRequest' }
+      responses:
+        '200':
+          description: 供应商连接状态已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelProviderEnvelope' }
+  /model-providers/{providerId}/probe:
+    post:
+      summary: 检测模型供应商连接
+      description: 使用加密保存的凭据读取上游模型列表，不发送业务数据。
+      operationId: probeModelProvider
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 连接检测成功。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelProviderProbeEnvelope' }
+        '409': { description: 供应商连接已停用。 }
+        '502': { description: 无法连接供应商，或供应商拒绝凭据。 }
+  /models:
+    get:
+      summary: 查询当前企业的模型目录
+      operationId: listModels
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 模型目录列表，需要 `model.catalog.read` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelCatalogListEnvelope' }
+    post:
+      summary: 创建模型目录项
+      operationId: createModel
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateModelRequest' }
+      responses:
+        '201':
+          description: 模型目录项已创建。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelCatalogEnvelope' }
+        '409': { description: 模型编码或供应商侧模型标识已存在。 }
+  /models/{modelId}:
+    put:
+      summary: 修改模型目录项
+      operationId: updateModel
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: modelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateModelRequest' }
+      responses:
+        '200':
+          description: 模型目录项已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelCatalogEnvelope' }
+        '404': { description: 模型或供应商连接不存在。 }
+  /models/{modelId}/status:
+    patch:
+      summary: 修改模型状态
+      operationId: changeModelStatus
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: modelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StatusChangeRequest' }
+      responses:
+        '200':
+          description: 模型状态已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelCatalogEnvelope' }
 components:
   securitySchemes:
     sessionCookie:
@@ -910,6 +1088,108 @@ components:
         parentId: { type: string, format: uuid }
         name: { type: string, minLength: 1, maxLength: 160 }
         sortOrder: { type: integer, minimum: 0, maximum: 999999 }
+    CreateModelProviderRequest:
+      type: object
+      required: [code, name, baseUrl, apiKey]
+      properties:
+        code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,79}$' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        providerKind:
+          type: string
+          enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama]
+          default: openai_compatible
+          description: 供应商协议预设；当前均通过 OpenAI 兼容接口接入。
+        baseUrl: { type: string, format: uri }
+        apiKey: { type: string, format: password, minLength: 1, maxLength: 4096, writeOnly: true }
+        requestTimeoutMs: { type: integer, minimum: 1000, maximum: 120000, default: 15000 }
+    UpdateModelProviderRequest:
+      type: object
+      required: [name, providerKind, baseUrl, requestTimeoutMs]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        providerKind:
+          type: string
+          enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama]
+          description: 供应商协议预设；当前均通过 OpenAI 兼容接口接入。
+        baseUrl: { type: string, format: uri }
+        apiKey:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+          description: 省略时保留当前凭据。
+        requestTimeoutMs: { type: integer, minimum: 1000, maximum: 120000 }
+    StatusChangeRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, disabled] }
+    CreateModelRequest:
+      type: object
+      required: [providerConnectionId, code, upstreamModelId, name, capabilities]
+      properties:
+        providerConnectionId: { type: string, format: uuid }
+        code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,79}$' }
+        upstreamModelId: { type: string, minLength: 1, maxLength: 200 }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        modelType: { type: string, enum: [chat], default: chat }
+        capabilities:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [text, vision, tools, streaming, json] }
+        contextWindowTokens: { type: integer, minimum: 0, default: 0 }
+        maxOutputTokens: { type: integer, minimum: 0, default: 0 }
+    UpdateModelRequest:
+      description: 模型编码创建后不可修改。
+      type: object
+      required: [providerConnectionId, upstreamModelId, name, capabilities]
+      properties:
+        providerConnectionId: { type: string, format: uuid }
+        upstreamModelId: { type: string, minLength: 1, maxLength: 200 }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        modelType: { type: string, enum: [chat], default: chat }
+        capabilities:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [text, vision, tools, streaming, json] }
+        contextWindowTokens: { type: integer, minimum: 0, default: 0 }
+        maxOutputTokens: { type: integer, minimum: 0, default: 0 }
+    ModelProvider:
+      type: object
+      required: [id, code, name, providerKind, baseUrl, status, requestTimeoutMs, credentialConfigured, lastProbeStatus, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        providerKind: { type: string, enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama] }
+        baseUrl: { type: string, format: uri }
+        status: { type: string, enum: [active, disabled] }
+        requestTimeoutMs: { type: integer }
+        credentialConfigured: { type: boolean }
+        lastProbeStatus: { type: string, enum: [unknown, success, failed] }
+        lastProbeAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ModelCatalogEntry:
+      type: object
+      required: [id, providerConnectionId, providerName, code, upstreamModelId, name, modelType, capabilities, contextWindowTokens, maxOutputTokens, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        providerConnectionId: { type: string, format: uuid }
+        providerName: { type: string }
+        code: { type: string }
+        upstreamModelId: { type: string }
+        name: { type: string }
+        modelType: { type: string, enum: [chat] }
+        capabilities:
+          type: array
+          items: { type: string, enum: [text, vision, tools, streaming, json] }
+        contextWindowTokens: { type: integer }
+        maxOutputTokens: { type: integer }
+        status: { type: string, enum: [active, disabled] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     AuthUser:
       type: object
       required: [id, organizationId, organization, organizationCode, username, displayName, permissionCodes]
@@ -1173,6 +1453,41 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/Department' }
+    ModelProviderEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ModelProvider' }
+    ModelProviderListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ModelProvider' }
+    ModelProviderProbeEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [status, latencyMs, checkedAt]
+          properties:
+            status: { type: string, enum: [success] }
+            latencyMs: { type: integer, format: int64 }
+            checkedAt: { type: string, format: date-time }
+    ModelCatalogEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ModelCatalogEntry' }
+    ModelCatalogListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ModelCatalogEntry' }
     AuditEventEnvelope:
       type: object
       required: [data]

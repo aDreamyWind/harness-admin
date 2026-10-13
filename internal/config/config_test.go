@@ -39,3 +39,11 @@ func TestLoadRejectsUnsafeSessionTTL(t *testing.T) {
 		t.Fatal("过短 SESSION_TTL 应返回错误")
 	}
 }
+
+func TestLoadRequiresModelCredentialKeyInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("MODEL_CREDENTIAL_MASTER_KEY", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("生产环境缺少模型凭据主密钥应返回错误")
+	}
+}

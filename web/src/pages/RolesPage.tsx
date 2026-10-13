@@ -246,6 +246,8 @@ const resourceLabels: Record<string, string> = {
   role: '角色',
   audit_event: '审计事件',
   organization: '企业',
+  model_provider: '模型供应商',
+  model_catalog: '模型目录',
 }
 
 function groupPermissions(permissions: Permission[]): Array<[string, Permission[]]> {

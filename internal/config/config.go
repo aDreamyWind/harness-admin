@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,8 @@ type Config struct {
 	SessionTTL            time.Duration
 	SessionCookie         string
 	PlatformSessionCookie string
+	ModelCredentialKey    string
+	ModelPrivateHosts     []string
 }
 
 func Load() (Config, error) {
@@ -55,6 +58,8 @@ func Load() (Config, error) {
 		SessionTTL:            sessionTTL,
 		SessionCookie:         value("SESSION_COOKIE_NAME", "harness_admin_session"),
 		PlatformSessionCookie: value("PLATFORM_SESSION_COOKIE_NAME", "harness_platform_session"),
+		ModelCredentialKey:    value("MODEL_CREDENTIAL_MASTER_KEY", "aGFybmVzcy1hZG1pbi1kZXYtbW9kZWwta2V5LTAwMDE="),
+		ModelPrivateHosts:     csvValue("MODEL_PROVIDER_PRIVATE_HOSTS"),
 	}
 	if cfg.SessionTTL < 15*time.Minute || cfg.SessionTTL > 30*24*time.Hour {
 		return Config{}, fmt.Errorf("SESSION_TTL 必须在 15 分钟到 30 天之间")
@@ -65,8 +70,22 @@ func Load() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("APP_ENV 必须是 development、test 或 production，当前值为 %q", cfg.Environment)
 	}
+	if cfg.Environment == "production" && os.Getenv("MODEL_CREDENTIAL_MASTER_KEY") == "" {
+		return Config{}, fmt.Errorf("production 环境必须配置 MODEL_CREDENTIAL_MASTER_KEY")
+	}
 
 	return cfg, nil
+}
+
+func csvValue(key string) []string {
+	values := make([]string, 0)
+	for _, item := range strings.Split(os.Getenv(key), ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
 }
 
 func value(key, fallback string) string {
