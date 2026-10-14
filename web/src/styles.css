@@ -2026,6 +2026,60 @@ select {
   width: 100%;
 }
 
+.application-type-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.application-type-options .ant-radio-button-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: auto;
+  min-height: 64px;
+  padding: 10px 13px;
+  border: 1px solid #d8e1ea;
+  border-radius: 7px;
+  line-height: 1.35;
+}
+
+.application-type-options .ant-radio-button-wrapper::before {
+  display: none;
+}
+
+.application-type-options .ant-radio-button-wrapper-checked {
+  border-color: #2457d6;
+  box-shadow: 0 0 0 2px rgb(36 87 214 / 10%);
+}
+
+.application-type-options .anticon {
+  color: #315b8f;
+  font-size: 18px;
+}
+
+.application-type-options span,
+.application-type-options strong,
+.application-type-options small {
+  display: block;
+}
+
+.application-type-options strong {
+  color: #2f4056;
+  font-size: 12px;
+}
+
+.application-type-options small {
+  margin-top: 3px;
+  color: #8491a1;
+  font-size: 10px;
+}
+
+.application-type-hint {
+  margin: -2px 0 18px;
+}
+
 .application-scope-options .ant-checkbox-wrapper {
   align-items: flex-start;
   margin: 0;
@@ -2331,6 +2385,7 @@ select {
   }
 
   .application-access-protocol,
+  .application-type-options,
   .application-scope-options {
     grid-template-columns: 1fr;
   }

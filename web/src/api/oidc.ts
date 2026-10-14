@@ -2,12 +2,16 @@ import { csrfHeaders, request } from './client'
 
 export type OIDCClientStatus = 'active' | 'disabled'
 export type OIDCScope = 'openid' | 'profile' | 'email' | 'model.invoke' | 'offline_access'
+export type OIDCApplicationType = 'web' | 'desktop'
+export type OIDCTokenEndpointAuthMethod = 'client_secret_basic' | 'none'
 
 export interface OIDCClient {
   id: string
   name: string
   clientId: string
   clientSecretPrefix: string
+  applicationType: OIDCApplicationType
+  tokenEndpointAuthMethod: OIDCTokenEndpointAuthMethod
   redirectUris: string[]
   allowedScopes: OIDCScope[]
   status: OIDCClientStatus
@@ -16,11 +20,12 @@ export interface OIDCClient {
 }
 
 export interface CreatedOIDCClient extends OIDCClient {
-  clientSecret: string
+  clientSecret?: string
 }
 
 export interface OIDCClientInput {
   name: string
+  applicationType: OIDCApplicationType
   redirectUris: string[]
   allowedScopes: OIDCScope[]
 }

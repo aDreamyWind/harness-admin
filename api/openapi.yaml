@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.15.0
+  version: 0.16.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -766,7 +766,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       summary: 创建统一登录应用
-      description: 客户端密钥只在创建成功的响应中返回一次，服务端仅保存 SHA-256 哈希。
+      description: 桌面应用是公开客户端，不生成密钥；服务端应用的密钥只在创建响应中返回一次，服务端仅保存 SHA-256 哈希。
       operationId: createOIDCClient
       security:
         - sessionCookie: []
@@ -778,7 +778,7 @@ paths:
             schema: { $ref: '#/components/schemas/OIDCClientWriteRequest' }
       responses:
         '201':
-          description: 应用已创建，响应包含仅展示一次的客户端密钥。
+          description: 应用已创建；仅服务端应用的响应包含一次性展示的客户端密钥。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CreatedOIDCClientEnvelope' }
@@ -852,6 +852,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CreatedOIDCClientEnvelope' }
         '404': { description: 统一登录应用不存在或不属于当前企业。 }
+        '409': { description: 桌面应用不使用客户端密钥。 }
   /.well-known/openid-configuration:
     servers:
       - url: /
@@ -877,7 +878,7 @@ paths:
   /oauth2/authorize:
     get:
       summary: 发起 OIDC 授权码登录
-      description: 要求当前 Harness Admin 用户会话有效，并强制使用 PKCE S256。未登录时跳转到管理端登录页。
+      description: 要求当前 Harness Admin 用户会话有效，并强制使用 PKCE S256。未登录时跳转到管理端登录页。桌面应用登记 IP 回环地址时，实际授权请求可使用随机端口。
       operationId: authorizeOIDC
       parameters:
         - { name: response_type, in: query, required: true, schema: { type: string, const: code } }
@@ -1473,12 +1474,17 @@ components:
       required: [name, redirectUris, allowedScopes]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
+        applicationType:
+          type: string
+          enum: [web, desktop]
+          default: web
+          description: 创建时指定应用类型；更新时不可变更。desktop 为无密钥的公开客户端。
         redirectUris:
           type: array
           minItems: 1
           maxItems: 20
           uniqueItems: true
-          description: 精确匹配的登录回调地址；生产环境必须使用 HTTPS，回环地址可使用 HTTP。
+          description: 服务端应用精确匹配；桌面应用的 IP 回环地址忽略端口匹配；非回环地址必须使用 HTTPS。
           items: { type: string, format: uri, maxLength: 2048 }
         allowedScopes:
           type: array
@@ -1489,12 +1495,14 @@ components:
           items: { type: string, enum: [openid, profile, email, model.invoke, offline_access] }
     OIDCClient:
       type: object
-      required: [id, name, clientId, clientSecretPrefix, redirectUris, allowedScopes, status, createdAt, updatedAt]
+      required: [id, name, clientId, clientSecretPrefix, applicationType, tokenEndpointAuthMethod, redirectUris, allowedScopes, status, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         clientId: { type: string, description: 对外公开的 OAuth 客户端标识。 }
         clientSecretPrefix: { type: string, description: 可安全展示的客户端密钥前缀。 }
+        applicationType: { type: string, enum: [web, desktop] }
+        tokenEndpointAuthMethod: { type: string, enum: [client_secret_basic, none] }
         redirectUris:
           type: array
           items: { type: string, format: uri }
@@ -1508,16 +1516,15 @@ components:
       allOf:
         - $ref: '#/components/schemas/OIDCClient'
         - type: object
-          required: [clientSecret]
           properties:
-            clientSecret: { type: string, readOnly: true, description: 仅在创建或轮换成功时返回一次的完整客户端密钥。 }
+            clientSecret: { type: string, readOnly: true, description: 仅服务端应用在创建或轮换成功时返回一次。桌面应用不返回。 }
     OIDCTokenRequest:
       type: object
       required: [grant_type]
       properties:
         grant_type: { type: string, enum: [authorization_code, refresh_token] }
-        client_id: { type: string, description: 也可通过 HTTP Basic 用户名传递。 }
-        client_secret: { type: string, format: password, description: 也可通过 HTTP Basic 密码传递。 }
+        client_id: { type: string, description: 桌面应用必须在表单中传递；服务端应用也可通过 HTTP Basic 用户名传递。 }
+        client_secret: { type: string, format: password, description: 仅服务端应用需要，也可通过 HTTP Basic 密码传递。 }
         code: { type: string }
         redirect_uri: { type: string, format: uri }
         code_verifier: { type: string, minLength: 43, maxLength: 128 }

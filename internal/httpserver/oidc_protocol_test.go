@@ -87,6 +87,31 @@ func TestOIDCTokenSupportsBasicClientAuthentication(t *testing.T) {
 	}
 }
 
+func TestOIDCTokenAcceptsPublicClientIDWithoutSecret(t *testing.T) {
+	provider := &oidcProviderStub{}
+	router := newOIDCProtocolTestRouter(provider)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/oauth2/token", strings.NewReader("grant_type=authorization_code&client_id=desktop-client&code=code-1&redirect_uri=http%3A%2F%2F127.0.0.1%3A49152%2Foauth%2Fcallback&code_verifier=verifier"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("令牌响应不正确: %d %s", response.Code, response.Body.String())
+	}
+	if provider.tokenInput.ClientID != "desktop-client" || provider.tokenInput.ClientSecret != "" {
+		t.Fatalf("公开客户端参数不正确: %#v", provider.tokenInput)
+	}
+}
+
+func TestOIDCDiscoveryAdvertisesPublicClientAuthentication(t *testing.T) {
+	router := newOIDCProtocolTestRouter(&oidcProviderStub{})
+	request := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"token_endpoint_auth_methods_supported":["client_secret_basic","client_secret_post","none"]`) {
+		t.Fatalf("发现文档未声明公开客户端认证方式: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func newOIDCProtocolTestRouter(provider OIDCProviderService) http.Handler {
 	gin.SetMode(gin.TestMode)
 	return New(Dependencies{

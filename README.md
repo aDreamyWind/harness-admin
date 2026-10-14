@@ -137,7 +137,12 @@ go run ./cmd/server
 - `PATCH /api/v1/oidc/clients/{oidcClientId}/status`
 - `POST /api/v1/oidc/clients/{oidcClientId}/rotate-secret`
 
-企业管理员可在“身份与组织 / 应用接入”登记 DeepSeek Harness 等独立系统，配置精确登录回调地址和 `openid`、`profile`、`email`、`model.invoke`、`offline_access` 授权范围。完整客户端密钥只在创建或轮换后返回一次。
+企业管理员可在“身份与组织 / 应用接入”登记 DeepSeek Harness 等独立系统，配置登录回调地址和 `openid`、`profile`、`email`、`model.invoke`、`offline_access` 授权范围。应用类型分为：
+
+- 桌面应用：作为 OAuth 公开客户端，不生成客户端密钥，必须使用 PKCE S256。登记 `http://127.0.0.1/oauth/callback` 后，员工电脑上的实际回调可使用随机端口。
+- 服务端应用：回调地址精确匹配，完整客户端密钥只在创建或轮换后返回一次。
+
+企业桌面端应预置 `OIDC_ISSUER`、客户端 ID、回调路径和模型网关地址。员工不需要自己填写这些参数，只需在桌面端点击“企业账号登录”，并在系统浏览器中完成 Harness Admin 登录。
 
 OIDC 协议端点：
 

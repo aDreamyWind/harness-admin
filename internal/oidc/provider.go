@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"slices"
 	"strings"
@@ -54,7 +55,7 @@ func (s *ProviderService) Authorize(ctx context.Context, input AuthorizeInput) (
 	if err != nil || client.Status != "active" || client.OrganizationID != input.Subject.OrganizationID {
 		return AuthorizationResult{}, ErrInvalidClient
 	}
-	if !slices.Contains(client.RedirectURIs, input.RedirectURI) {
+	if !redirectURIAllowed(client.Client, input.RedirectURI) {
 		return AuthorizationResult{}, ErrInvalidInput
 	}
 	scopes := normalizeValues(strings.Fields(input.Scope), true)
@@ -151,11 +152,20 @@ func (s *ProviderService) authenticateAccessToken(ctx context.Context, accessTok
 }
 
 func (s *ProviderService) authenticateClient(ctx context.Context, clientID, secret string) (ProtocolClient, error) {
-	if clientID == "" || secret == "" {
+	if clientID == "" {
 		return ProtocolClient{}, ErrInvalidClient
 	}
 	client, err := s.repository.FindProtocolClient(ctx, clientID)
 	if err != nil || client.Status != "active" {
+		return ProtocolClient{}, ErrInvalidClient
+	}
+	if client.TokenEndpointAuthMethod == TokenEndpointAuthNone {
+		if secret != "" {
+			return ProtocolClient{}, ErrInvalidClient
+		}
+		return client, nil
+	}
+	if client.TokenEndpointAuthMethod != TokenEndpointAuthClientSecretBasic || secret == "" {
 		return ProtocolClient{}, ErrInvalidClient
 	}
 	digest := sha256.Sum256([]byte(secret))
@@ -163,6 +173,37 @@ func (s *ProviderService) authenticateClient(ctx context.Context, clientID, secr
 		return ProtocolClient{}, ErrInvalidClient
 	}
 	return client, nil
+}
+
+func redirectURIAllowed(client Client, candidate string) bool {
+	if !validRedirectURI(candidate) {
+		return false
+	}
+	if slices.Contains(client.RedirectURIs, candidate) {
+		return true
+	}
+	if client.ApplicationType != ApplicationTypeDesktop {
+		return false
+	}
+	candidateURL, err := url.Parse(candidate)
+	if err != nil || candidateURL.Scheme != "http" || !isLoopbackHost(candidateURL.Hostname()) {
+		return false
+	}
+	for _, registered := range client.RedirectURIs {
+		registeredURL, parseErr := url.Parse(registered)
+		if parseErr == nil && registeredURL.Scheme == candidateURL.Scheme &&
+			strings.EqualFold(registeredURL.Hostname(), candidateURL.Hostname()) &&
+			registeredURL.Path == candidateURL.Path && registeredURL.RawQuery == candidateURL.RawQuery &&
+			isLoopbackHost(registeredURL.Hostname()) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLoopbackHost(hostname string) bool {
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *ProviderService) exchangeAuthorizationCode(ctx context.Context, client ProtocolClient, input TokenInput) (TokenResult, error) {

@@ -7,24 +7,35 @@ import (
 )
 
 var (
-	ErrInvalidInput   = errors.New("应用接入参数不正确")
-	ErrClientNotFound = errors.New("统一登录应用不存在")
-	ErrInvalidClient  = errors.New("客户端认证失败")
-	ErrInvalidGrant   = errors.New("授权凭据无效或已过期")
-	ErrInvalidToken   = errors.New("访问令牌无效或已过期")
+	ErrInvalidInput            = errors.New("应用接入参数不正确")
+	ErrClientNotFound          = errors.New("统一登录应用不存在")
+	ErrClientSecretUnsupported = errors.New("桌面应用不使用客户端密钥")
+	ErrInvalidClient           = errors.New("客户端认证失败")
+	ErrInvalidGrant            = errors.New("授权凭据无效或已过期")
+	ErrInvalidToken            = errors.New("访问令牌无效或已过期")
+)
+
+const (
+	ApplicationTypeWeb     = "web"
+	ApplicationTypeDesktop = "desktop"
+
+	TokenEndpointAuthClientSecretBasic = "client_secret_basic"
+	TokenEndpointAuthNone              = "none"
 )
 
 type Client struct {
-	ID                 string
-	OrganizationID     string
-	Name               string
-	ClientID           string
-	ClientSecretPrefix string
-	RedirectURIs       []string
-	AllowedScopes      []string
-	Status             string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                      string
+	OrganizationID          string
+	Name                    string
+	ClientID                string
+	ClientSecretPrefix      string
+	ApplicationType         string
+	TokenEndpointAuthMethod string
+	RedirectURIs            []string
+	AllowedScopes           []string
+	Status                  string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 type CreatedClient struct {
@@ -33,16 +44,18 @@ type CreatedClient struct {
 }
 
 type CreateClientInput struct {
-	OrganizationID     string
-	ActorID            string
-	Name               string
-	RedirectURIs       []string
-	AllowedScopes      []string
-	RequestID          string
-	SourceIP           string
-	ClientID           string
-	ClientSecretHash   []byte
-	ClientSecretPrefix string
+	OrganizationID          string
+	ActorID                 string
+	Name                    string
+	ApplicationType         string
+	TokenEndpointAuthMethod string
+	RedirectURIs            []string
+	AllowedScopes           []string
+	RequestID               string
+	SourceIP                string
+	ClientID                string
+	ClientSecretHash        []byte
+	ClientSecretPrefix      string
 }
 
 type UpdateClientInput struct {

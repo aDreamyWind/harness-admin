@@ -50,21 +50,31 @@ func (s *Service) ListClients(ctx context.Context, organizationID string) ([]Cli
 
 func (s *Service) CreateClient(ctx context.Context, input CreateClientInput) (CreatedClient, error) {
 	normalizeSettings(&input.Name, &input.RedirectURIs, &input.AllowedScopes)
-	if !validSettings(input.OrganizationID, input.ActorID, input.Name, input.RedirectURIs, input.AllowedScopes) {
+	input.ApplicationType = strings.ToLower(strings.TrimSpace(input.ApplicationType))
+	if input.ApplicationType == "" {
+		input.ApplicationType = ApplicationTypeWeb
+	}
+	if !validSettings(input.OrganizationID, input.ActorID, input.Name, input.ApplicationType, input.RedirectURIs, input.AllowedScopes) {
 		return CreatedClient{}, ErrInvalidInput
 	}
 	clientID, err := s.newClientID()
 	if err != nil {
 		return CreatedClient{}, fmt.Errorf("生成 OAuth 客户端标识失败: %w", err)
 	}
-	secret, err := s.newSecret()
-	if err != nil {
-		return CreatedClient{}, fmt.Errorf("生成 OAuth 客户端密钥失败: %w", err)
-	}
-	digest := sha256.Sum256([]byte(secret))
 	input.ClientID = clientID
-	input.ClientSecretHash = digest[:]
-	input.ClientSecretPrefix = visibleSecretPrefix(secret)
+	var secret string
+	if input.ApplicationType == ApplicationTypeDesktop {
+		input.TokenEndpointAuthMethod = TokenEndpointAuthNone
+	} else {
+		input.TokenEndpointAuthMethod = TokenEndpointAuthClientSecretBasic
+		secret, err = s.newSecret()
+		if err != nil {
+			return CreatedClient{}, fmt.Errorf("生成 OAuth 客户端密钥失败: %w", err)
+		}
+		digest := sha256.Sum256([]byte(secret))
+		input.ClientSecretHash = digest[:]
+		input.ClientSecretPrefix = visibleSecretPrefix(secret)
+	}
 	created, err := s.repository.CreateClient(ctx, input)
 	if err != nil {
 		return CreatedClient{}, fmt.Errorf("创建统一登录应用失败: %w", err)
@@ -74,7 +84,7 @@ func (s *Service) CreateClient(ctx context.Context, input CreateClientInput) (Cr
 
 func (s *Service) UpdateClient(ctx context.Context, input UpdateClientInput) (Client, error) {
 	normalizeSettings(&input.Name, &input.RedirectURIs, &input.AllowedScopes)
-	if input.ClientRecordID == "" || !validSettings(input.OrganizationID, input.ActorID, input.Name, input.RedirectURIs, input.AllowedScopes) {
+	if input.ClientRecordID == "" || !validSettings(input.OrganizationID, input.ActorID, input.Name, "", input.RedirectURIs, input.AllowedScopes) {
 		return Client{}, ErrInvalidInput
 	}
 	item, err := s.repository.UpdateClient(ctx, input)
@@ -114,7 +124,7 @@ func (s *Service) RotateClientSecret(ctx context.Context, input RotateClientSecr
 	input.ClientSecretPrefix = visibleSecretPrefix(secret)
 	item, err := s.repository.RotateClientSecret(ctx, input)
 	if err != nil {
-		if errors.Is(err, ErrClientNotFound) {
+		if errors.Is(err, ErrClientNotFound) || errors.Is(err, ErrClientSecretUnsupported) {
 			return CreatedClient{}, err
 		}
 		return CreatedClient{}, fmt.Errorf("轮换 OAuth 客户端密钥失败: %w", err)
@@ -149,8 +159,11 @@ func normalizeValues(values []string, lower bool) []string {
 	return result
 }
 
-func validSettings(organizationID, actorID, name string, redirectURIs, scopes []string) bool {
+func validSettings(organizationID, actorID, name, applicationType string, redirectURIs, scopes []string) bool {
 	if organizationID == "" || actorID == "" || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 120 || len(redirectURIs) < 1 || len(redirectURIs) > 20 || len(scopes) < 1 || len(scopes) > 10 {
+		return false
+	}
+	if applicationType != "" && applicationType != ApplicationTypeWeb && applicationType != ApplicationTypeDesktop {
 		return false
 	}
 	for _, redirectURI := range redirectURIs {

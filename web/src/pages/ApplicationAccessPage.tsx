@@ -1,6 +1,8 @@
 import {
   ApiOutlined,
+  CloudServerOutlined,
   CopyOutlined,
+  DesktopOutlined,
   EditOutlined,
   KeyOutlined,
   PlusOutlined,
@@ -17,6 +19,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Radio,
   Select,
   Space,
   Table,
@@ -62,22 +65,26 @@ export function ApplicationAccessPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingClient, setEditingClient] = useState<OIDCClient | null>(null)
   const [createdClient, setCreatedClient] = useState<CreatedOIDCClient | null>(null)
+  const selectedApplicationType = Form.useWatch('applicationType', form)
 
   const clientsQuery = useQuery({ queryKey: ['oidc-clients'], queryFn: listOIDCClients })
   const clients = clientsQuery.data ?? []
 
   const saveClient = useMutation({
-    mutationFn: (values: OIDCClientInput) => {
+    mutationFn: async (values: OIDCClientInput) => {
       const input = {
         name: values.name.trim(),
+        applicationType: values.applicationType,
         redirectUris: values.redirectUris ?? [],
         allowedScopes: values.allowedScopes ?? [],
       }
-      return editingClient ? updateOIDCClient(editingClient.id, input) : createOIDCClient(input)
+      const isCreate = !editingClient
+      const result = editingClient ? await updateOIDCClient(editingClient.id, input) : await createOIDCClient(input)
+      return { result, isCreate }
     },
-    onSuccess: async (result) => {
+    onSuccess: async ({ result, isCreate }) => {
       closeModal()
-      if ('clientSecret' in result && typeof result.clientSecret === 'string') {
+      if (isCreate) {
         setCreatedClient(result as CreatedOIDCClient)
       } else {
         messageApi.success('应用接入设置已更新')
@@ -107,14 +114,14 @@ export function ApplicationAccessPage() {
   function openCreate() {
     setEditingClient(null)
     saveClient.reset()
-    form.setFieldsValue({ name: '', redirectUris: [], allowedScopes: ['openid', 'profile', 'model.invoke'] })
+    form.setFieldsValue({ name: '', applicationType: 'desktop', redirectUris: ['http://127.0.0.1/oauth/callback'], allowedScopes: ['openid', 'profile', 'model.invoke', 'offline_access'] })
     setModalOpen(true)
   }
 
   function openEdit(client: OIDCClient) {
     setEditingClient(client)
     saveClient.reset()
-    form.setFieldsValue({ name: client.name, redirectUris: client.redirectUris, allowedScopes: client.allowedScopes })
+    form.setFieldsValue({ name: client.name, applicationType: client.applicationType, redirectUris: client.redirectUris, allowedScopes: client.allowedScopes })
     setModalOpen(true)
   }
 
@@ -128,7 +135,7 @@ export function ApplicationAccessPage() {
   const columns: TableColumnsType<OIDCClient> = useMemo(() => [
     {
       title: '应用', key: 'identity', width: 190,
-      render: (_, client) => <div className="application-access-name"><ApiOutlined /><span><strong>{client.name}</strong><small>{client.clientSecretPrefix}••••••</small></span></div>,
+      render: (_, client) => <div className="application-access-name">{client.applicationType === 'desktop' ? <DesktopOutlined /> : <CloudServerOutlined />}<span><strong>{client.name}</strong><small>{client.applicationType === 'desktop' ? '桌面应用 · 无密钥' : `${client.clientSecretPrefix}••••••`}</small></span></div>,
     },
     { title: '客户端 ID', dataIndex: 'clientId', key: 'clientId', width: 220, render: (value: string) => <Text code copyable>{value}</Text> },
     {
@@ -144,9 +151,9 @@ export function ApplicationAccessPage() {
       title: '操作', key: 'actions', width: 190,
       render: (_: unknown, client: OIDCClient) => <Space size={2}>
         <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(client)}>编辑</Button>
-        <Popconfirm title="轮换客户端密钥？" description="旧密钥将立即失效，请及时更新接入应用。" onConfirm={() => rotateSecret.mutate(client.id)}>
+        {client.applicationType === 'web' ? <Popconfirm title="轮换客户端密钥？" description="旧密钥将立即失效，请及时更新接入应用。" onConfirm={() => rotateSecret.mutate(client.id)}>
           <Button type="link" size="small" icon={<SyncOutlined />}>轮换密钥</Button>
-        </Popconfirm>
+        </Popconfirm> : null}
         <Popconfirm title={client.status === 'active' ? '停用这个应用？' : '重新启用这个应用？'} onConfirm={() => clientStatus.mutate(client)}>
           <Button type="link" size="small" danger={client.status === 'active'}>{client.status === 'active' ? '停用' : '启用'}</Button>
         </Popconfirm>
@@ -169,7 +176,7 @@ export function ApplicationAccessPage() {
 
       <Card className="model-resource-card" variant="borderless">
         <div className="model-resource-toolbar">
-          <div><strong>接入应用</strong><span>回调地址精确匹配；客户端密钥只在创建或轮换后展示一次。</span></div>
+          <div><strong>接入应用</strong><span>桌面应用使用 PKCE 且无需密钥；服务端应用的密钥只展示一次。</span></div>
           {canWrite ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>接入应用</Button> : null}
         </div>
         {clientsQuery.isError ? <Alert className="model-resource-error" type="error" showIcon message={errorMessage(clientsQuery.error, '接入应用加载失败')} action={<Button size="small" onClick={() => clientsQuery.refetch()}>重试</Button>} /> : null}
@@ -182,8 +189,15 @@ export function ApplicationAccessPage() {
           <Form.Item label="应用名称" name="name" rules={[{ required: true, whitespace: true, message: '请输入应用名称' }, { max: 120 }]}>
             <Input placeholder="例如：DeepSeek Harness" autoFocus />
           </Form.Item>
-          <Form.Item label="登录回调地址" name="redirectUris" extra="必须填写完整地址。生产环境仅允许 HTTPS，本地开发可使用 localhost 或回环地址。" rules={[{ required: true, type: 'array', min: 1, message: '请至少填写一个登录回调地址' }]}>
-            <Select mode="tags" tokenSeparators={['\n']} placeholder="输入地址后按回车，例如 https://harness.example.com/oauth/callback" />
+          <Form.Item label="应用类型" name="applicationType" rules={[{ required: true }]}>
+            <Radio.Group className="application-type-options" disabled={Boolean(editingClient)}>
+              <Radio.Button value="desktop"><DesktopOutlined /><span><strong>桌面应用</strong><small>适用于每位员工安装的 Harness</small></span></Radio.Button>
+              <Radio.Button value="web"><CloudServerOutlined /><span><strong>服务端应用</strong><small>适用于能安全保存密钥的系统</small></span></Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          {selectedApplicationType === 'desktop' ? <Alert className="application-type-hint" type="info" showIcon message="员工无需配置密钥" description="桌面端启动本地回调后，可将随机端口带入登录请求。管理端只需登记不带端口的回环地址。" /> : null}
+          <Form.Item label="登录回调地址" name="redirectUris" extra={selectedApplicationType === 'desktop' ? '建议使用 http://127.0.0.1/oauth/callback；员工电脑上的实际回调可使用随机端口。' : '必须填写完整 HTTPS 地址，授权时需精确匹配。'} rules={[{ required: true, type: 'array', min: 1, message: '请至少填写一个登录回调地址' }]}>
+            <Select mode="tags" tokenSeparators={['\n']} placeholder={selectedApplicationType === 'desktop' ? 'http://127.0.0.1/oauth/callback' : 'https://harness.example.com/oauth/callback'} />
           </Form.Item>
           <Form.Item
             label="授权范围"
@@ -197,17 +211,17 @@ export function ApplicationAccessPage() {
         </Form>
       </Modal>
 
-      <Modal title="保存客户端凭据" open={Boolean(createdClient)} okText="我已保存" cancelButtonProps={{ style: { display: 'none' } }} closable={false} mask={{ closable: false }} onOk={() => setCreatedClient(null)}>
-        <Alert type="warning" showIcon message="关闭后无法再次查看完整客户端密钥" />
+      <Modal title={createdClient?.applicationType === 'desktop' ? '桌面应用已接入' : '保存客户端凭据'} open={Boolean(createdClient)} okText={createdClient?.applicationType === 'desktop' ? '完成' : '我已保存'} cancelButtonProps={{ style: { display: 'none' } }} closable={false} mask={{ closable: false }} onOk={() => setCreatedClient(null)}>
+        {createdClient?.applicationType === 'web' ? <Alert type="warning" showIcon message="关闭后无法再次查看完整客户端密钥" /> : <Alert type="success" showIcon message="无需为员工分发密钥" description="将客户端 ID 和 Harness Admin 地址预置到企业桌面端即可。" />}
         <div className="application-credential-box">
           <span><small>客户端 ID</small><Text code>{createdClient?.clientId}</Text></span>
           <Button icon={<CopyOutlined />} onClick={async () => { if (!createdClient) return; await navigator.clipboard.writeText(createdClient.clientId); messageApi.success('客户端 ID 已复制') }}>复制</Button>
         </div>
-        <div className="application-credential-box">
+        {createdClient?.applicationType === 'web' ? <div className="application-credential-box">
           <span><small>客户端密钥</small><Text code>{createdClient?.clientSecret}</Text></span>
-          <Button icon={<CopyOutlined />} onClick={async () => { if (!createdClient) return; await navigator.clipboard.writeText(createdClient.clientSecret); messageApi.success('客户端密钥已复制') }}>复制</Button>
-        </div>
-        <Paragraph type="secondary">请保存到 DeepSeek Harness 的服务端密钥配置中，不要放入浏览器代码或提交到 Git。</Paragraph>
+          <Button icon={<CopyOutlined />} onClick={async () => { if (!createdClient?.clientSecret) return; await navigator.clipboard.writeText(createdClient.clientSecret); messageApi.success('客户端密钥已复制') }}>复制</Button>
+        </div> : null}
+        <Paragraph type="secondary">{createdClient?.applicationType === 'desktop' ? '这些配置应由企业版 DeepSeek Harness 预置，不需要员工自己填写。' : '密钥只能保存在接入应用的服务端，不要放入浏览器或桌面客户端。'}</Paragraph>
       </Modal>
     </main>
   )

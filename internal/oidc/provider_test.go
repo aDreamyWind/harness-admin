@@ -99,6 +99,35 @@ func TestProviderRejectsWrongClientSecretAndPKCE(t *testing.T) {
 	}
 }
 
+func TestDesktopClientUsesPKCEWithoutSecretAndAllowsRandomLoopbackPort(t *testing.T) {
+	repository := newProviderRepositoryStub()
+	repository.client.ApplicationType = ApplicationTypeDesktop
+	repository.client.TokenEndpointAuthMethod = TokenEndpointAuthNone
+	repository.client.ClientSecretHash = nil
+	repository.client.RedirectURIs = []string{"http://127.0.0.1/oauth/callback"}
+	signer, _ := NewRS256Signer("")
+	service, _ := NewProviderService(repository, signer, "https://id.example.com")
+	service.newCode = func() (string, error) { return "desktop-code", nil }
+	verifier := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"
+	verifierDigest := sha256.Sum256([]byte(verifier))
+	callback := "http://127.0.0.1:49152/oauth/callback"
+
+	_, err := service.Authorize(context.Background(), AuthorizeInput{
+		Subject: repository.subject, ClientID: repository.client.ClientID,
+		RedirectURI: callback, Scope: "openid model.invoke",
+		CodeChallenge: encodeSegment(verifierDigest[:]), ChallengeMethod: "S256",
+	})
+	if err != nil {
+		t.Fatalf("桌面应用随机回环端口应通过校验: %v", err)
+	}
+	if _, err = service.ExchangeToken(context.Background(), TokenInput{
+		GrantType: "authorization_code", ClientID: repository.client.ClientID,
+		Code: "desktop-code", RedirectURI: callback, CodeVerifier: verifier,
+	}); err != nil {
+		t.Fatalf("桌面应用不携带密钥时应能换取令牌: %v", err)
+	}
+}
+
 type providerRepositoryStub struct {
 	client  ProtocolClient
 	subject Subject
@@ -111,6 +140,7 @@ func newProviderRepositoryStub() *providerRepositoryStub {
 	return &providerRepositoryStub{
 		client: ProtocolClient{Client: Client{
 			ID: "client-record-1", OrganizationID: "org-1", ClientID: "client-1",
+			ApplicationType: ApplicationTypeWeb, TokenEndpointAuthMethod: TokenEndpointAuthClientSecretBasic,
 			RedirectURIs:  []string{"https://deepseek.example.com/callback"},
 			AllowedScopes: []string{"openid", "profile", "email", "model.invoke", "offline_access"}, Status: "active",
 		}, ClientSecretHash: digest[:]},

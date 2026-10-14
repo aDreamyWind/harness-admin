@@ -16,6 +16,7 @@ func (r *repositoryStub) CreateClient(_ context.Context, input CreateClientInput
 	r.created = input
 	return Client{ID: "client-record-1", OrganizationID: input.OrganizationID, Name: input.Name,
 		ClientID: input.ClientID, ClientSecretPrefix: input.ClientSecretPrefix,
+		ApplicationType: input.ApplicationType, TokenEndpointAuthMethod: input.TokenEndpointAuthMethod,
 		RedirectURIs: input.RedirectURIs, AllowedScopes: input.AllowedScopes, Status: "active"}, nil
 }
 func (r *repositoryStub) UpdateClient(_ context.Context, input UpdateClientInput) (Client, error) {
@@ -89,5 +90,30 @@ func TestCreateClientAllowsLoopbackHTTPRedirect(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCreateDesktopClientDoesNotGenerateSecret(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository)
+	service.newClientID = func() (string, error) { return "harness_client_desktop", nil }
+	service.newSecret = func() (string, error) {
+		t.Fatal("桌面应用不应生成客户端密钥")
+		return "", nil
+	}
+	created, err := service.CreateClient(context.Background(), CreateClientInput{
+		OrganizationID: "org-1", ActorID: "user-1", Name: "DeepSeek Harness",
+		ApplicationType: ApplicationTypeDesktop,
+		RedirectURIs:    []string{"http://127.0.0.1/oauth/callback"},
+		AllowedScopes:   []string{"openid", "model.invoke"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ClientSecret != "" || len(repository.created.ClientSecretHash) != 0 || repository.created.ClientSecretPrefix != "" {
+		t.Fatalf("桌面应用不应包含密钥: %#v", repository.created)
+	}
+	if repository.created.TokenEndpointAuthMethod != TokenEndpointAuthNone {
+		t.Fatalf("令牌端点认证方式 = %q", repository.created.TokenEndpointAuthMethod)
 	}
 }

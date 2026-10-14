@@ -33,9 +33,10 @@ type OIDCProviderService interface {
 }
 
 type oidcClientWriteRequest struct {
-	Name          string   `json:"name"`
-	RedirectURIs  []string `json:"redirectUris"`
-	AllowedScopes []string `json:"allowedScopes"`
+	Name            string   `json:"name"`
+	ApplicationType string   `json:"applicationType"`
+	RedirectURIs    []string `json:"redirectUris"`
+	AllowedScopes   []string `json:"allowedScopes"`
 }
 
 type oidcClientStatusRequest struct {
@@ -43,16 +44,18 @@ type oidcClientStatusRequest struct {
 }
 
 type oidcClientResponse struct {
-	ID                 string    `json:"id"`
-	Name               string    `json:"name"`
-	ClientID           string    `json:"clientId"`
-	ClientSecretPrefix string    `json:"clientSecretPrefix"`
-	ClientSecret       string    `json:"clientSecret,omitempty"`
-	RedirectURIs       []string  `json:"redirectUris"`
-	AllowedScopes      []string  `json:"allowedScopes"`
-	Status             string    `json:"status"`
-	CreatedAt          time.Time `json:"createdAt"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+	ID                      string    `json:"id"`
+	Name                    string    `json:"name"`
+	ClientID                string    `json:"clientId"`
+	ClientSecretPrefix      string    `json:"clientSecretPrefix"`
+	ClientSecret            string    `json:"clientSecret,omitempty"`
+	ApplicationType         string    `json:"applicationType"`
+	TokenEndpointAuthMethod string    `json:"tokenEndpointAuthMethod"`
+	RedirectURIs            []string  `json:"redirectUris"`
+	AllowedScopes           []string  `json:"allowedScopes"`
+	Status                  string    `json:"status"`
+	CreatedAt               time.Time `json:"createdAt"`
+	UpdatedAt               time.Time `json:"updatedAt"`
 }
 
 type oidcTokenResponse struct {
@@ -94,7 +97,7 @@ func oidcDiscoveryHandler(deps Dependencies) gin.HandlerFunc {
 			"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 			"subject_types_supported":               []string{"public"},
 			"id_token_signing_alg_values_supported": []string{"RS256"},
-			"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
+			"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post", "none"},
 			"code_challenge_methods_supported":      []string{"S256"},
 			"scopes_supported":                      []string{"openid", "profile", "email", "model.invoke", "offline_access"},
 		})
@@ -248,7 +251,8 @@ func createOIDCClientHandler(deps Dependencies) gin.HandlerFunc {
 		session := currentSession(ctx)
 		created, err := deps.OIDCAdmin.CreateClient(ctx.Request.Context(), oidcmodule.CreateClientInput{
 			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID,
-			Name: request.Name, RedirectURIs: request.RedirectURIs, AllowedScopes: request.AllowedScopes,
+			Name: request.Name, ApplicationType: request.ApplicationType,
+			RedirectURIs: request.RedirectURIs, AllowedScopes: request.AllowedScopes,
 			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
 		})
 		if err != nil {
@@ -326,6 +330,7 @@ func presentOIDCClient(item oidcmodule.Client, secret string) oidcClientResponse
 	return oidcClientResponse{
 		ID: item.ID, Name: item.Name, ClientID: item.ClientID,
 		ClientSecretPrefix: item.ClientSecretPrefix, ClientSecret: secret,
+		ApplicationType: item.ApplicationType, TokenEndpointAuthMethod: item.TokenEndpointAuthMethod,
 		RedirectURIs: item.RedirectURIs, AllowedScopes: item.AllowedScopes,
 		Status: item.Status, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
@@ -337,6 +342,8 @@ func handleOIDCAdminError(ctx *gin.Context, logger *slog.Logger, err error) {
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_oidc_client", "应用接入参数不正确")
 	case errors.Is(err, oidcmodule.ErrClientNotFound):
 		httpx.Fail(ctx, http.StatusNotFound, "oidc_client_not_found", "统一登录应用不存在")
+	case errors.Is(err, oidcmodule.ErrClientSecretUnsupported):
+		httpx.Fail(ctx, http.StatusConflict, "client_secret_unsupported", "桌面应用不使用客户端密钥")
 	default:
 		logger.Error("应用接入接口处理失败", "error", err, "request_id", contextString(ctx, "request_id"))
 		httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "服务暂时不可用")

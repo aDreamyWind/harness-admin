@@ -25,6 +25,7 @@ func (s *oidcAdminStub) CreateClient(_ context.Context, input oidcmodule.CreateC
 	return oidcmodule.CreatedClient{Client: oidcmodule.Client{
 		ID: "40000000-0000-4000-8000-000000000001", OrganizationID: input.OrganizationID,
 		Name: input.Name, ClientID: "harness_client_test", ClientSecretPrefix: "harness_client_secret_example",
+		ApplicationType: input.ApplicationType, TokenEndpointAuthMethod: oidcmodule.TokenEndpointAuthClientSecretBasic,
 		RedirectURIs: input.RedirectURIs, AllowedScopes: input.AllowedScopes, Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}, ClientSecret: "harness_client_secret_abcdefghijklmnopqrstuvwxyz"}, nil
 }
@@ -47,6 +48,7 @@ func TestCreateOIDCClientUsesCurrentOrganizationAndReturnsSecretOnce(t *testing.
 	})
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/oidc/clients", strings.NewReader(`{
 		"name":"DeepSeek Harness",
+		"applicationType":"web",
 		"redirectUris":["https://harness.example.com/callback"],
 		"allowedScopes":["openid","profile","model.invoke"]
 	}`))
@@ -60,6 +62,9 @@ func TestCreateOIDCClientUsesCurrentOrganizationAndReturnsSecretOnce(t *testing.
 	}
 	if oidcAdmin.createInput.OrganizationID != "org-1" || oidcAdmin.createInput.ActorID != "user-1" {
 		t.Fatalf("创建应用参数不完整: %#v", oidcAdmin.createInput)
+	}
+	if oidcAdmin.createInput.ApplicationType != "web" {
+		t.Fatalf("应用类型未传递: %#v", oidcAdmin.createInput)
 	}
 	if !strings.Contains(response.Body.String(), "harness_client_secret_abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("首次创建响应未返回客户端密钥: %s", response.Body.String())

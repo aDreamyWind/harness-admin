@@ -21,7 +21,8 @@ func NewOIDCRepository(pool *pgxpool.Pool) *OIDCRepository {
 }
 
 const oidcClientColumns = `
-	c.id, c.organization_id, c.name, c.client_id, c.client_secret_prefix,
+	c.id, c.organization_id, c.name, c.client_id, COALESCE(c.client_secret_prefix, ''),
+	c.application_type, c.token_endpoint_auth_method,
 	c.redirect_uris, c.allowed_scopes, c.status, c.created_at, c.updated_at
 `
 
@@ -57,10 +58,11 @@ func (r *OIDCRepository) CreateClient(ctx context.Context, input oidc.CreateClie
 	_, err = tx.Exec(ctx, `
 		INSERT INTO oidc_clients (
 			id, organization_id, name, client_id, client_secret_hash, client_secret_prefix,
-			redirect_uris, allowed_scopes, created_by
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			application_type, token_endpoint_auth_method, redirect_uris, allowed_scopes, created_by
+		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11)
 	`, clientRecordID, input.OrganizationID, input.Name, input.ClientID, input.ClientSecretHash,
-		input.ClientSecretPrefix, input.RedirectURIs, input.AllowedScopes, input.ActorID)
+		input.ClientSecretPrefix, input.ApplicationType, input.TokenEndpointAuthMethod,
+		input.RedirectURIs, input.AllowedScopes, input.ActorID)
 	if err != nil {
 		return oidc.Client{}, err
 	}
@@ -69,6 +71,7 @@ func (r *OIDCRepository) CreateClient(ctx context.Context, input oidc.CreateClie
 		Action: "oidc.client.create", ResourceType: "oidc_client", ResourceID: clientRecordID,
 		Result: "success", SourceIP: input.SourceIP,
 		Detail: map[string]any{"name": input.Name, "clientId": input.ClientID,
+			"applicationType": input.ApplicationType, "tokenEndpointAuthMethod": input.TokenEndpointAuthMethod,
 			"redirectUris": input.RedirectURIs, "allowedScopes": input.AllowedScopes},
 	}); err != nil {
 		return oidc.Client{}, err
@@ -160,13 +163,24 @@ func (r *OIDCRepository) RotateClientSecret(ctx context.Context, input oidc.Rota
 	command, err := tx.Exec(ctx, `
 		UPDATE oidc_clients
 		SET client_secret_hash = $1, client_secret_prefix = $2, updated_at = NOW()
-		WHERE organization_id = $3 AND id = $4
+		WHERE organization_id = $3 AND id = $4 AND token_endpoint_auth_method <> 'none'
 	`, input.ClientSecretHash, input.ClientSecretPrefix, input.OrganizationID, input.ClientRecordID)
 	if err != nil {
 		return oidc.Client{}, err
 	}
 	if command.RowsAffected() == 0 {
-		return oidc.Client{}, oidc.ErrClientNotFound
+		var authMethod string
+		err := tx.QueryRow(ctx, `
+			SELECT token_endpoint_auth_method FROM oidc_clients
+			WHERE organization_id = $1 AND id = $2
+		`, input.OrganizationID, input.ClientRecordID).Scan(&authMethod)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return oidc.Client{}, oidc.ErrClientNotFound
+		}
+		if err != nil {
+			return oidc.Client{}, err
+		}
+		return oidc.Client{}, oidc.ErrClientSecretUnsupported
 	}
 	if err := insertAudit(ctx, tx, identity.AuditEvent{
 		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
@@ -203,6 +217,7 @@ func scanOIDCClient(row interface{ Scan(...any) error }) (oidc.Client, error) {
 	var item oidc.Client
 	err := row.Scan(
 		&item.ID, &item.OrganizationID, &item.Name, &item.ClientID, &item.ClientSecretPrefix,
+		&item.ApplicationType, &item.TokenEndpointAuthMethod,
 		&item.RedirectURIs, &item.AllowedScopes, &item.Status, &item.CreatedAt, &item.UpdatedAt,
 	)
 	return item, err
@@ -216,6 +231,7 @@ func (r *OIDCRepository) FindProtocolClient(ctx context.Context, clientID string
 		WHERE c.client_id = $1
 	`, clientID).Scan(
 		&item.ID, &item.OrganizationID, &item.Name, &item.ClientID, &item.ClientSecretPrefix,
+		&item.ApplicationType, &item.TokenEndpointAuthMethod,
 		&item.RedirectURIs, &item.AllowedScopes, &item.Status, &item.CreatedAt, &item.UpdatedAt,
 		&item.ClientSecretHash,
 	)
