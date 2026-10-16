@@ -4,6 +4,7 @@ import {
   CopyOutlined,
   DesktopOutlined,
   EditOutlined,
+  EyeOutlined,
   KeyOutlined,
   PlusOutlined,
   SafetyCertificateOutlined,
@@ -35,6 +36,7 @@ import {
   changeOIDCClientStatus,
   createOIDCClient,
   listOIDCClients,
+  revealOIDCClientSecret,
   rotateOIDCClientSecret,
   updateOIDCClient,
   type CreatedOIDCClient,
@@ -65,6 +67,7 @@ export function ApplicationAccessPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingClient, setEditingClient] = useState<OIDCClient | null>(null)
   const [createdClient, setCreatedClient] = useState<CreatedOIDCClient | null>(null)
+  const [revealedSecret, setRevealedSecret] = useState<{ name: string; secret: string } | null>(null)
   const selectedApplicationType = Form.useWatch('applicationType', form)
 
   const clientsQuery = useQuery({ queryKey: ['oidc-clients'], queryFn: listOIDCClients })
@@ -110,6 +113,11 @@ export function ApplicationAccessPage() {
     },
     onError: (error) => messageApi.error(errorMessage(error, '客户端密钥轮换失败')),
   })
+  const revealSecret = useMutation({
+    mutationFn: async (client: OIDCClient) => ({ client, result: await revealOIDCClientSecret(client.id) }),
+    onSuccess: ({ client, result }) => setRevealedSecret({ name: client.name, secret: result.secret }),
+    onError: (error) => messageApi.error(errorMessage(error, '客户端密钥查看失败')),
+  })
 
   function openCreate() {
     setEditingClient(null)
@@ -148,9 +156,10 @@ export function ApplicationAccessPage() {
     },
     { title: '状态', key: 'status', width: 90, render: (_, client) => <StatusIndicator label={client.status === 'active' ? '已启用' : '已停用'} tone={client.status === 'active' ? 'success' : 'muted'} /> },
     ...(canWrite ? [{
-      title: '操作', key: 'actions', width: 190,
+      title: '操作', key: 'actions', width: 250,
       render: (_: unknown, client: OIDCClient) => <Space size={2}>
         <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(client)}>编辑</Button>
+        {client.applicationType === 'web' ? <Button type="link" size="small" icon={<EyeOutlined />} loading={revealSecret.isPending && revealSecret.variables?.id === client.id} onClick={() => revealSecret.mutate(client)}>查看密钥</Button> : null}
         {client.applicationType === 'web' ? <Popconfirm title="轮换客户端密钥？" description="旧密钥将立即失效，请及时更新接入应用。" onConfirm={() => rotateSecret.mutate(client.id)}>
           <Button type="link" size="small" icon={<SyncOutlined />}>轮换密钥</Button>
         </Popconfirm> : null}
@@ -159,7 +168,7 @@ export function ApplicationAccessPage() {
         </Popconfirm>
       </Space>,
     }] : []),
-  ], [canWrite, clientStatus, rotateSecret])
+  ], [canWrite, clientStatus, rotateSecret, revealSecret.isPending, revealSecret.variables])
 
   return (
     <main>
@@ -176,7 +185,7 @@ export function ApplicationAccessPage() {
 
       <Card className="model-resource-card" variant="borderless">
         <div className="model-resource-toolbar">
-          <div><strong>接入应用</strong><span>桌面应用使用 PKCE 且无需密钥；服务端应用的密钥只展示一次。</span></div>
+          <div><strong>接入应用</strong><span>桌面应用使用 PKCE 且无需密钥；服务端应用密钥加密保存并可按权限查看。</span></div>
           {canWrite ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>接入应用</Button> : null}
         </div>
         {clientsQuery.isError ? <Alert className="model-resource-error" type="error" showIcon message={errorMessage(clientsQuery.error, '接入应用加载失败')} action={<Button size="small" onClick={() => clientsQuery.refetch()}>重试</Button>} /> : null}
@@ -211,8 +220,8 @@ export function ApplicationAccessPage() {
         </Form>
       </Modal>
 
-      <Modal title={createdClient?.applicationType === 'desktop' ? '桌面应用已接入' : '保存客户端凭据'} open={Boolean(createdClient)} okText={createdClient?.applicationType === 'desktop' ? '完成' : '我已保存'} cancelButtonProps={{ style: { display: 'none' } }} closable={false} mask={{ closable: false }} onOk={() => setCreatedClient(null)}>
-        {createdClient?.applicationType === 'web' ? <Alert type="warning" showIcon message="关闭后无法再次查看完整客户端密钥" /> : <Alert type="success" showIcon message="无需为员工分发密钥" description="将客户端 ID 和 Harness Admin 地址预置到企业桌面端即可。" />}
+      <Modal title={createdClient?.applicationType === 'desktop' ? '桌面应用已接入' : '保存客户端凭据'} open={Boolean(createdClient)} okText="完成" cancelButtonProps={{ style: { display: 'none' } }} closable={false} mask={{ closable: false }} onOk={() => { setCreatedClient(null); saveClient.reset(); rotateSecret.reset() }}>
+        {createdClient?.applicationType === 'web' ? <Alert type="success" showIcon message="客户端密钥已加密保存，之后仍可在应用列表中查看" /> : <Alert type="success" showIcon message="无需为员工分发密钥" description="将客户端 ID 和 Harness Admin 地址预置到企业桌面端即可。" />}
         <div className="application-credential-box">
           <span><small>客户端 ID</small><Text code>{createdClient?.clientId}</Text></span>
           <Button icon={<CopyOutlined />} onClick={async () => { if (!createdClient) return; await navigator.clipboard.writeText(createdClient.clientId); messageApi.success('客户端 ID 已复制') }}>复制</Button>
@@ -222,6 +231,14 @@ export function ApplicationAccessPage() {
           <Button icon={<CopyOutlined />} onClick={async () => { if (!createdClient?.clientSecret) return; await navigator.clipboard.writeText(createdClient.clientSecret); messageApi.success('客户端密钥已复制') }}>复制</Button>
         </div> : null}
         <Paragraph type="secondary">{createdClient?.applicationType === 'desktop' ? '这些配置应由企业版 DeepSeek Harness 预置，不需要员工自己填写。' : '密钥只能保存在接入应用的服务端，不要放入浏览器或桌面客户端。'}</Paragraph>
+      </Modal>
+
+      <Modal title={`${revealedSecret?.name ?? ''} · 客户端密钥`} open={Boolean(revealedSecret)} footer={null} onCancel={() => { setRevealedSecret(null); revealSecret.reset() }} destroyOnHidden>
+        <Alert type="info" showIcon message="本次查看已记录到审计日志" />
+        <div className="application-credential-box">
+          <span><small>客户端密钥</small><Text code>{revealedSecret?.secret}</Text></span>
+          <Button icon={<CopyOutlined />} onClick={async () => { if (!revealedSecret) return; await navigator.clipboard.writeText(revealedSecret.secret); messageApi.success('客户端密钥已复制') }}>复制</Button>
+        </div>
       </Modal>
     </main>
   )

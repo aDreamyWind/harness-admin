@@ -10,6 +10,7 @@ var (
 	ErrInvalidInput            = errors.New("应用接入参数不正确")
 	ErrClientNotFound          = errors.New("统一登录应用不存在")
 	ErrClientSecretUnsupported = errors.New("桌面应用不使用客户端密钥")
+	ErrClientSecretUnavailable = errors.New("客户端密钥尚未加密保存")
 	ErrInvalidClient           = errors.New("客户端认证失败")
 	ErrInvalidGrant            = errors.New("授权凭据无效或已过期")
 	ErrInvalidToken            = errors.New("访问令牌无效或已过期")
@@ -56,6 +57,7 @@ type CreateClientInput struct {
 	ClientID                string
 	ClientSecretHash        []byte
 	ClientSecretPrefix      string
+	ClientSecret            string
 }
 
 type UpdateClientInput struct {
@@ -84,8 +86,17 @@ type RotateClientSecretInput struct {
 	ClientRecordID     string
 	ClientSecretHash   []byte
 	ClientSecretPrefix string
+	ClientSecret       string
 	RequestID          string
 	SourceIP           string
+}
+
+type RevealClientSecretInput struct {
+	OrganizationID string
+	ActorID        string
+	ClientRecordID string
+	RequestID      string
+	SourceIP       string
 }
 
 type Repository interface {
@@ -94,6 +105,7 @@ type Repository interface {
 	UpdateClient(context.Context, UpdateClientInput) (Client, error)
 	ChangeClientStatus(context.Context, ChangeClientStatusInput) (Client, error)
 	RotateClientSecret(context.Context, RotateClientSecretInput) (Client, error)
+	RevealClientSecret(context.Context, RevealClientSecretInput) (string, error)
 }
 
 type ProtocolClient struct {

@@ -74,6 +74,7 @@ func (s *Service) CreateClient(ctx context.Context, input CreateClientInput) (Cr
 		digest := sha256.Sum256([]byte(secret))
 		input.ClientSecretHash = digest[:]
 		input.ClientSecretPrefix = visibleSecretPrefix(secret)
+		input.ClientSecret = secret
 	}
 	created, err := s.repository.CreateClient(ctx, input)
 	if err != nil {
@@ -122,6 +123,7 @@ func (s *Service) RotateClientSecret(ctx context.Context, input RotateClientSecr
 	digest := sha256.Sum256([]byte(secret))
 	input.ClientSecretHash = digest[:]
 	input.ClientSecretPrefix = visibleSecretPrefix(secret)
+	input.ClientSecret = secret
 	item, err := s.repository.RotateClientSecret(ctx, input)
 	if err != nil {
 		if errors.Is(err, ErrClientNotFound) || errors.Is(err, ErrClientSecretUnsupported) {
@@ -130,6 +132,20 @@ func (s *Service) RotateClientSecret(ctx context.Context, input RotateClientSecr
 		return CreatedClient{}, fmt.Errorf("轮换 OAuth 客户端密钥失败: %w", err)
 	}
 	return CreatedClient{Client: item, ClientSecret: secret}, nil
+}
+
+func (s *Service) RevealClientSecret(ctx context.Context, input RevealClientSecretInput) (string, error) {
+	if input.OrganizationID == "" || input.ActorID == "" || input.ClientRecordID == "" {
+		return "", ErrInvalidInput
+	}
+	value, err := s.repository.RevealClientSecret(ctx, input)
+	if err != nil {
+		if errors.Is(err, ErrClientNotFound) || errors.Is(err, ErrClientSecretUnsupported) || errors.Is(err, ErrClientSecretUnavailable) {
+			return "", err
+		}
+		return "", fmt.Errorf("查看 OAuth 客户端密钥失败: %w", err)
+	}
+	return value, nil
 }
 
 func normalizeSettings(name *string, redirectURIs, scopes *[]string) {

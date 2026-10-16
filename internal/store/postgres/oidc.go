@@ -10,14 +10,16 @@ import (
 
 	"harness-admin/internal/identity"
 	"harness-admin/internal/oidc"
+	"harness-admin/internal/secret"
 )
 
 type OIDCRepository struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	cipher *secret.Cipher
 }
 
-func NewOIDCRepository(pool *pgxpool.Pool) *OIDCRepository {
-	return &OIDCRepository{pool: pool}
+func NewOIDCRepository(pool *pgxpool.Pool, cipher *secret.Cipher) *OIDCRepository {
+	return &OIDCRepository{pool: pool, cipher: cipher}
 }
 
 const oidcClientColumns = `
@@ -49,6 +51,14 @@ func (r *OIDCRepository) ListClients(ctx context.Context, organizationID string)
 }
 
 func (r *OIDCRepository) CreateClient(ctx context.Context, input oidc.CreateClientInput) (oidc.Client, error) {
+	var ciphertext []byte
+	var err error
+	if input.ClientSecret != "" {
+		ciphertext, err = r.cipher.Seal(input.ClientSecret)
+		if err != nil {
+			return oidc.Client{}, err
+		}
+	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return oidc.Client{}, err
@@ -58,11 +68,12 @@ func (r *OIDCRepository) CreateClient(ctx context.Context, input oidc.CreateClie
 	_, err = tx.Exec(ctx, `
 		INSERT INTO oidc_clients (
 			id, organization_id, name, client_id, client_secret_hash, client_secret_prefix,
-			application_type, token_endpoint_auth_method, redirect_uris, allowed_scopes, created_by
-		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11)
+			application_type, token_endpoint_auth_method, redirect_uris, allowed_scopes, created_by,
+			client_secret_encrypted
+		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11, $12)
 	`, clientRecordID, input.OrganizationID, input.Name, input.ClientID, input.ClientSecretHash,
 		input.ClientSecretPrefix, input.ApplicationType, input.TokenEndpointAuthMethod,
-		input.RedirectURIs, input.AllowedScopes, input.ActorID)
+		input.RedirectURIs, input.AllowedScopes, input.ActorID, ciphertext)
 	if err != nil {
 		return oidc.Client{}, err
 	}
@@ -155,6 +166,10 @@ func (r *OIDCRepository) ChangeClientStatus(ctx context.Context, input oidc.Chan
 }
 
 func (r *OIDCRepository) RotateClientSecret(ctx context.Context, input oidc.RotateClientSecretInput) (oidc.Client, error) {
+	ciphertext, err := r.cipher.Seal(input.ClientSecret)
+	if err != nil {
+		return oidc.Client{}, err
+	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return oidc.Client{}, err
@@ -162,9 +177,9 @@ func (r *OIDCRepository) RotateClientSecret(ctx context.Context, input oidc.Rota
 	defer tx.Rollback(ctx)
 	command, err := tx.Exec(ctx, `
 		UPDATE oidc_clients
-		SET client_secret_hash = $1, client_secret_prefix = $2, updated_at = NOW()
-		WHERE organization_id = $3 AND id = $4 AND token_endpoint_auth_method <> 'none'
-	`, input.ClientSecretHash, input.ClientSecretPrefix, input.OrganizationID, input.ClientRecordID)
+		SET client_secret_hash = $1, client_secret_prefix = $2, client_secret_encrypted = $3, updated_at = NOW()
+		WHERE organization_id = $4 AND id = $5 AND token_endpoint_auth_method <> 'none'
+	`, input.ClientSecretHash, input.ClientSecretPrefix, ciphertext, input.OrganizationID, input.ClientRecordID)
 	if err != nil {
 		return oidc.Client{}, err
 	}
@@ -197,6 +212,48 @@ func (r *OIDCRepository) RotateClientSecret(ctx context.Context, input oidc.Rota
 		return oidc.Client{}, err
 	}
 	return item, nil
+}
+
+func (r *OIDCRepository) RevealClientSecret(ctx context.Context, input oidc.RevealClientSecretInput) (string, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var authMethod string
+	var ciphertext []byte
+	err = tx.QueryRow(ctx, `
+		SELECT token_endpoint_auth_method, client_secret_encrypted
+		FROM oidc_clients
+		WHERE organization_id = $1 AND id = $2
+	`, input.OrganizationID, input.ClientRecordID).Scan(&authMethod, &ciphertext)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", oidc.ErrClientNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if authMethod == oidc.TokenEndpointAuthNone {
+		return "", oidc.ErrClientSecretUnsupported
+	}
+	if len(ciphertext) == 0 {
+		return "", oidc.ErrClientSecretUnavailable
+	}
+	value, err := r.cipher.Open(ciphertext)
+	if err != nil {
+		return "", err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
+		Action: "oidc.client.secret.reveal", ResourceType: "oidc_client", ResourceID: input.ClientRecordID,
+		Result: "success", SourceIP: input.SourceIP,
+	}); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
 func findOIDCClient(ctx context.Context, queryer interface {

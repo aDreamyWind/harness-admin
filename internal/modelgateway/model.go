@@ -7,17 +7,18 @@ import (
 )
 
 var (
-	ErrInvalidInput      = errors.New("模型网关参数不正确")
-	ErrInvalidCredential = errors.New("模型网关调用密钥无效")
-	ErrAPIKeyNotFound    = errors.New("模型网关调用密钥不存在")
-	ErrAPIKeyRevoked     = errors.New("模型网关调用密钥已吊销")
-	ErrAPIKeyExpired     = errors.New("模型网关调用密钥已过期")
-	ErrModelNotFound     = errors.New("请求的模型编码不存在")
-	ErrModelDisabled     = errors.New("请求的模型已停用")
-	ErrProviderDisabled  = errors.New("模型供应商连接已停用")
-	ErrModelNotAllowed   = errors.New("调用密钥无权访问该模型")
-	ErrRateLimited       = errors.New("调用频率超过限制")
-	ErrMonthlyQuota      = errors.New("调用密钥当月 Token 额度已用尽")
+	ErrInvalidInput            = errors.New("模型网关参数不正确")
+	ErrInvalidCredential       = errors.New("模型网关调用密钥无效")
+	ErrAPIKeyNotFound          = errors.New("模型网关调用密钥不存在")
+	ErrAPIKeySecretUnavailable = errors.New("模型网关调用密钥尚未加密保存")
+	ErrAPIKeyRevoked           = errors.New("模型网关调用密钥已吊销")
+	ErrAPIKeyExpired           = errors.New("模型网关调用密钥已过期")
+	ErrModelNotFound           = errors.New("请求的模型编码不存在")
+	ErrModelDisabled           = errors.New("请求的模型已停用")
+	ErrProviderDisabled        = errors.New("模型供应商连接已停用")
+	ErrModelNotAllowed         = errors.New("调用密钥无权访问该模型")
+	ErrRateLimited             = errors.New("调用频率超过限制")
+	ErrMonthlyQuota            = errors.New("调用密钥当月 Token 额度已用尽")
 )
 
 type APIKey struct {
@@ -53,6 +54,15 @@ type CreateAPIKeyInput struct {
 	SourceIP          string
 	KeyPrefix         string
 	SecretHash        []byte
+	Secret            string
+}
+
+type RevealAPIKeySecretInput struct {
+	OrganizationID string
+	ActorID        string
+	APIKeyID       string
+	RequestID      string
+	SourceIP       string
 }
 
 type UpdateAPIKeyInput struct {
@@ -168,6 +178,7 @@ type Repository interface {
 	CreateAPIKey(context.Context, CreateAPIKeyInput) (APIKey, error)
 	UpdateAPIKey(context.Context, UpdateAPIKeyInput) (APIKey, error)
 	RevokeAPIKey(context.Context, RevokeAPIKeyInput) (APIKey, error)
+	RevealAPIKeySecret(context.Context, RevealAPIKeySecretInput) (string, error)
 	FindAPIKeyByHash(context.Context, []byte) (APIKey, error)
 	TouchAPIKey(context.Context, string) error
 	FindRoute(context.Context, string, string) (Route, error)

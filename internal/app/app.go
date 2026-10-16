@@ -78,7 +78,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelAdminService := modeladmin.NewService(modelRepository, modelprovider.NewProber(cfg.ModelPrivateHosts))
 	modelGatewayRepository := pgstore.NewModelGatewayRepository(db, credentialCipher)
 	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient))
-	oidcRepository := pgstore.NewOIDCRepository(db)
+	oidcRepository := pgstore.NewOIDCRepository(db, credentialCipher)
 	oidcService := oidc.NewService(oidcRepository)
 	oidcSigner, err := oidc.NewRS256Signer(cfg.OIDCSigningPrivateKey)
 	if err != nil {

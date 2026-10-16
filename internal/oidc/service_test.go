@@ -30,8 +30,11 @@ func (*repositoryStub) ChangeClientStatus(context.Context, ChangeClientStatusInp
 func (*repositoryStub) RotateClientSecret(context.Context, RotateClientSecretInput) (Client, error) {
 	return Client{}, nil
 }
+func (*repositoryStub) RevealClientSecret(context.Context, RevealClientSecretInput) (string, error) {
+	return "harness_client_secret_revealed", nil
+}
 
-func TestCreateClientStoresOnlySecretHashAndNormalizesSettings(t *testing.T) {
+func TestCreateClientStoresSecretHashAndEncryptedSecretInput(t *testing.T) {
 	repository := &repositoryStub{}
 	service := NewService(repository)
 	service.newClientID = func() (string, error) { return "harness_client_test", nil }
@@ -51,6 +54,9 @@ func TestCreateClientStoresOnlySecretHashAndNormalizesSettings(t *testing.T) {
 	expected := sha256.Sum256([]byte(created.ClientSecret))
 	if string(repository.created.ClientSecretHash) != string(expected[:]) {
 		t.Fatal("仓储输入未保存客户端密钥 SHA-256 哈希")
+	}
+	if repository.created.ClientSecret != created.ClientSecret {
+		t.Fatal("仓储输入未收到用于加密保存的完整客户端密钥")
 	}
 	if repository.created.Name != "DeepSeek Harness" || len(repository.created.RedirectURIs) != 1 {
 		t.Fatalf("客户端设置未规范化: %#v", repository.created)

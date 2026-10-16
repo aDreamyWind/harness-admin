@@ -56,6 +56,10 @@ func (r *ModelGatewayRepository) ListAPIKeys(ctx context.Context, organizationID
 }
 
 func (r *ModelGatewayRepository) CreateAPIKey(ctx context.Context, input modelgateway.CreateAPIKeyInput) (modelgateway.APIKey, error) {
+	ciphertext, err := r.cipher.Seal(input.Secret)
+	if err != nil {
+		return modelgateway.APIKey{}, err
+	}
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return modelgateway.APIKey{}, err
@@ -65,10 +69,10 @@ func (r *ModelGatewayRepository) CreateAPIKey(ctx context.Context, input modelga
 	_, err = tx.Exec(ctx, `
 		INSERT INTO model_gateway_api_keys (
 			id, organization_id, name, key_prefix, secret_hash, expires_at, created_by,
-			requests_per_minute, monthly_token_limit, allowed_model_codes
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			requests_per_minute, monthly_token_limit, allowed_model_codes, encrypted_secret
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, apiKeyID, input.OrganizationID, input.Name, input.KeyPrefix, input.SecretHash, input.ExpiresAt,
-		input.ActorID, input.RequestsPerMinute, input.MonthlyTokenLimit, input.AllowedModelCodes)
+		input.ActorID, input.RequestsPerMinute, input.MonthlyTokenLimit, input.AllowedModelCodes, ciphertext)
 	if err != nil {
 		return modelgateway.APIKey{}, err
 	}
@@ -90,6 +94,44 @@ func (r *ModelGatewayRepository) CreateAPIKey(ctx context.Context, input modelga
 		return modelgateway.APIKey{}, err
 	}
 	return item, nil
+}
+
+func (r *ModelGatewayRepository) RevealAPIKeySecret(ctx context.Context, input modelgateway.RevealAPIKeySecretInput) (string, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var ciphertext []byte
+	err = tx.QueryRow(ctx, `
+		SELECT encrypted_secret
+		FROM model_gateway_api_keys
+		WHERE organization_id = $1 AND id = $2
+	`, input.OrganizationID, input.APIKeyID).Scan(&ciphertext)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", modelgateway.ErrAPIKeyNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if len(ciphertext) == 0 {
+		return "", modelgateway.ErrAPIKeySecretUnavailable
+	}
+	value, err := r.cipher.Open(ciphertext)
+	if err != nil {
+		return "", err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
+		Action: "model.gateway_api_key.secret.reveal", ResourceType: "model_gateway_api_key", ResourceID: input.APIKeyID,
+		Result: "success", SourceIP: input.SourceIP,
+	}); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
 func (r *ModelGatewayRepository) UpdateAPIKey(ctx context.Context, input modelgateway.UpdateAPIKeyInput) (modelgateway.APIKey, error) {

@@ -20,6 +20,7 @@ type ModelAdminService interface {
 	UpdateProvider(context.Context, modeladmin.UpdateProviderInput) (modeladmin.Provider, error)
 	ChangeProviderStatus(context.Context, modeladmin.ChangeProviderStatusInput) (modeladmin.Provider, error)
 	ProbeProvider(context.Context, modeladmin.ProbeInput) (modeladmin.ProbeResult, error)
+	RevealProviderCredential(context.Context, modeladmin.RevealProviderCredentialInput) (string, error)
 	ListModels(context.Context, string) ([]modeladmin.CatalogModel, error)
 	CreateModel(context.Context, modeladmin.CreateModelInput) (modeladmin.CatalogModel, error)
 	UpdateModel(context.Context, modeladmin.UpdateModelInput) (modeladmin.CatalogModel, error)
@@ -88,6 +89,7 @@ func registerModelRoutes(router *gin.Engine, deps Dependencies) {
 	providers.PUT("/:id", requirePermission(deps, "model.provider.write"), requireCSRF(deps), updateProviderHandler(deps))
 	providers.PATCH("/:id/status", requirePermission(deps, "model.provider.write"), requireCSRF(deps), changeProviderStatusHandler(deps))
 	providers.POST("/:id/probe", requirePermission(deps, "model.provider.write"), requireCSRF(deps), probeProviderHandler(deps))
+	providers.GET("/:id/credential", requirePermission(deps, "model.provider.write"), revealProviderCredentialHandler(deps))
 
 	models := router.Group("/api/v1/models", requireSession(deps))
 	models.GET("", requirePermission(deps, "model.catalog.read"), listModelsHandler(deps))
@@ -195,6 +197,26 @@ func probeProviderHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, gin.H{"status": result.Status, "latencyMs": result.LatencyMS, "checkedAt": result.CheckedAt})
+	}
+}
+
+func revealProviderCredentialHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !validUUIDParam(ctx, "供应商连接") {
+			return
+		}
+		session := currentSession(ctx)
+		value, err := deps.ModelAdmin.RevealProviderCredential(ctx.Request.Context(), modeladmin.RevealProviderCredentialInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, ProviderID: ctx.Param("id"),
+			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if err != nil {
+			handleModelAdminError(ctx, deps.Logger, err)
+			return
+		}
+		ctx.Header("Cache-Control", "no-store")
+		ctx.Header("Pragma", "no-cache")
+		httpx.OK(ctx, http.StatusOK, gin.H{"secret": value})
 	}
 }
 

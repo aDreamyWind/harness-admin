@@ -55,11 +55,26 @@ func (s *Service) CreateAPIKey(ctx context.Context, input CreateAPIKeyInput) (Cr
 	digest := sha256.Sum256([]byte(secret))
 	input.KeyPrefix = visiblePrefix(secret)
 	input.SecretHash = digest[:]
+	input.Secret = secret
 	created, err := s.repository.CreateAPIKey(ctx, input)
 	if err != nil {
 		return CreatedAPIKey{}, fmt.Errorf("创建模型网关调用密钥失败: %w", err)
 	}
 	return CreatedAPIKey{APIKey: created, Secret: secret}, nil
+}
+
+func (s *Service) RevealAPIKeySecret(ctx context.Context, input RevealAPIKeySecretInput) (string, error) {
+	if input.OrganizationID == "" || input.ActorID == "" || input.APIKeyID == "" {
+		return "", ErrInvalidInput
+	}
+	value, err := s.repository.RevealAPIKeySecret(ctx, input)
+	if err != nil {
+		if errors.Is(err, ErrAPIKeyNotFound) || errors.Is(err, ErrAPIKeySecretUnavailable) {
+			return "", err
+		}
+		return "", fmt.Errorf("查看模型网关调用密钥失败: %w", err)
+	}
+	return value, nil
 }
 
 func (s *Service) UpdateAPIKey(ctx context.Context, input UpdateAPIKeyInput) (APIKey, error) {

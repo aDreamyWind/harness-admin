@@ -129,6 +129,14 @@ type ProbeInput struct {
 	SourceIP       string
 }
 
+type RevealProviderCredentialInput struct {
+	OrganizationID string
+	ActorID        string
+	ProviderID     string
+	RequestID      string
+	SourceIP       string
+}
+
 type ProbeResult struct {
 	Status    string
 	LatencyMS int64
@@ -146,6 +154,7 @@ type Repository interface {
 	UpdateProvider(context.Context, UpdateProviderInput) (Provider, error)
 	ChangeProviderStatus(context.Context, ChangeProviderStatusInput) (Provider, error)
 	GetProviderCredential(context.Context, string, string) (ProviderCredential, error)
+	RevealProviderCredential(context.Context, RevealProviderCredentialInput) (string, error)
 	RecordProviderProbe(context.Context, ProbeInput, ProbeResult, string) (Provider, error)
 	ListModels(context.Context, string) ([]CatalogModel, error)
 	CreateModel(context.Context, CreateModelInput) (CatalogModel, error)

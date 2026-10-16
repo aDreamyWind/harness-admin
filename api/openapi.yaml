@@ -766,7 +766,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       summary: 创建统一登录应用
-      description: 桌面应用是公开客户端，不生成密钥；服务端应用的密钥只在创建响应中返回一次，服务端仅保存 SHA-256 哈希。
+      description: 桌面应用是公开客户端，不生成密钥；服务端应用同时保存用于认证的 SHA-256 哈希和使用主密钥加密的密文，具备管理权限时可再次查看。
       operationId: createOIDCClient
       security:
         - sessionCookie: []
@@ -778,7 +778,7 @@ paths:
             schema: { $ref: '#/components/schemas/OIDCClientWriteRequest' }
       responses:
         '201':
-          description: 应用已创建；仅服务端应用的响应包含一次性展示的客户端密钥。
+          description: 应用已创建；服务端应用的响应包含客户端密钥，后续也可通过密钥查看接口读取。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CreatedOIDCClientEnvelope' }
@@ -847,12 +847,32 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '200':
-          description: 密钥已轮换，旧密钥立即失效，响应包含仅展示一次的新密钥。
+          description: 密钥已轮换，旧密钥立即失效，响应包含新密钥且后续可再次查看。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CreatedOIDCClientEnvelope' }
         '404': { description: 统一登录应用不存在或不属于当前企业。 }
         '409': { description: 桌面应用不使用客户端密钥。 }
+  /oidc/clients/{oidcClientId}/secret:
+    get:
+      summary: 查看统一登录应用的客户端密钥
+      description: 需要 `oidc.client.write` 权限；每次成功查看都会写入审计日志，响应禁止缓存。历史未保存密文的应用需先轮换密钥。
+      operationId: revealOIDCClientSecret
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: oidcClientId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 返回解密后的完整客户端密钥。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecretEnvelope' }
+        '404': { description: 统一登录应用不存在或不属于当前企业。 }
+        '409': { description: 桌面应用不使用密钥，或历史密钥没有可解密密文。 }
   /.well-known/openid-configuration:
     servers:
       - url: /
@@ -1040,6 +1060,25 @@ paths:
               schema: { $ref: '#/components/schemas/ModelProviderProbeEnvelope' }
         '409': { description: 供应商连接已停用。 }
         '502': { description: 无法连接供应商，或供应商拒绝凭据。 }
+  /model-providers/{providerId}/credential:
+    get:
+      summary: 查看模型供应商 API Key
+      description: 需要 `model.provider.write` 权限；每次成功查看都会写入审计日志，响应禁止缓存。
+      operationId: revealModelProviderCredential
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 返回解密后的完整 API Key。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecretEnvelope' }
+        '404': { description: 供应商连接不存在或不属于当前企业。 }
   /models:
     get:
       summary: 查询当前企业的模型目录
@@ -1132,7 +1171,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       summary: 创建模型网关调用密钥
-      description: 完整密钥只在创建成功的响应中返回一次，服务端仅保存 SHA-256 哈希。
+      description: 服务端同时保存用于认证的 SHA-256 哈希和使用主密钥加密的密文，具备管理权限时可再次查看。
       operationId: createModelGatewayAPIKey
       security:
         - sessionCookie: []
@@ -1144,7 +1183,7 @@ paths:
             schema: { $ref: '#/components/schemas/CreateGatewayAPIKeyRequest' }
       responses:
         '201':
-          description: 调用密钥已创建，响应包含仅展示一次的完整密钥。
+          description: 调用密钥已创建，响应包含完整密钥，后续也可通过密钥查看接口读取。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CreatedGatewayAPIKeyEnvelope' }
@@ -1194,6 +1233,26 @@ paths:
               schema: { $ref: '#/components/schemas/GatewayAPIKeyEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { description: 调用密钥不存在或不属于当前企业。 }
+  /model-gateway/api-keys/{apiKeyId}/secret:
+    get:
+      summary: 查看模型网关调用密钥
+      description: 需要 `model.gateway.write` 权限；每次成功查看都会写入审计日志，响应禁止缓存。历史未保存密文的密钥需重新创建。
+      operationId: revealModelGatewayAPIKeySecret
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: apiKeyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 返回解密后的完整调用密钥。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecretEnvelope' }
+        '404': { description: 调用密钥不存在或不属于当前企业。 }
+        '409': { description: 历史调用密钥没有可解密密文，需要重新创建。 }
   /model-gateway/calls:
     get:
       summary: 查询当前企业的模型网关调用记录
@@ -1517,7 +1576,7 @@ components:
         - $ref: '#/components/schemas/OIDCClient'
         - type: object
           properties:
-            clientSecret: { type: string, readOnly: true, description: 仅服务端应用在创建或轮换成功时返回一次。桌面应用不返回。 }
+            clientSecret: { type: string, readOnly: true, description: 服务端应用在创建或轮换成功时返回；桌面应用不返回。后续可通过密钥查看接口再次读取。 }
     OIDCTokenRequest:
       type: object
       required: [grant_type]
@@ -1661,7 +1720,7 @@ components:
         - type: object
           required: [secret]
           properties:
-            secret: { type: string, writeOnly: true, description: 仅在创建成功时返回一次的完整调用密钥。 }
+            secret: { type: string, readOnly: true, description: 创建成功时返回的完整调用密钥；后续可通过密钥查看接口再次读取。 }
     GatewayCall:
       type: object
       required: [id, authType, requestId, modelCode, upstreamModelId, streaming, result, httpStatus, latencyMs, promptTokens, completionTokens, totalTokens, errorCode, sourceIp, createdAt]
@@ -1922,6 +1981,15 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/UserList' }
+    SecretEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [secret]
+          properties:
+            secret: { type: string, format: password, readOnly: true }
     OrganizationEnvelope:
       type: object
       required: [data]

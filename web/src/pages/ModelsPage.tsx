@@ -3,6 +3,7 @@ import {
   CheckCircleOutlined,
   CloudServerOutlined,
   EditOutlined,
+  EyeOutlined,
   PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons'
@@ -38,6 +39,7 @@ import {
   listModelProviders,
   listModels,
   probeModelProvider,
+  revealModelProviderCredential,
   updateModel,
   updateModelProvider,
   type ModelCatalogEntry,
@@ -81,6 +83,7 @@ export function ModelsPage() {
   const [modelModalOpen, setModelModalOpen] = useState(false)
   const [editingProvider, setEditingProvider] = useState<ModelProvider | null>(null)
   const [editingModel, setEditingModel] = useState<ModelCatalogEntry | null>(null)
+  const [revealedProviderSecret, setRevealedProviderSecret] = useState<{ name: string; secret: string } | null>(null)
 
   const providersQuery = useQuery({ queryKey: ['model-providers'], queryFn: listModelProviders, enabled: canReadProviders })
   const modelsQuery = useQuery({ queryKey: ['model-catalog'], queryFn: listModels, enabled: canReadModels })
@@ -110,6 +113,11 @@ export function ModelsPage() {
       await queryClient.invalidateQueries({ queryKey: ['model-providers'] })
     },
     onError: (error) => messageApi.error(errorMessage(error, '连接检测失败')),
+  })
+  const revealProviderSecret = useMutation({
+    mutationFn: async (provider: ModelProvider) => ({ provider, result: await revealModelProviderCredential(provider.id) }),
+    onSuccess: ({ provider, result }) => setRevealedProviderSecret({ name: provider.name, secret: result.secret }),
+    onError: (error) => messageApi.error(errorMessage(error, 'API Key 查看失败')),
   })
 
   const saveModel = useMutation({
@@ -196,16 +204,17 @@ export function ModelsPage() {
       render: (_, provider) => <div className="probe-state"><StatusIndicator label={probeLabel(provider.lastProbeStatus)} tone={probeTone(provider.lastProbeStatus)} />{provider.lastProbeAt ? <small>{formatTime(provider.lastProbeAt)}</small> : null}</div>,
     },
     ...(canWriteProviders ? [{
-      title: '操作', key: 'actions', width: 230,
+      title: '操作', key: 'actions', width: 290,
       render: (_: unknown, provider: ModelProvider) => <Space size={4}>
         <Button type="link" size="small" icon={<CheckCircleOutlined />} loading={probeProvider.isPending && probeProvider.variables === provider.id} disabled={provider.status !== 'active'} onClick={() => probeProvider.mutate(provider.id)}>检测</Button>
+        <Button type="link" size="small" icon={<EyeOutlined />} loading={revealProviderSecret.isPending && revealProviderSecret.variables?.id === provider.id} onClick={() => revealProviderSecret.mutate(provider)}>查看密钥</Button>
         <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openProviderEdit(provider)}>编辑</Button>
         <Popconfirm title={provider.status === 'active' ? '停用这个供应商连接？' : '重新启用这个供应商连接？'} onConfirm={() => providerStatus.mutate(provider)}>
           <Button type="link" size="small" danger={provider.status === 'active'}>{provider.status === 'active' ? '停用' : '启用'}</Button>
         </Popconfirm>
       </Space>,
     }] : []),
-  ], [canWriteProviders, probeProvider.isPending, probeProvider.variables])
+  ], [canWriteProviders, probeProvider.isPending, probeProvider.variables, revealProviderSecret.isPending, revealProviderSecret.variables])
 
   const modelColumns: TableColumnsType<ModelCatalogEntry> = useMemo(() => [
     {
@@ -234,7 +243,7 @@ export function ModelsPage() {
     canReadProviders ? {
       key: 'providers', label: `供应商连接 ${providers.length}`,
       children: <ResourceTable
-        title="上游连接" description="连接凭据只用于服务端访问供应商，不会返回到浏览器。"
+        title="上游连接" description="连接凭据加密保存，具备管理权限的用户可以查看。"
         action={canWriteProviders ? <Button type="primary" icon={<PlusOutlined />} onClick={openProviderCreate}>接入供应商</Button> : undefined}
         error={providersQuery.isError ? errorMessage(providersQuery.error, '供应商连接加载失败') : ''}
         retry={() => providersQuery.refetch()}
@@ -268,6 +277,14 @@ export function ModelsPage() {
       </section>
 
       <Tabs className="model-resource-tabs" items={tabs} />
+
+      <Modal title={`${revealedProviderSecret?.name ?? ''} · API Key`} open={Boolean(revealedProviderSecret)} footer={null} onCancel={() => { setRevealedProviderSecret(null); revealProviderSecret.reset() }} destroyOnHidden>
+        <Alert type="info" showIcon message="本次查看已记录到审计日志" />
+        <div className="gateway-secret-box">
+          <Text code>{revealedProviderSecret?.secret}</Text>
+          <Button onClick={async () => { if (!revealedProviderSecret) return; await navigator.clipboard.writeText(revealedProviderSecret.secret); messageApi.success('API Key 已复制') }}>复制</Button>
+        </div>
+      </Modal>
 
       <Modal title={editingProvider ? '编辑供应商连接' : '接入供应商'} open={providerModalOpen} width={680} okText={editingProvider ? '保存修改' : '创建连接'} cancelText="取消" confirmLoading={saveProvider.isPending} onCancel={closeProviderModal} onOk={() => providerForm.submit()} forceRender>
         {saveProvider.isError ? <Alert className="form-alert" type="error" showIcon message={errorMessage(saveProvider.error, '供应商连接保存失败')} /> : null}

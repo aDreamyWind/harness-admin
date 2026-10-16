@@ -55,3 +55,7 @@ export function rotateOIDCClientSecret(id: string) {
     method: 'POST', headers: csrfHeaders(),
   })
 }
+
+export function revealOIDCClientSecret(id: string) {
+  return request<{ secret: string }>(`/api/v1/oidc/clients/${id}/secret`)
+}

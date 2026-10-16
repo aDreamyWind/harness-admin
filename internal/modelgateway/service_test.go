@@ -39,6 +39,9 @@ func (*repositoryStub) UpdateAPIKey(context.Context, UpdateAPIKeyInput) (APIKey,
 func (*repositoryStub) RevokeAPIKey(context.Context, RevokeAPIKeyInput) (APIKey, error) {
 	return APIKey{}, nil
 }
+func (*repositoryStub) RevealAPIKeySecret(context.Context, RevealAPIKeySecretInput) (string, error) {
+	return "harness_sk_revealed", nil
+}
 func (r *repositoryStub) FindAPIKeyByHash(context.Context, []byte) (APIKey, error) {
 	if r.apiKey.ID == "" {
 		return APIKey{}, ErrAPIKeyNotFound
@@ -60,7 +63,7 @@ func (*repositoryStub) ListCalls(context.Context, CallQuery) (CallPage, error) {
 	return CallPage{}, nil
 }
 
-func TestCreateAPIKeyOnlyPersistsHashAndReturnsSecretOnce(t *testing.T) {
+func TestCreateAPIKeyPersistsHashAndEncryptedSecretInput(t *testing.T) {
 	repository := &repositoryStub{}
 	service := NewService(repository, nil)
 	service.now = func() time.Time { return time.Date(2026, 10, 13, 8, 0, 0, 0, time.UTC) }
@@ -81,6 +84,9 @@ func TestCreateAPIKeyOnlyPersistsHashAndReturnsSecretOnce(t *testing.T) {
 	}
 	if repository.createdInput.KeyPrefix != "harness_sk_abcdefg" {
 		t.Fatalf("可见前缀 = %q", repository.createdInput.KeyPrefix)
+	}
+	if repository.createdInput.Secret != created.Secret {
+		t.Fatal("仓储输入未收到用于加密保存的完整密钥")
 	}
 }
 

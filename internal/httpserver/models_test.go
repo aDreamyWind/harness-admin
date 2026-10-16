@@ -17,6 +17,7 @@ type modelAdminStub struct {
 	createProviderInput modeladmin.CreateProviderInput
 	updateProviderInput modeladmin.UpdateProviderInput
 	createModelInput    modeladmin.CreateModelInput
+	revealInput         modeladmin.RevealProviderCredentialInput
 }
 
 func (*modelAdminStub) ListProviders(context.Context, string) ([]modeladmin.Provider, error) {
@@ -35,6 +36,10 @@ func (*modelAdminStub) ChangeProviderStatus(context.Context, modeladmin.ChangePr
 }
 func (*modelAdminStub) ProbeProvider(context.Context, modeladmin.ProbeInput) (modeladmin.ProbeResult, error) {
 	return modeladmin.ProbeResult{Status: "success", CheckedAt: time.Now()}, nil
+}
+func (s *modelAdminStub) RevealProviderCredential(_ context.Context, input modeladmin.RevealProviderCredentialInput) (string, error) {
+	s.revealInput = input
+	return "top-secret", nil
 }
 func (*modelAdminStub) ListModels(context.Context, string) ([]modeladmin.CatalogModel, error) {
 	return []modeladmin.CatalogModel{}, nil
@@ -91,6 +96,24 @@ func TestCreateModelUsesCurrentOrganization(t *testing.T) {
 	}
 	if models.createModelInput.OrganizationID != "org-1" || models.createModelInput.ActorID != "user-1" || models.createModelInput.Code != "main_model" {
 		t.Fatalf("创建模型参数不完整: %#v", models.createModelInput)
+	}
+}
+
+func TestRevealModelProviderCredentialUsesCurrentOrganizationAndDisablesCache(t *testing.T) {
+	models := &modelAdminStub{}
+	router := newModelTestRouter(models)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/model-providers/10000000-0000-4000-8000-000000000001/credential", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"secret":"top-secret"`) {
+		t.Fatalf("状态码 = %d；响应 = %s", response.Code, response.Body.String())
+	}
+	if models.revealInput.OrganizationID != "org-1" || models.revealInput.ActorID != "user-1" {
+		t.Fatalf("查看凭据参数不完整: %#v", models.revealInput)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("敏感响应未禁止缓存: %#v", response.Header())
 	}
 }
 

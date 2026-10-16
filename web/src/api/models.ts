@@ -84,6 +84,10 @@ export function probeModelProvider(id: string) {
   return request<ProbeResult>(`/api/v1/model-providers/${id}/probe`, { method: 'POST', headers: csrfHeaders() })
 }
 
+export function revealModelProviderCredential(id: string) {
+  return request<{ secret: string }>(`/api/v1/model-providers/${id}/credential`)
+}
+
 export function createModel(input: ModelInput) {
   return request<ModelCatalogEntry>('/api/v1/models', {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),

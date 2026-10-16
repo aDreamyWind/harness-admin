@@ -20,6 +20,7 @@ type modelGatewayStub struct {
 	requestBody string
 	recorded    modelgateway.RecordCallInput
 	listQuery   modelgateway.CallQuery
+	revealInput modelgateway.RevealAPIKeySecretInput
 }
 
 func (*modelGatewayStub) ListAPIKeys(context.Context, string) ([]modelgateway.APIKey, error) {
@@ -37,6 +38,10 @@ func (*modelGatewayStub) UpdateAPIKey(context.Context, modelgateway.UpdateAPIKey
 }
 func (*modelGatewayStub) RevokeAPIKey(context.Context, modelgateway.RevokeAPIKeyInput) (modelgateway.APIKey, error) {
 	return modelgateway.APIKey{}, nil
+}
+func (s *modelGatewayStub) RevealAPIKeySecret(_ context.Context, input modelgateway.RevealAPIKeySecretInput) (string, error) {
+	s.revealInput = input
+	return "harness_sk_revealed", nil
 }
 func (s *modelGatewayStub) Prepare(_ context.Context, credential string, body []byte) (modelgateway.PreparedRequest, error) {
 	s.credential = credential
@@ -115,6 +120,24 @@ func TestListGatewayCallsParsesFiltersAndPagination(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"total":21`) || !strings.Contains(response.Body.String(), `"page":2`) {
 		t.Fatalf("分页响应不正确: %s", response.Body.String())
+	}
+}
+
+func TestRevealGatewayAPIKeyUsesCurrentOrganizationAndDisablesCache(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	router := newGatewayTestRouter(gateway)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/model-gateway/api-keys/30000000-0000-4000-8000-000000000001/secret", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"secret":"harness_sk_revealed"`) {
+		t.Fatalf("状态码 = %d；响应 = %s", response.Code, response.Body.String())
+	}
+	if gateway.revealInput.OrganizationID != "org-1" || gateway.revealInput.ActorID != "user-1" {
+		t.Fatalf("查看密钥参数不完整: %#v", gateway.revealInput)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("敏感响应未禁止缓存: %#v", response.Header())
 	}
 }
 

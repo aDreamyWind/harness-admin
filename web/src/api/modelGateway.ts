@@ -94,3 +94,7 @@ export function revokeGatewayAPIKey(id: string) {
     method: 'PATCH', headers: csrfHeaders(),
   })
 }
+
+export function revealGatewayAPIKeySecret(id: string) {
+  return request<{ secret: string }>(`/api/v1/model-gateway/api-keys/${id}/secret`)
+}

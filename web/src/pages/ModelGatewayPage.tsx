@@ -2,6 +2,7 @@ import {
   CheckCircleOutlined,
   CopyOutlined,
   EditOutlined,
+  EyeOutlined,
   KeyOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -35,6 +36,7 @@ import {
   listGatewayAPIKeys,
   listGatewayCalls,
   revokeGatewayAPIKey,
+  revealGatewayAPIKeySecret,
   updateGatewayAPIKey,
   type CreatedGatewayAPIKey,
   type GatewayAPIKey,
@@ -72,6 +74,7 @@ export function ModelGatewayPage() {
   const [keyModalOpen, setKeyModalOpen] = useState(false)
   const [editingKey, setEditingKey] = useState<GatewayAPIKey | null>(null)
   const [createdKey, setCreatedKey] = useState<CreatedGatewayAPIKey | null>(null)
+  const [revealedKey, setRevealedKey] = useState<{ name: string; secret: string } | null>(null)
   const [callQuery, setCallQuery] = useState<GatewayCallQuery>({ page: 1, pageSize: 20 })
 
   const keysQuery = useQuery({ queryKey: ['model-gateway-api-keys'], queryFn: listGatewayAPIKeys })
@@ -106,6 +109,11 @@ export function ModelGatewayPage() {
       await queryClient.invalidateQueries({ queryKey: ['model-gateway-api-keys'] })
     },
     onError: (error) => messageApi.error(errorMessage(error, '调用密钥吊销失败')),
+  })
+  const revealKey = useMutation({
+    mutationFn: async (key: GatewayAPIKey) => ({ key, result: await revealGatewayAPIKeySecret(key.id) }),
+    onSuccess: ({ key, result }) => setRevealedKey({ name: key.name, secret: result.secret }),
+    onError: (error) => messageApi.error(errorMessage(error, '调用密钥查看失败')),
   })
 
   const openCreateKey = () => {
@@ -176,17 +184,18 @@ export function ModelGatewayPage() {
     { title: '最近调用', key: 'lastUsedAt', width: 180, render: (_, item) => item.lastUsedAt ? formatTime(item.lastUsedAt) : '尚未使用' },
     { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 180, render: formatTime },
     ...(canWrite ? [{
-      title: '操作', key: 'actions', width: 140,
-      render: (_: unknown, item: GatewayAPIKey) => item.status === 'active' ? (
-        <Space size={4}>
+      title: '操作', key: 'actions', width: 200,
+      render: (_: unknown, item: GatewayAPIKey) => <Space size={4}>
+        <Button type="link" size="small" icon={<EyeOutlined />} loading={revealKey.isPending && revealKey.variables?.id === item.id} onClick={() => revealKey.mutate(item)}>查看</Button>
+        {item.status === 'active' ? <>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditKey(item)}>编辑</Button>
           <Popconfirm title="吊销这个调用密钥？" description="吊销后立即失效，且无法恢复。" onConfirm={() => revokeKey.mutate(item.id)}>
             <Button type="link" danger size="small">吊销</Button>
           </Popconfirm>
-        </Space>
-      ) : <Text type="secondary">—</Text>,
+        </> : null}
+      </Space>,
     }] : []),
-  ], [canWrite, revokeKey, saveKey])
+  ], [canWrite, revokeKey, revealKey.isPending, revealKey.variables])
 
   const callColumns: TableColumnsType<GatewayCall> = useMemo(() => [
     { title: '发生时间', dataIndex: 'createdAt', key: 'createdAt', width: 178, render: formatTime },
@@ -207,7 +216,7 @@ export function ModelGatewayPage() {
       key: 'keys', label: `调用密钥 ${keys.length}`,
       children: <GatewayResource
         title="调用密钥"
-        hint="完整密钥只在创建时展示一次。"
+        hint="调用密钥加密保存，具备管理权限的用户可以再次查看。"
         action={canWrite ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateKey}>创建调用密钥</Button> : undefined}
         error={keysQuery.isError ? errorMessage(keysQuery.error, '调用密钥加载失败') : ''}
         retry={() => keysQuery.refetch()}
@@ -311,13 +320,13 @@ export function ModelGatewayPage() {
       <Modal
         title="保存调用密钥"
         open={Boolean(createdKey)}
-        okText="我已保存"
+        okText="完成"
         cancelButtonProps={{ style: { display: 'none' } }}
         closable={false}
         mask={{ closable: false }}
-        onOk={() => setCreatedKey(null)}
+        onOk={() => { setCreatedKey(null); saveKey.reset() }}
       >
-        <Alert type="warning" showIcon message="关闭后无法再次查看完整密钥" />
+        <Alert type="success" showIcon message="调用密钥已加密保存，之后仍可在列表中查看" />
         <div className="gateway-secret-box">
           <Text code>{createdKey?.secret}</Text>
           <Button icon={<CopyOutlined />} onClick={async () => {
@@ -327,6 +336,14 @@ export function ModelGatewayPage() {
           }}>复制</Button>
         </div>
         <Paragraph type="secondary">请保存到服务端密钥管理工具，不要写入前端代码或提交到 Git。</Paragraph>
+      </Modal>
+
+      <Modal title={`${revealedKey?.name ?? ''} · 调用密钥`} open={Boolean(revealedKey)} footer={null} onCancel={() => { setRevealedKey(null); revealKey.reset() }} destroyOnHidden>
+        <Alert type="info" showIcon message="本次查看已记录到审计日志" />
+        <div className="gateway-secret-box">
+          <Text code>{revealedKey?.secret}</Text>
+          <Button icon={<CopyOutlined />} onClick={async () => { if (!revealedKey) return; await navigator.clipboard.writeText(revealedKey.secret); messageApi.success('调用密钥已复制') }}>复制</Button>
+        </div>
       </Modal>
     </main>
   )

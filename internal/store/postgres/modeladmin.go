@@ -206,6 +206,42 @@ func (r *ModelAdminRepository) GetProviderCredential(ctx context.Context, organi
 	return credential, nil
 }
 
+func (r *ModelAdminRepository) RevealProviderCredential(ctx context.Context, input modeladmin.RevealProviderCredentialInput) (string, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	var ciphertext []byte
+	err = tx.QueryRow(ctx, `
+		SELECT c.encrypted_secret
+		FROM model_provider_connections p
+		JOIN model_provider_credentials c ON c.provider_connection_id = p.id
+		WHERE p.organization_id = $1 AND p.id = $2
+	`, input.OrganizationID, input.ProviderID).Scan(&ciphertext)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", modeladmin.ErrProviderNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	value, err := r.cipher.Open(ciphertext)
+	if err != nil {
+		return "", err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
+		Action: "model.provider.credential.reveal", ResourceType: "model_provider", ResourceID: input.ProviderID,
+		Result: "success", SourceIP: input.SourceIP,
+	}); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
 func (r *ModelAdminRepository) RecordProviderProbe(ctx context.Context, input modeladmin.ProbeInput, result modeladmin.ProbeResult, errorCode string) (modeladmin.Provider, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

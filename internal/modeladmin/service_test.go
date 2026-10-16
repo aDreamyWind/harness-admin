@@ -33,6 +33,9 @@ func (r *repositoryStub) ChangeProviderStatus(context.Context, ChangeProviderSta
 func (r *repositoryStub) GetProviderCredential(context.Context, string, string) (ProviderCredential, error) {
 	return r.credential, r.err
 }
+func (r *repositoryStub) RevealProviderCredential(context.Context, RevealProviderCredentialInput) (string, error) {
+	return r.credential.APIKey, r.err
+}
 func (r *repositoryStub) RecordProviderProbe(_ context.Context, _ ProbeInput, result ProbeResult, _ string) (Provider, error) {
 	r.probeResult = result
 	return Provider{}, r.err

@@ -130,6 +130,20 @@ func (s *Service) ProbeProvider(ctx context.Context, input ProbeInput) (ProbeRes
 	return result, nil
 }
 
+func (s *Service) RevealProviderCredential(ctx context.Context, input RevealProviderCredentialInput) (string, error) {
+	if input.OrganizationID == "" || input.ActorID == "" || input.ProviderID == "" {
+		return "", ErrInvalidInput
+	}
+	value, err := s.repository.RevealProviderCredential(ctx, input)
+	if err != nil {
+		if errors.Is(err, ErrProviderNotFound) {
+			return "", err
+		}
+		return "", fmt.Errorf("查看模型供应商凭据失败: %w", err)
+	}
+	return value, nil
+}
+
 func (s *Service) ListModels(ctx context.Context, organizationID string) ([]CatalogModel, error) {
 	if organizationID == "" {
 		return nil, ErrInvalidInput

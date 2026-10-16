@@ -28,6 +28,7 @@ type ModelGatewayService interface {
 	CreateAPIKey(context.Context, modelgateway.CreateAPIKeyInput) (modelgateway.CreatedAPIKey, error)
 	UpdateAPIKey(context.Context, modelgateway.UpdateAPIKeyInput) (modelgateway.APIKey, error)
 	RevokeAPIKey(context.Context, modelgateway.RevokeAPIKeyInput) (modelgateway.APIKey, error)
+	RevealAPIKeySecret(context.Context, modelgateway.RevealAPIKeySecretInput) (string, error)
 	Prepare(context.Context, string, []byte) (modelgateway.PreparedRequest, error)
 	PrepareForUser(context.Context, string, string, []byte) (modelgateway.PreparedRequest, error)
 	RecordCall(context.Context, modelgateway.RecordCallInput) error
@@ -97,6 +98,7 @@ func registerModelGatewayRoutes(router *gin.Engine, deps Dependencies) {
 	admin.POST("/api-keys", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), createGatewayAPIKeyHandler(deps))
 	admin.PUT("/api-keys/:id", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), updateGatewayAPIKeyHandler(deps))
 	admin.PATCH("/api-keys/:id/revoke", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), revokeGatewayAPIKeyHandler(deps))
+	admin.GET("/api-keys/:id/secret", requirePermission(deps, "model.gateway.write"), revealGatewayAPIKeySecretHandler(deps))
 	admin.GET("/calls", requirePermission(deps, "model.gateway.read"), listGatewayCallsHandler(deps))
 
 	router.POST("/v1/chat/completions", chatCompletionsGatewayHandler(deps))
@@ -189,6 +191,26 @@ func revokeGatewayAPIKeyHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, presentGatewayAPIKey(item, ""))
+	}
+}
+
+func revealGatewayAPIKeySecretHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !validUUIDParam(ctx, "调用密钥") {
+			return
+		}
+		session := currentSession(ctx)
+		value, err := deps.ModelGateway.RevealAPIKeySecret(ctx.Request.Context(), modelgateway.RevealAPIKeySecretInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, APIKeyID: ctx.Param("id"),
+			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if err != nil {
+			handleModelGatewayAdminError(ctx, deps.Logger, err)
+			return
+		}
+		ctx.Header("Cache-Control", "no-store")
+		ctx.Header("Pragma", "no-cache")
+		httpx.OK(ctx, http.StatusOK, gin.H{"secret": value})
 	}
 }
 
@@ -447,6 +469,8 @@ func handleModelGatewayAdminError(ctx *gin.Context, logger *slog.Logger, err err
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_gateway_configuration", "模型网关参数不正确")
 	case errors.Is(err, modelgateway.ErrAPIKeyNotFound):
 		httpx.Fail(ctx, http.StatusNotFound, "gateway_api_key_not_found", "模型网关调用密钥不存在")
+	case errors.Is(err, modelgateway.ErrAPIKeySecretUnavailable):
+		httpx.Fail(ctx, http.StatusConflict, "gateway_api_key_secret_unavailable", "该密钥创建于支持再次查看之前，请重新创建调用密钥")
 	default:
 		logger.Error("模型网关管理接口处理失败", "error", err, "request_id", contextString(ctx, "request_id"))
 		httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "服务暂时不可用")

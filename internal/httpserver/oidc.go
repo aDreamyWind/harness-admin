@@ -21,6 +21,7 @@ type OIDCAdminService interface {
 	UpdateClient(context.Context, oidcmodule.UpdateClientInput) (oidcmodule.Client, error)
 	ChangeClientStatus(context.Context, oidcmodule.ChangeClientStatusInput) (oidcmodule.Client, error)
 	RotateClientSecret(context.Context, oidcmodule.RotateClientSecretInput) (oidcmodule.CreatedClient, error)
+	RevealClientSecret(context.Context, oidcmodule.RevealClientSecretInput) (string, error)
 }
 
 type OIDCProviderService interface {
@@ -74,6 +75,7 @@ func registerOIDCAdminRoutes(router *gin.Engine, deps Dependencies) {
 	clients.PUT("/:id", requirePermission(deps, "oidc.client.write"), requireCSRF(deps), updateOIDCClientHandler(deps))
 	clients.PATCH("/:id/status", requirePermission(deps, "oidc.client.write"), requireCSRF(deps), changeOIDCClientStatusHandler(deps))
 	clients.POST("/:id/rotate-secret", requirePermission(deps, "oidc.client.write"), requireCSRF(deps), rotateOIDCClientSecretHandler(deps))
+	clients.GET("/:id/secret", requirePermission(deps, "oidc.client.write"), revealOIDCClientSecretHandler(deps))
 }
 
 func registerOIDCProviderRoutes(router *gin.Engine, deps Dependencies) {
@@ -326,6 +328,26 @@ func rotateOIDCClientSecretHandler(deps Dependencies) gin.HandlerFunc {
 	}
 }
 
+func revealOIDCClientSecretHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !validUUIDParam(ctx, "统一登录应用") {
+			return
+		}
+		session := currentSession(ctx)
+		value, err := deps.OIDCAdmin.RevealClientSecret(ctx.Request.Context(), oidcmodule.RevealClientSecretInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, ClientRecordID: ctx.Param("id"),
+			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if err != nil {
+			handleOIDCAdminError(ctx, deps.Logger, err)
+			return
+		}
+		ctx.Header("Cache-Control", "no-store")
+		ctx.Header("Pragma", "no-cache")
+		httpx.OK(ctx, http.StatusOK, gin.H{"secret": value})
+	}
+}
+
 func presentOIDCClient(item oidcmodule.Client, secret string) oidcClientResponse {
 	return oidcClientResponse{
 		ID: item.ID, Name: item.Name, ClientID: item.ClientID,
@@ -344,6 +366,8 @@ func handleOIDCAdminError(ctx *gin.Context, logger *slog.Logger, err error) {
 		httpx.Fail(ctx, http.StatusNotFound, "oidc_client_not_found", "统一登录应用不存在")
 	case errors.Is(err, oidcmodule.ErrClientSecretUnsupported):
 		httpx.Fail(ctx, http.StatusConflict, "client_secret_unsupported", "桌面应用不使用客户端密钥")
+	case errors.Is(err, oidcmodule.ErrClientSecretUnavailable):
+		httpx.Fail(ctx, http.StatusConflict, "client_secret_unavailable", "该应用创建于支持再次查看之前，请先轮换一次客户端密钥")
 	default:
 		logger.Error("应用接入接口处理失败", "error", err, "request_id", contextString(ctx, "request_id"))
 		httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "服务暂时不可用")
