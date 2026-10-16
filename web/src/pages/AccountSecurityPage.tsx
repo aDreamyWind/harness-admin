@@ -1,4 +1,4 @@
-import { ClockCircleOutlined, DesktopOutlined, LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
+import { AppstoreOutlined, ClockCircleOutlined, DesktopOutlined, LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
@@ -8,6 +8,7 @@ import {
   Input,
   Popconfirm,
   Space,
+  Tag,
   Typography,
   message,
 } from 'antd'
@@ -21,6 +22,12 @@ import {
   type ChangePasswordInput,
   type UserSession,
 } from '../api/auth'
+import {
+  listAuthorizedApplications,
+  revokeAuthorizedApplication,
+  type AuthorizedApplication,
+  type OIDCScope,
+} from '../api/oidc'
 import { useAuth } from '../auth/AuthContext'
 import { StatusIndicator } from '../components/StatusIndicator'
 
@@ -47,6 +54,10 @@ export function AccountSecurityPage() {
   }, [profileForm, user])
 
   const sessionsQuery = useQuery({ queryKey: ['account-sessions'], queryFn: listSessions })
+  const authorizedApplicationsQuery = useQuery({
+    queryKey: ['authorized-applications'],
+    queryFn: listAuthorizedApplications,
+  })
 
   const profileMutation = useMutation({
     mutationFn: updateProfile,
@@ -84,6 +95,15 @@ export function AccountSecurityPage() {
       await queryClient.invalidateQueries({ queryKey: ['account-sessions'] })
     },
     onError: (error) => messageApi.error(error instanceof Error ? error.message : '退出其他设备失败'),
+  })
+
+  const revokeApplicationMutation = useMutation({
+    mutationFn: revokeAuthorizedApplication,
+    onSuccess: async () => {
+      messageApi.success('应用授权已撤销')
+      await queryClient.invalidateQueries({ queryKey: ['authorized-applications'] })
+    },
+    onError: (error) => messageApi.error(error instanceof Error ? error.message : '应用授权撤销失败'),
   })
 
   const sessions = sessionsQuery.data ?? []
@@ -187,7 +207,8 @@ export function AccountSecurityPage() {
           </Card>
         </div>
 
-        <Card className="security-card sessions-card" variant="borderless">
+        <div className="security-activity-column">
+          <Card className="security-card sessions-card" variant="borderless">
           <div className="security-section-title sessions-title">
             <DesktopOutlined />
             <div>
@@ -230,10 +251,91 @@ export function AccountSecurityPage() {
               ))}
             </div>
           )}
-        </Card>
+          </Card>
+
+          <Card className="security-card authorized-applications-card" variant="borderless">
+            <div className="security-section-title">
+              <AppstoreOutlined />
+              <div>
+                <Title level={3}>已授权应用</Title>
+                <Paragraph>这些应用可以使用你同意过的账号信息和业务权限。</Paragraph>
+              </div>
+            </div>
+            {authorizedApplicationsQuery.isError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="已授权应用加载失败"
+                action={<Button size="small" onClick={() => authorizedApplicationsQuery.refetch()}>重新加载</Button>}
+              />
+            ) : authorizedApplicationsQuery.isLoading ? (
+              <div className="security-loading">正在读取已授权应用</div>
+            ) : authorizedApplicationsQuery.data?.length ? (
+              <div className="authorized-application-list">
+                {authorizedApplicationsQuery.data.map((application) => (
+                  <AuthorizedApplicationRow
+                    key={application.id}
+                    application={application}
+                    revoking={revokeApplicationMutation.isPending && revokeApplicationMutation.variables === application.id}
+                    onRevoke={() => revokeApplicationMutation.mutate(application.id)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="security-empty">你还没有授权任何应用。</div>
+            )}
+          </Card>
+        </div>
       </div>
     </main>
   )
+}
+
+function AuthorizedApplicationRow({ application, revoking, onRevoke }: {
+  application: AuthorizedApplication
+  revoking: boolean
+  onRevoke: () => void
+}) {
+  return (
+    <article className="authorized-application-row">
+      <div className="authorized-application-mark">{applicationInitials(application.clientName)}</div>
+      <div className="authorized-application-main">
+        <div className="authorized-application-name">
+          <strong>{application.clientName}</strong>
+          <Tag bordered={false}>{application.applicationType === 'desktop' ? '桌面应用' : 'Web 应用'}</Tag>
+        </div>
+        <div className="authorized-application-scopes">
+          {application.scopes.map((scope) => <span key={scope}>{scopeLabel(scope)}</span>)}
+        </div>
+        <Text type="secondary">最近授权于 {formatDateTime(application.updatedAt)}</Text>
+      </div>
+      <Popconfirm
+        title="撤销这个应用的授权？"
+        description="刷新令牌会立即失效；已签发的访问令牌最长约一小时后失效。"
+        okText="撤销授权"
+        cancelText="取消"
+        onConfirm={onRevoke}
+      >
+        <Button type="link" danger loading={revoking}>撤销</Button>
+      </Popconfirm>
+    </article>
+  )
+}
+
+function scopeLabel(scope: OIDCScope): string {
+  return ({
+    openid: '身份确认',
+    profile: '基本资料',
+    email: '企业邮箱',
+    'model.invoke': '模型调用',
+    offline_access: '保持登录',
+  } as Record<OIDCScope, string>)[scope] ?? scope
+}
+
+function applicationInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean)
+  if (words.length > 1) return words.slice(0, 2).map((word) => word[0]).join('').toUpperCase()
+  return name.trim().slice(0, 2).toUpperCase() || 'APP'
 }
 
 function SessionRow({ session, revoking, onRevoke }: { session: UserSession; revoking: boolean; onRevoke: () => void }) {

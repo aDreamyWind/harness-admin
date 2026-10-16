@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.16.0
+  version: 0.17.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -898,7 +898,7 @@ paths:
   /oauth2/authorize:
     get:
       summary: 发起 OIDC 授权码登录
-      description: 要求当前 Harness Admin 用户会话有效，并强制使用 PKCE S256。未登录时跳转到管理端登录页。桌面应用登记 IP 回环地址时，实际授权请求可使用随机端口。
+      description: 要求当前 Harness Admin 用户会话有效，并强制使用 PKCE S256。未登录时跳转到管理端登录页；用户尚未同意或应用新增权限时跳转到授权确认页。桌面应用登记 IP 回环地址时，实际授权请求可使用随机端口。
       operationId: authorizeOIDC
       parameters:
         - { name: response_type, in: query, required: true, schema: { type: string, const: code } }
@@ -910,12 +910,94 @@ paths:
         - { name: code_challenge, in: query, required: true, schema: { type: string, minLength: 43, maxLength: 128 } }
         - { name: code_challenge_method, in: query, required: true, schema: { type: string, const: S256 } }
       responses:
-        '302': { description: 跳转到登录页或客户端登记的精确回调地址。 }
+        '302': { description: 跳转到登录页、授权确认页或客户端登记的回调地址。 }
         '400':
           description: 授权请求不正确。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OAuthError' }
+  /oauth2/consent:
+    get:
+      summary: 读取当前 OIDC 授权请求
+      description: 在授权确认页展示前重新校验应用、回调地址、PKCE 和申请范围。
+      operationId: getOIDCConsentRequest
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: response_type, in: query, required: true, schema: { type: string, const: code } }
+        - { name: client_id, in: query, required: true, schema: { type: string } }
+        - { name: redirect_uri, in: query, required: true, schema: { type: string, format: uri } }
+        - { name: scope, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: nonce, in: query, schema: { type: string, maxLength: 255 } }
+        - { name: code_challenge, in: query, required: true, schema: { type: string, minLength: 43, maxLength: 128 } }
+        - { name: code_challenge_method, in: query, required: true, schema: { type: string, const: S256 } }
+      responses:
+        '200':
+          description: 已校验的应用和申请权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OIDCAuthorizationRequestEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: 同意或拒绝 OIDC 应用授权
+      operationId: decideOIDCConsent
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - { name: response_type, in: query, required: true, schema: { type: string, const: code } }
+        - { name: client_id, in: query, required: true, schema: { type: string } }
+        - { name: redirect_uri, in: query, required: true, schema: { type: string, format: uri } }
+        - { name: scope, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: nonce, in: query, schema: { type: string, maxLength: 255 } }
+        - { name: code_challenge, in: query, required: true, schema: { type: string, minLength: 43, maxLength: 128 } }
+        - { name: code_challenge_method, in: query, required: true, schema: { type: string, const: S256 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OIDCConsentDecision' }
+      responses:
+        '200':
+          description: 返回客户端回调地址；拒绝时回调包含 access_denied。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OIDCConsentResultEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /account/authorized-applications:
+    get:
+      summary: 查询当前用户已授权应用
+      operationId: listCurrentUserAuthorizedApplications
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 当前用户尚未撤销的应用授权。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthorizedApplicationListEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /account/authorized-applications/{consentId}:
+    delete:
+      summary: 撤销当前用户的应用授权
+      description: 撤销授权并立即使该应用的未兑换授权码和现有刷新令牌失效；已经签发的访问令牌仍按原有效期到期。
+      operationId: revokeCurrentUserAuthorizedApplication
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: consentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: 应用授权已撤销。 }
+        '404': { description: 应用授权不存在或已经撤销。 }
   /oauth2/token:
     post:
       summary: 兑换或刷新 OIDC 令牌
@@ -1588,6 +1670,41 @@ components:
         redirect_uri: { type: string, format: uri }
         code_verifier: { type: string, minLength: 43, maxLength: 128 }
         refresh_token: { type: string }
+    OIDCAuthorizationRequest:
+      type: object
+      required: [clientName, clientId, applicationType, redirectUri, redirectHost, scopes]
+      properties:
+        clientName: { type: string }
+        clientId: { type: string }
+        applicationType: { type: string, enum: [web, desktop] }
+        redirectUri: { type: string, format: uri }
+        redirectHost: { type: string }
+        scopes:
+          type: array
+          items: { type: string, enum: [openid, profile, email, model.invoke, offline_access] }
+    OIDCConsentDecision:
+      type: object
+      required: [approved]
+      properties:
+        approved: { type: boolean }
+    OIDCConsentResult:
+      type: object
+      required: [redirectUri]
+      properties:
+        redirectUri: { type: string, format: uri }
+    AuthorizedApplication:
+      type: object
+      required: [id, clientId, clientName, applicationType, scopes, grantedAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        clientId: { type: string }
+        clientName: { type: string }
+        applicationType: { type: string, enum: [web, desktop] }
+        scopes:
+          type: array
+          items: { type: string, enum: [openid, profile, email, model.invoke, offline_access] }
+        grantedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     OIDCTokenResponse:
       type: object
       required: [access_token, token_type, expires_in, id_token, scope]
@@ -2043,6 +2160,23 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/OIDCClient' }
+    OIDCAuthorizationRequestEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/OIDCAuthorizationRequest' }
+    OIDCConsentResultEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/OIDCConsentResult' }
+    AuthorizedApplicationListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AuthorizedApplication' }
     ModelProviderEnvelope:
       type: object
       required: [data]

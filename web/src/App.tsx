@@ -1,7 +1,10 @@
 import {
+  ApiOutlined,
   AppstoreOutlined,
+  ApartmentOutlined,
   AuditOutlined,
   DashboardOutlined,
+  IdcardOutlined,
   LogoutOutlined,
   LockOutlined,
   LinkOutlined,
@@ -25,6 +28,7 @@ import { AccountSecurityPage } from './pages/AccountSecurityPage'
 import { DepartmentsPage } from './pages/DepartmentsPage'
 import { LoginPage } from './pages/LoginPage'
 import { OrganizationSettingsPage } from './pages/OrganizationSettingsPage'
+import { OIDCConsentPage } from './pages/OIDCConsentPage'
 import { RolesPage } from './pages/RolesPage'
 import { UsersPage } from './pages/UsersPage'
 import { ModelsPage } from './pages/ModelsPage'
@@ -38,7 +42,7 @@ const menuRoutes: Record<string, string> = {
   users: '/identity/users',
   departments: '/identity/departments',
   roles: '/identity/roles',
-  applications: '/identity/applications',
+  applications: '/ai-resources/applications',
   models: '/ai-resources/models',
   gateway: '/ai-resources/gateway',
   audit: '/audit',
@@ -83,7 +87,7 @@ export function App() {
       ? 'departments'
       : location.pathname.startsWith('/identity/roles')
         ? 'roles'
-        : location.pathname.startsWith('/identity/applications')
+        : location.pathname.startsWith('/ai-resources/applications') || location.pathname.startsWith('/identity/applications')
           ? 'applications'
         : location.pathname.startsWith('/ai-resources/models')
           ? 'models'
@@ -119,6 +123,10 @@ export function App() {
 
   if (!user) {
     return <LoginPage />
+  }
+
+  if (location.pathname === '/oauth/consent') {
+    return <OIDCConsentPage />
   }
 
   const menuItems = buildMenuItems(hasPermission)
@@ -207,7 +215,8 @@ export function App() {
               <Route path="/identity/users" element={<PermissionPage permission="iam.user.read"><UsersPage /></PermissionPage>} />
               <Route path="/identity/departments" element={<PermissionPage permission="iam.department.read"><DepartmentsPage /></PermissionPage>} />
               <Route path="/identity/roles" element={<PermissionPage permission="iam.role.read"><RolesPage /></PermissionPage>} />
-              <Route path="/identity/applications" element={<PermissionPage permission="oidc.client.read"><ApplicationAccessPage /></PermissionPage>} />
+              <Route path="/identity/applications" element={<Navigate to="/ai-resources/applications" replace />} />
+              <Route path="/ai-resources/applications" element={<PermissionPage permission="oidc.client.read"><ApplicationAccessPage /></PermissionPage>} />
               <Route path="/ai-resources/models" element={<PermissionPage permission={['model.provider.read', 'model.catalog.read']}><ModelsPage /></PermissionPage>} />
               <Route path="/ai-resources/gateway" element={<PermissionPage permission="model.gateway.read"><ModelGatewayPage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
@@ -224,12 +233,12 @@ export function App() {
 
 function buildMenuItems(hasPermission: (permissionCode: string) => boolean): MenuProps['items'] {
   const identityItems = [
-    hasPermission('iam.user.read') ? { key: 'users', label: '用户' } : null,
-    hasPermission('iam.department.read') ? { key: 'departments', label: '部门' } : null,
-    hasPermission('iam.role.read') ? { key: 'roles', label: '角色与权限' } : null,
-    hasPermission('oidc.client.read') ? { key: 'applications', icon: <LinkOutlined />, label: '应用接入' } : null,
+    hasPermission('iam.user.read') ? { key: 'users', icon: <UserOutlined />, label: '用户' } : null,
+    hasPermission('iam.department.read') ? { key: 'departments', icon: <ApartmentOutlined />, label: '部门' } : null,
+    hasPermission('iam.role.read') ? { key: 'roles', icon: <IdcardOutlined />, label: '角色与权限' } : null,
   ].filter(Boolean) as NonNullable<MenuProps['items']>
 
+  const canReadApplications = hasPermission('oidc.client.read')
   const canReadModels = hasPermission('model.provider.read') || hasPermission('model.catalog.read')
   const canReadGateway = hasPermission('model.gateway.read')
 
@@ -238,9 +247,10 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
     identityItems.length ? {
       key: 'identity', icon: <TeamOutlined />, label: '身份与组织', children: identityItems,
     } : null,
-    canReadModels || canReadGateway ? {
+    canReadApplications || canReadModels || canReadGateway ? {
       key: 'ai-resources', icon: <AppstoreOutlined />, label: 'AI 资源管理', children: [
-        canReadModels ? { key: 'models', label: '模型目录' } : null,
+        canReadApplications ? { key: 'applications', icon: <LinkOutlined />, label: '应用接入' } : null,
+        canReadModels ? { key: 'models', icon: <ApiOutlined />, label: '模型目录' } : null,
         canReadGateway ? { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关' } : null,
       ].filter(Boolean),
     } : null,

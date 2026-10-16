@@ -87,7 +87,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		return nil, err
 	}
 	if cfg.OIDCSigningPrivateKey == "" {
-		logger.Warn("未配置 OIDC_SIGNING_PRIVATE_KEY，本次启动使用临时签名密钥；重启后现有 OIDC 令牌将失效")
+		logger.Warn("未配置固定 OIDC 签名私钥，本次启动使用临时签名密钥；重启后现有 OIDC 令牌将失效")
 	}
 	oidcProviderService, err := oidc.NewProviderService(oidcRepository, oidcSigner, cfg.OIDCIssuer)
 	if err != nil {

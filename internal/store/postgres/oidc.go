@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -296,6 +297,151 @@ func (r *OIDCRepository) FindProtocolClient(ctx context.Context, clientID string
 		return oidc.ProtocolClient{}, oidc.ErrClientNotFound
 	}
 	return item, err
+}
+
+func (r *OIDCRepository) HasAuthorizationConsent(ctx context.Context, organizationID, clientRecordID, userID string, scopes []string) (bool, error) {
+	var consented bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM oidc_user_consents
+			WHERE organization_id = $1 AND client_id = $2 AND user_id = $3
+			  AND revoked_at IS NULL AND scopes @> $4::TEXT[]
+		)
+	`, organizationID, clientRecordID, userID, scopes).Scan(&consented)
+	return consented, err
+}
+
+func (r *OIDCRepository) SaveAuthorizationConsent(ctx context.Context, input oidc.SaveConsentInput) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
+		INSERT INTO oidc_user_consents (
+			id, organization_id, client_id, user_id, scopes
+		) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (organization_id, client_id, user_id) DO UPDATE SET
+			scopes = CASE
+				WHEN oidc_user_consents.revoked_at IS NOT NULL THEN EXCLUDED.scopes
+				ELSE ARRAY(
+					SELECT DISTINCT scope
+					FROM unnest(oidc_user_consents.scopes || EXCLUDED.scopes) AS scope
+					ORDER BY scope
+				)
+			END,
+			granted_at = CASE
+				WHEN oidc_user_consents.revoked_at IS NOT NULL THEN NOW()
+				ELSE oidc_user_consents.granted_at
+			END,
+			updated_at = NOW(),
+			revoked_at = NULL
+	`, input.ID, input.OrganizationID, input.ClientRecordID, input.UserID, input.Scopes)
+	if err != nil {
+		return err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.UserID, RequestID: input.RequestID,
+		Action: "oidc.consent.grant", ResourceType: "oidc_client", ResourceID: input.ClientRecordID,
+		Result: "success", SourceIP: input.SourceIP, Detail: map[string]any{"scopes": input.Scopes},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *OIDCRepository) RecordAuthorizationDenial(ctx context.Context, input oidc.ConsentDecisionInput, clientRecordID string) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.Authorization.Subject.OrganizationID,
+		ActorID:        input.Authorization.Subject.ID,
+		RequestID:      input.RequestID,
+		Action:         "oidc.consent.deny",
+		ResourceType:   "oidc_client",
+		ResourceID:     clientRecordID,
+		Result:         "denied",
+		SourceIP:       input.SourceIP,
+		Detail:         map[string]any{"scopes": strings.Fields(input.Authorization.Scope)},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *OIDCRepository) ListAuthorizationConsents(ctx context.Context, organizationID, userID string) ([]oidc.UserConsent, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT uc.id, uc.client_id, c.client_id, c.name, c.application_type,
+		       uc.scopes, uc.granted_at, uc.updated_at
+		FROM oidc_user_consents uc
+		JOIN oidc_clients c
+		  ON c.organization_id = uc.organization_id AND c.id = uc.client_id
+		WHERE uc.organization_id = $1 AND uc.user_id = $2 AND uc.revoked_at IS NULL
+		ORDER BY uc.updated_at DESC
+	`, organizationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]oidc.UserConsent, 0)
+	for rows.Next() {
+		var item oidc.UserConsent
+		if err := rows.Scan(
+			&item.ID, &item.ClientRecordID, &item.ClientID, &item.ClientName,
+			&item.ApplicationType, &item.Scopes, &item.GrantedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *OIDCRepository) RevokeAuthorizationConsent(ctx context.Context, input oidc.RevokeConsentInput) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var clientRecordID string
+	err = tx.QueryRow(ctx, `
+		UPDATE oidc_user_consents
+		SET revoked_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND organization_id = $2 AND user_id = $3 AND revoked_at IS NULL
+		RETURNING client_id
+	`, input.ConsentID, input.OrganizationID, input.UserID).Scan(&clientRecordID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return oidc.ErrConsentNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `
+		UPDATE oidc_refresh_tokens
+		SET consumed_at = NOW()
+		WHERE organization_id = $1 AND client_id = $2 AND user_id = $3 AND consumed_at IS NULL
+	`, input.OrganizationID, clientRecordID, input.UserID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `
+		UPDATE oidc_authorization_codes
+		SET consumed_at = NOW()
+		WHERE organization_id = $1 AND client_id = $2 AND user_id = $3 AND consumed_at IS NULL
+	`, input.OrganizationID, clientRecordID, input.UserID); err != nil {
+		return err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.UserID, RequestID: input.RequestID,
+		Action: "oidc.consent.revoke", ResourceType: "oidc_client", ResourceID: clientRecordID,
+		Result: "success", SourceIP: input.SourceIP, Detail: map[string]any{"consentId": input.ConsentID},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *OIDCRepository) SaveAuthorizationGrant(ctx context.Context, grant oidc.AuthorizationGrant) error {

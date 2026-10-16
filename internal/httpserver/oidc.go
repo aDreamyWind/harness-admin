@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"harness-admin/internal/httpx"
+	"harness-admin/internal/identity"
 	oidcmodule "harness-admin/internal/oidc"
 )
 
@@ -28,6 +30,11 @@ type OIDCProviderService interface {
 	Issuer() string
 	JWKS() map[string]any
 	Authorize(context.Context, oidcmodule.AuthorizeInput) (oidcmodule.AuthorizationResult, error)
+	DescribeAuthorization(context.Context, oidcmodule.AuthorizeInput) (oidcmodule.AuthorizationRequest, error)
+	ApproveAuthorization(context.Context, oidcmodule.ConsentDecisionInput) (oidcmodule.AuthorizationResult, error)
+	DenyAuthorization(context.Context, oidcmodule.ConsentDecisionInput) (oidcmodule.AuthorizationResult, error)
+	ListUserConsents(context.Context, string, string) ([]oidcmodule.UserConsent, error)
+	RevokeUserConsent(context.Context, oidcmodule.RevokeConsentInput) error
 	ExchangeToken(context.Context, oidcmodule.TokenInput) (oidcmodule.TokenResult, error)
 	UserInfo(context.Context, string) (oidcmodule.UserInfo, error)
 	AuthenticateAccessToken(context.Context, string, string) (oidcmodule.Subject, error)
@@ -68,6 +75,33 @@ type oidcTokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
+type oidcConsentDecisionRequest struct {
+	Approved *bool `json:"approved"`
+}
+
+type oidcAuthorizationRequestResponse struct {
+	ClientName      string   `json:"clientName"`
+	ClientID        string   `json:"clientId"`
+	ApplicationType string   `json:"applicationType"`
+	RedirectURI     string   `json:"redirectUri"`
+	RedirectHost    string   `json:"redirectHost"`
+	Scopes          []string `json:"scopes"`
+}
+
+type oidcConsentResponse struct {
+	RedirectURI string `json:"redirectUri"`
+}
+
+type authorizedApplicationResponse struct {
+	ID              string    `json:"id"`
+	ClientID        string    `json:"clientId"`
+	ClientName      string    `json:"clientName"`
+	ApplicationType string    `json:"applicationType"`
+	Scopes          []string  `json:"scopes"`
+	GrantedAt       time.Time `json:"grantedAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
 func registerOIDCAdminRoutes(router *gin.Engine, deps Dependencies) {
 	clients := router.Group("/api/v1/oidc/clients", requireSession(deps))
 	clients.GET("", requirePermission(deps, "oidc.client.read"), listOIDCClientsHandler(deps))
@@ -82,8 +116,12 @@ func registerOIDCProviderRoutes(router *gin.Engine, deps Dependencies) {
 	router.GET("/.well-known/openid-configuration", oidcDiscoveryHandler(deps))
 	router.GET("/api/v1/oauth2/jwks", oidcJWKSHandler(deps))
 	router.GET("/api/v1/oauth2/authorize", oidcAuthorizeHandler(deps))
+	router.GET("/api/v1/oauth2/consent", requireSession(deps), oidcConsentDetailHandler(deps))
+	router.POST("/api/v1/oauth2/consent", requireSession(deps), requireCSRF(deps), oidcConsentDecisionHandler(deps))
 	router.POST("/api/v1/oauth2/token", oidcTokenHandler(deps))
 	router.GET("/api/v1/oauth2/userinfo", oidcUserInfoHandler(deps))
+	router.GET("/api/v1/account/authorized-applications", requireSession(deps), listAuthorizedApplicationsHandler(deps))
+	router.DELETE("/api/v1/account/authorized-applications/:id", requireSession(deps), requireCSRF(deps), revokeAuthorizedApplicationHandler(deps))
 }
 
 func oidcDiscoveryHandler(deps Dependencies) gin.HandlerFunc {
@@ -131,16 +169,7 @@ func oidcAuthorizeHandler(deps Dependencies) gin.HandlerFunc {
 			redirectToLogin(ctx, deps.ConsoleURL)
 			return
 		}
-		result, err := deps.OIDCProvider.Authorize(ctx.Request.Context(), oidcmodule.AuthorizeInput{
-			Subject: oidcmodule.Subject{
-				ID: session.User.ID, OrganizationID: session.User.OrganizationID,
-				Organization: session.User.Organization, OrganizationCode: session.User.OrganizationCode,
-				Username: session.User.Username, DisplayName: session.User.DisplayName, Email: session.User.Email,
-			},
-			ClientID: ctx.Query("client_id"), RedirectURI: ctx.Query("redirect_uri"),
-			Scope: ctx.Query("scope"), State: ctx.Query("state"), Nonce: ctx.Query("nonce"),
-			CodeChallenge: ctx.Query("code_challenge"), ChallengeMethod: ctx.Query("code_challenge_method"),
-		})
+		result, err := deps.OIDCProvider.Authorize(ctx.Request.Context(), authorizeInputFromContext(ctx, session))
 		if err != nil {
 			if !errors.Is(err, oidcmodule.ErrInvalidClient) && !errors.Is(err, oidcmodule.ErrInvalidInput) {
 				deps.Logger.Error("OIDC 授权失败", "error", err, "request_id", contextString(ctx, "request_id"))
@@ -150,8 +179,140 @@ func oidcAuthorizeHandler(deps Dependencies) gin.HandlerFunc {
 			oauthError(ctx, http.StatusBadRequest, "invalid_request", "授权请求不正确")
 			return
 		}
+		if result.ConsentRequired {
+			location := strings.TrimRight(deps.ConsoleURL, "/") + "/oauth/consent"
+			if ctx.Request.URL.RawQuery != "" {
+				location += "?" + ctx.Request.URL.RawQuery
+			}
+			ctx.Redirect(http.StatusFound, location)
+			return
+		}
 		ctx.Redirect(http.StatusFound, result.RedirectURI)
 	}
+}
+
+func oidcConsentDetailHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if ctx.Query("response_type") != "code" {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "仅支持授权码模式")
+			return
+		}
+		request, err := deps.OIDCProvider.DescribeAuthorization(
+			ctx.Request.Context(), authorizeInputFromContext(ctx, currentSession(ctx)),
+		)
+		if err != nil {
+			handleConsentError(ctx, deps.Logger, err)
+			return
+		}
+		redirect, _ := url.Parse(request.RedirectURI)
+		ctx.Header("Cache-Control", "no-store")
+		httpx.OK(ctx, http.StatusOK, oidcAuthorizationRequestResponse{
+			ClientName: request.ClientName, ClientID: request.ClientID,
+			ApplicationType: request.ApplicationType, RedirectURI: request.RedirectURI,
+			RedirectHost: redirect.Host, Scopes: request.Scopes,
+		})
+	}
+}
+
+func oidcConsentDecisionHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if ctx.Query("response_type") != "code" {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "仅支持授权码模式")
+			return
+		}
+		ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 4*1024)
+		var request oidcConsentDecisionRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil || request.Approved == nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "请选择同意或拒绝应用授权")
+			return
+		}
+		input := oidcmodule.ConsentDecisionInput{
+			Authorization: authorizeInputFromContext(ctx, currentSession(ctx)),
+			RequestID:     contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		}
+		var result oidcmodule.AuthorizationResult
+		var err error
+		if *request.Approved {
+			result, err = deps.OIDCProvider.ApproveAuthorization(ctx.Request.Context(), input)
+		} else {
+			result, err = deps.OIDCProvider.DenyAuthorization(ctx.Request.Context(), input)
+		}
+		if err != nil {
+			handleConsentError(ctx, deps.Logger, err)
+			return
+		}
+		ctx.Header("Cache-Control", "no-store")
+		httpx.OK(ctx, http.StatusOK, oidcConsentResponse{RedirectURI: result.RedirectURI})
+	}
+}
+
+func listAuthorizedApplicationsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		items, err := deps.OIDCProvider.ListUserConsents(
+			ctx.Request.Context(), session.User.OrganizationID, session.User.ID,
+		)
+		if err != nil {
+			deps.Logger.Error("查询用户应用授权失败", "error", err, "request_id", contextString(ctx, "request_id"))
+			httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "已授权应用暂时无法读取")
+			return
+		}
+		response := make([]authorizedApplicationResponse, 0, len(items))
+		for _, item := range items {
+			response = append(response, authorizedApplicationResponse{
+				ID: item.ID, ClientID: item.ClientID, ClientName: item.ClientName,
+				ApplicationType: item.ApplicationType, Scopes: item.Scopes,
+				GrantedAt: item.GrantedAt, UpdatedAt: item.UpdatedAt,
+			})
+		}
+		httpx.OK(ctx, http.StatusOK, response)
+	}
+}
+
+func revokeAuthorizedApplicationHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if _, err := uuid.Parse(ctx.Param("id")); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "应用授权标识格式不正确")
+			return
+		}
+		session := currentSession(ctx)
+		err := deps.OIDCProvider.RevokeUserConsent(ctx.Request.Context(), oidcmodule.RevokeConsentInput{
+			OrganizationID: session.User.OrganizationID, UserID: session.User.ID,
+			ConsentID: ctx.Param("id"), RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if errors.Is(err, oidcmodule.ErrConsentNotFound) {
+			httpx.Fail(ctx, http.StatusNotFound, "consent_not_found", "应用授权不存在或已经撤销")
+			return
+		}
+		if err != nil {
+			deps.Logger.Error("撤销用户应用授权失败", "error", err, "request_id", contextString(ctx, "request_id"))
+			httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "应用授权暂时无法撤销")
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, gin.H{"revoked": true})
+	}
+}
+
+func authorizeInputFromContext(ctx *gin.Context, session identity.Session) oidcmodule.AuthorizeInput {
+	return oidcmodule.AuthorizeInput{
+		Subject: oidcmodule.Subject{
+			ID: session.User.ID, OrganizationID: session.User.OrganizationID,
+			Organization: session.User.Organization, OrganizationCode: session.User.OrganizationCode,
+			Username: session.User.Username, DisplayName: session.User.DisplayName, Email: session.User.Email,
+		},
+		ClientID: ctx.Query("client_id"), RedirectURI: ctx.Query("redirect_uri"),
+		Scope: ctx.Query("scope"), State: ctx.Query("state"), Nonce: ctx.Query("nonce"),
+		CodeChallenge: ctx.Query("code_challenge"), ChallengeMethod: ctx.Query("code_challenge_method"),
+	}
+}
+
+func handleConsentError(ctx *gin.Context, logger *slog.Logger, err error) {
+	if errors.Is(err, oidcmodule.ErrInvalidClient) || errors.Is(err, oidcmodule.ErrInvalidInput) {
+		httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "授权请求不正确或应用不可用")
+		return
+	}
+	logger.Error("OIDC 用户授权处理失败", "error", err, "request_id", contextString(ctx, "request_id"))
+	httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "授权服务暂时不可用")
 }
 
 func oidcTokenHandler(deps Dependencies) gin.HandlerFunc {

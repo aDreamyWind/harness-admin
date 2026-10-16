@@ -30,6 +30,11 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	oidcSigningPrivateKey, err := oidcSigningPrivateKeyValue()
+	if err != nil {
+		return Config{}, err
+	}
+
 	redisDB, err := intValue("REDIS_DB", 0)
 	if err != nil {
 		return Config{}, err
@@ -65,7 +70,7 @@ func Load() (Config, error) {
 		ModelCredentialKey:    value("MODEL_CREDENTIAL_MASTER_KEY", "aGFybmVzcy1hZG1pbi1kZXYtbW9kZWwta2V5LTAwMDE="),
 		ModelPrivateHosts:     csvValue("MODEL_PROVIDER_PRIVATE_HOSTS"),
 		OIDCIssuer:            strings.TrimRight(value("OIDC_ISSUER", "http://localhost:8080"), "/"),
-		OIDCSigningPrivateKey: os.Getenv("OIDC_SIGNING_PRIVATE_KEY"),
+		OIDCSigningPrivateKey: oidcSigningPrivateKey,
 		ConsoleURL:            strings.TrimRight(value("CONSOLE_URL", "http://localhost:5173"), "/"),
 	}
 	if cfg.SessionTTL < 15*time.Minute || cfg.SessionTTL > 30*24*time.Hour {
@@ -88,7 +93,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("production 环境的 OIDC_ISSUER 必须使用 HTTPS")
 	}
 	if cfg.Environment == "production" && strings.TrimSpace(cfg.OIDCSigningPrivateKey) == "" {
-		return Config{}, fmt.Errorf("production 环境必须配置 OIDC_SIGNING_PRIVATE_KEY")
+		return Config{}, fmt.Errorf("production 环境必须配置 OIDC_SIGNING_PRIVATE_KEY 或 OIDC_SIGNING_PRIVATE_KEY_FILE")
 	}
 	consoleURL, consoleErr := url.Parse(cfg.ConsoleURL)
 	if consoleErr != nil || !consoleURL.IsAbs() || consoleURL.Host == "" || consoleURL.RawQuery != "" || consoleURL.Fragment != "" {
@@ -99,6 +104,29 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func oidcSigningPrivateKeyValue() (string, error) {
+	inlineValue := strings.TrimSpace(os.Getenv("OIDC_SIGNING_PRIVATE_KEY"))
+	filePath := strings.TrimSpace(os.Getenv("OIDC_SIGNING_PRIVATE_KEY_FILE"))
+	if inlineValue != "" && filePath != "" {
+		return "", fmt.Errorf("OIDC_SIGNING_PRIVATE_KEY 和 OIDC_SIGNING_PRIVATE_KEY_FILE 只能配置一个")
+	}
+	if inlineValue != "" {
+		return inlineValue, nil
+	}
+	if filePath == "" {
+		return "", nil
+	}
+
+	contents, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("读取 OIDC 签名私钥文件 %q 失败: %w", filePath, err)
+	}
+	if strings.TrimSpace(string(contents)) == "" {
+		return "", fmt.Errorf("OIDC 签名私钥文件 %q 不能为空", filePath)
+	}
+	return string(contents), nil
 }
 
 func csvValue(key string) []string {

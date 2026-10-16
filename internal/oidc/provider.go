@@ -48,21 +48,92 @@ func (s *ProviderService) Issuer() string       { return s.issuer }
 func (s *ProviderService) JWKS() map[string]any { return s.signer.JWKS() }
 
 func (s *ProviderService) Authorize(ctx context.Context, input AuthorizeInput) (AuthorizationResult, error) {
+	client, request, err := s.validateAuthorization(ctx, input)
+	if err != nil {
+		return AuthorizationResult{}, err
+	}
+	consented, err := s.repository.HasAuthorizationConsent(
+		ctx, client.OrganizationID, client.ID, input.Subject.ID, request.Scopes,
+	)
+	if err != nil {
+		return AuthorizationResult{}, fmt.Errorf("检查用户应用授权失败: %w", err)
+	}
+	if !consented {
+		return AuthorizationResult{ConsentRequired: true, Request: request}, nil
+	}
+	return s.issueAuthorization(ctx, client, input, request.Scopes)
+}
+
+func (s *ProviderService) DescribeAuthorization(ctx context.Context, input AuthorizeInput) (AuthorizationRequest, error) {
+	_, request, err := s.validateAuthorization(ctx, input)
+	return request, err
+}
+
+func (s *ProviderService) ApproveAuthorization(ctx context.Context, input ConsentDecisionInput) (AuthorizationResult, error) {
+	client, request, err := s.validateAuthorization(ctx, input.Authorization)
+	if err != nil {
+		return AuthorizationResult{}, err
+	}
+	if err := s.repository.SaveAuthorizationConsent(ctx, SaveConsentInput{
+		ID: uuid.NewString(), OrganizationID: client.OrganizationID, ClientRecordID: client.ID,
+		UserID: input.Authorization.Subject.ID, Scopes: request.Scopes,
+		RequestID: input.RequestID, SourceIP: input.SourceIP,
+	}); err != nil {
+		return AuthorizationResult{}, fmt.Errorf("保存用户应用授权失败: %w", err)
+	}
+	return s.issueAuthorization(ctx, client, input.Authorization, request.Scopes)
+}
+
+func (s *ProviderService) DenyAuthorization(ctx context.Context, input ConsentDecisionInput) (AuthorizationResult, error) {
+	client, _, err := s.validateAuthorization(ctx, input.Authorization)
+	if err != nil {
+		return AuthorizationResult{}, err
+	}
+	if err := s.repository.RecordAuthorizationDenial(ctx, input, client.ID); err != nil {
+		return AuthorizationResult{}, fmt.Errorf("记录用户拒绝授权失败: %w", err)
+	}
+	redirect, _ := url.Parse(input.Authorization.RedirectURI)
+	query := redirect.Query()
+	query.Set("error", "access_denied")
+	query.Set("error_description", "用户拒绝了应用授权")
+	if input.Authorization.State != "" {
+		query.Set("state", input.Authorization.State)
+	}
+	redirect.RawQuery = query.Encode()
+	return AuthorizationResult{RedirectURI: redirect.String()}, nil
+}
+
+func (s *ProviderService) ListUserConsents(ctx context.Context, organizationID, userID string) ([]UserConsent, error) {
+	return s.repository.ListAuthorizationConsents(ctx, organizationID, userID)
+}
+
+func (s *ProviderService) RevokeUserConsent(ctx context.Context, input RevokeConsentInput) error {
+	return s.repository.RevokeAuthorizationConsent(ctx, input)
+}
+
+func (s *ProviderService) validateAuthorization(ctx context.Context, input AuthorizeInput) (ProtocolClient, AuthorizationRequest, error) {
 	if input.Subject.ID == "" || input.Subject.OrganizationID == "" || input.ClientID == "" {
-		return AuthorizationResult{}, ErrInvalidInput
+		return ProtocolClient{}, AuthorizationRequest{}, ErrInvalidInput
 	}
 	client, err := s.repository.FindProtocolClient(ctx, input.ClientID)
 	if err != nil || client.Status != "active" || client.OrganizationID != input.Subject.OrganizationID {
-		return AuthorizationResult{}, ErrInvalidClient
+		return ProtocolClient{}, AuthorizationRequest{}, ErrInvalidClient
 	}
 	if !redirectURIAllowed(client.Client, input.RedirectURI) {
-		return AuthorizationResult{}, ErrInvalidInput
+		return ProtocolClient{}, AuthorizationRequest{}, ErrInvalidInput
 	}
 	scopes := normalizeValues(strings.Fields(input.Scope), true)
 	if len(scopes) == 0 || !slices.Contains(scopes, "openid") || !scopesAllowed(scopes, client.AllowedScopes) ||
 		input.ChallengeMethod != "S256" || !validCodeChallenge(input.CodeChallenge) || len(input.Nonce) > 255 {
-		return AuthorizationResult{}, ErrInvalidInput
+		return ProtocolClient{}, AuthorizationRequest{}, ErrInvalidInput
 	}
+	return client, AuthorizationRequest{
+		ClientName: client.Name, ClientID: client.ClientID, ApplicationType: client.ApplicationType,
+		RedirectURI: input.RedirectURI, Scopes: scopes,
+	}, nil
+}
+
+func (s *ProviderService) issueAuthorization(ctx context.Context, client ProtocolClient, input AuthorizeInput, scopes []string) (AuthorizationResult, error) {
 	code, err := s.newCode()
 	if err != nil {
 		return AuthorizationResult{}, fmt.Errorf("生成授权码失败: %w", err)

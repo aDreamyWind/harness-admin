@@ -173,7 +173,7 @@ export function ApplicationAccessPage() {
   return (
     <main>
       {messageContext}
-      <section className="module-heading"><Text className="module-kicker">身份与组织 / 应用接入</Text></section>
+      <section className="module-heading"><Text className="module-kicker">AI 资源管理 / 应用接入</Text></section>
 
       <section className="application-access-protocol" aria-label="统一登录协议">
         <div><SafetyCertificateOutlined /><span><small>接入协议</small><strong>OpenID Connect</strong></span></div>

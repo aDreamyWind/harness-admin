@@ -14,6 +14,7 @@ var (
 	ErrInvalidClient           = errors.New("客户端认证失败")
 	ErrInvalidGrant            = errors.New("授权凭据无效或已过期")
 	ErrInvalidToken            = errors.New("访问令牌无效或已过期")
+	ErrConsentNotFound         = errors.New("应用授权不存在或已经撤销")
 )
 
 const (
@@ -150,6 +151,11 @@ type RefreshGrant struct {
 
 type ProviderRepository interface {
 	FindProtocolClient(context.Context, string) (ProtocolClient, error)
+	HasAuthorizationConsent(context.Context, string, string, string, []string) (bool, error)
+	SaveAuthorizationConsent(context.Context, SaveConsentInput) error
+	RecordAuthorizationDenial(context.Context, ConsentDecisionInput, string) error
+	ListAuthorizationConsents(context.Context, string, string) ([]UserConsent, error)
+	RevokeAuthorizationConsent(context.Context, RevokeConsentInput) error
 	SaveAuthorizationGrant(context.Context, AuthorizationGrant) error
 	ExchangeAuthorizationGrant(context.Context, []byte, string, string, string) (AuthorizationGrant, error)
 	SaveRefreshGrant(context.Context, RefreshGrant) error
@@ -169,7 +175,52 @@ type AuthorizeInput struct {
 }
 
 type AuthorizationResult struct {
-	RedirectURI string
+	RedirectURI     string
+	ConsentRequired bool
+	Request         AuthorizationRequest
+}
+
+type AuthorizationRequest struct {
+	ClientName      string
+	ClientID        string
+	ApplicationType string
+	RedirectURI     string
+	Scopes          []string
+}
+
+type ConsentDecisionInput struct {
+	Authorization AuthorizeInput
+	RequestID     string
+	SourceIP      string
+}
+
+type SaveConsentInput struct {
+	ID             string
+	OrganizationID string
+	ClientRecordID string
+	UserID         string
+	Scopes         []string
+	RequestID      string
+	SourceIP       string
+}
+
+type RevokeConsentInput struct {
+	OrganizationID string
+	UserID         string
+	ConsentID      string
+	RequestID      string
+	SourceIP       string
+}
+
+type UserConsent struct {
+	ID              string
+	ClientRecordID  string
+	ClientID        string
+	ClientName      string
+	ApplicationType string
+	Scopes          []string
+	GrantedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type TokenInput struct {

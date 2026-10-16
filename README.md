@@ -137,7 +137,7 @@ go run ./cmd/server
 - `PATCH /api/v1/oidc/clients/{oidcClientId}/status`
 - `POST /api/v1/oidc/clients/{oidcClientId}/rotate-secret`
 
-企业管理员可在“身份与组织 / 应用接入”登记 DeepSeek Harness 等独立系统，配置登录回调地址和 `openid`、`profile`、`email`、`model.invoke`、`offline_access` 授权范围。应用类型分为：
+企业管理员可在“AI 资源管理 / 应用接入”登记 DeepSeek Harness 等独立系统，配置登录回调地址和 `openid`、`profile`、`email`、`model.invoke`、`offline_access` 授权范围。应用类型分为：
 
 - 桌面应用：作为 OAuth 公开客户端，不生成客户端密钥，必须使用 PKCE S256。登记 `http://127.0.0.1/oauth/callback` 后，员工电脑上的实际回调可使用随机端口。
 - 服务端应用：回调地址精确匹配，客户端密钥加密保存，具备管理权限时可再次查看。
@@ -148,11 +148,25 @@ OIDC 协议端点：
 
 - `GET /.well-known/openid-configuration`
 - `GET /api/v1/oauth2/authorize`
+- `GET /api/v1/oauth2/consent`
+- `POST /api/v1/oauth2/consent`
 - `POST /api/v1/oauth2/token`
 - `GET /api/v1/oauth2/userinfo`
 - `GET /api/v1/oauth2/jwks`
+- `GET /api/v1/account/authorized-applications`
+- `DELETE /api/v1/account/authorized-applications/{consentId}`
 
-协议采用 Authorization Code + PKCE S256，身份令牌和访问令牌使用 RS256 签名，刷新令牌每次使用后自动轮换。`OIDC_ISSUER` 用于配置外部系统可访问的签发者地址，默认是 `http://localhost:8080`；`CONSOLE_URL` 用于配置未登录时跳转的控制台地址，本地默认是 `http://localhost:5173`。生产环境必须为两者配置 HTTPS 地址，并提供 PEM 格式 RSA 私钥 `OIDC_SIGNING_PRIVATE_KEY`；开发环境未配置私钥时会在启动时生成临时密钥，服务重启后旧令牌会失效。
+协议采用 Authorization Code + PKCE S256。用户首次使用应用或应用新增申请范围时，Harness Admin 会显示独立授权确认页；已经同意且范围未增加时直接继续。用户可在“账号与安全 / 已授权应用”中撤销授权，撤销后未兑换授权码和刷新令牌立即失效，已经签发的访问令牌在最长一小时内自然到期，下次登录需要重新确认。身份令牌和访问令牌使用 RS256 签名，刷新令牌每次使用后自动轮换。`OIDC_ISSUER` 用于配置外部系统可访问的签发者地址，默认是 `http://localhost:8080`；`CONSOLE_URL` 用于配置登录页和授权确认页地址，本地默认是 `http://localhost:5173`。生产环境必须为两者配置 HTTPS 地址，并通过 `OIDC_SIGNING_PRIVATE_KEY` 直接注入 PEM 格式 RSA 私钥，或使用 `OIDC_SIGNING_PRIVATE_KEY_FILE` 指向挂载的私钥文件。两种方式只能选择一种；都未配置时，开发环境会在启动时生成临时密钥，服务重启后旧令牌会失效。
+
+本地开发建议生成一份不入库的固定密钥：
+
+```bash
+mkdir -p .secrets
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out .secrets/oidc-signing-private-key.pem
+chmod 600 .secrets/oidc-signing-private-key.pem
+```
+
+然后在 `.env` 中配置 `OIDC_SIGNING_PRIVATE_KEY_FILE=.secrets/oidc-signing-private-key.pem`。`.secrets/` 已被 Git 忽略；生产环境应由密钥管理系统生成或挂载独立密钥，不要复用本地开发密钥。
 
 模型接入接口：
 

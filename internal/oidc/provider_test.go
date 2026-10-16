@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,11 +129,61 @@ func TestDesktopClientUsesPKCEWithoutSecretAndAllowsRandomLoopbackPort(t *testin
 	}
 }
 
+func TestProviderRequiresConsentBeforeIssuingAuthorizationCode(t *testing.T) {
+	repository := newProviderRepositoryStub()
+	repository.consented = false
+	signer, _ := NewRS256Signer("")
+	service, _ := NewProviderService(repository, signer, "https://id.example.com")
+	service.newCode = func() (string, error) { return "consented-code", nil }
+	verifierDigest := sha256.Sum256([]byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"))
+	input := AuthorizeInput{
+		Subject: repository.subject, ClientID: repository.client.ClientID,
+		RedirectURI: repository.client.RedirectURIs[0], Scope: "openid model.invoke",
+		State: "state-1", CodeChallenge: encodeSegment(verifierDigest[:]), ChallengeMethod: "S256",
+	}
+
+	result, err := service.Authorize(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Authorize() 返回错误: %v", err)
+	}
+	if !result.ConsentRequired || result.Request.ClientName != repository.client.Name || repository.grant.ID != "" {
+		t.Fatalf("首次授权应先要求用户确认: %#v", result)
+	}
+
+	approved, err := service.ApproveAuthorization(context.Background(), ConsentDecisionInput{Authorization: input})
+	if err != nil {
+		t.Fatalf("ApproveAuthorization() 返回错误: %v", err)
+	}
+	if !repository.consented || repository.grant.ID == "" || approved.RedirectURI != "https://deepseek.example.com/callback?code=consented-code&state=state-1" {
+		t.Fatalf("同意授权后未正确签发授权码: %#v", approved)
+	}
+}
+
+func TestProviderDenialReturnsOAuthError(t *testing.T) {
+	repository := newProviderRepositoryStub()
+	signer, _ := NewRS256Signer("")
+	service, _ := NewProviderService(repository, signer, "https://id.example.com")
+	verifierDigest := sha256.Sum256([]byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~"))
+	result, err := service.DenyAuthorization(context.Background(), ConsentDecisionInput{Authorization: AuthorizeInput{
+		Subject: repository.subject, ClientID: repository.client.ClientID,
+		RedirectURI: repository.client.RedirectURIs[0], Scope: "openid",
+		State: "state-1", CodeChallenge: encodeSegment(verifierDigest[:]), ChallengeMethod: "S256",
+	}})
+	if err != nil {
+		t.Fatalf("DenyAuthorization() 返回错误: %v", err)
+	}
+	if !strings.Contains(result.RedirectURI, "error=access_denied") || !strings.Contains(result.RedirectURI, "state=state-1") || !repository.denied {
+		t.Fatalf("拒绝授权回调不正确: %s", result.RedirectURI)
+	}
+}
+
 type providerRepositoryStub struct {
-	client  ProtocolClient
-	subject Subject
-	grant   AuthorizationGrant
-	refresh RefreshGrant
+	client    ProtocolClient
+	subject   Subject
+	grant     AuthorizationGrant
+	refresh   RefreshGrant
+	consented bool
+	denied    bool
 }
 
 func newProviderRepositoryStub() *providerRepositoryStub {
@@ -144,7 +195,8 @@ func newProviderRepositoryStub() *providerRepositoryStub {
 			RedirectURIs:  []string{"https://deepseek.example.com/callback"},
 			AllowedScopes: []string{"openid", "profile", "email", "model.invoke", "offline_access"}, Status: "active",
 		}, ClientSecretHash: digest[:]},
-		subject: Subject{ID: "user-1", OrganizationID: "org-1", Organization: "测试企业", OrganizationCode: "test", Username: "admin", DisplayName: "管理员", Email: "admin@example.com"},
+		subject:   Subject{ID: "user-1", OrganizationID: "org-1", Organization: "测试企业", OrganizationCode: "test", Username: "admin", DisplayName: "管理员", Email: "admin@example.com"},
+		consented: true,
 	}
 }
 
@@ -153,6 +205,29 @@ func (r *providerRepositoryStub) FindProtocolClient(_ context.Context, clientID 
 		return ProtocolClient{}, ErrClientNotFound
 	}
 	return r.client, nil
+}
+
+func (r *providerRepositoryStub) HasAuthorizationConsent(context.Context, string, string, string, []string) (bool, error) {
+	return r.consented, nil
+}
+
+func (r *providerRepositoryStub) SaveAuthorizationConsent(_ context.Context, input SaveConsentInput) error {
+	r.consented = true
+	return nil
+}
+
+func (r *providerRepositoryStub) RecordAuthorizationDenial(context.Context, ConsentDecisionInput, string) error {
+	r.denied = true
+	return nil
+}
+
+func (*providerRepositoryStub) ListAuthorizationConsents(context.Context, string, string) ([]UserConsent, error) {
+	return nil, nil
+}
+
+func (r *providerRepositoryStub) RevokeAuthorizationConsent(context.Context, RevokeConsentInput) error {
+	r.consented = false
+	return nil
 }
 
 func (r *providerRepositoryStub) SaveAuthorizationGrant(_ context.Context, grant AuthorizationGrant) error {
