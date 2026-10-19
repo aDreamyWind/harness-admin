@@ -1124,6 +1124,29 @@ select {
   white-space: nowrap;
 }
 
+.policy-department-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.policy-department-tree {
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+  padding: 8px;
+  background: #fbfdff;
+}
+
+.policy-department-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.policy-department-label small {
+  color: #7b8999;
+  font-size: 11px;
+}
+
 .user-identity-cell {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);

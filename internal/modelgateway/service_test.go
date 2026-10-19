@@ -65,7 +65,7 @@ func (*repositoryStub) ListCalls(context.Context, CallQuery) (CallPage, error) {
 
 func TestCreateAPIKeyPersistsHashAndEncryptedSecretInput(t *testing.T) {
 	repository := &repositoryStub{}
-	service := NewService(repository, nil)
+	service := NewService(repository, nil, &policyRepositoryStub{})
 	service.now = func() time.Time { return time.Date(2026, 10, 13, 8, 0, 0, 0, time.UTC) }
 	service.newSecret = func() (string, error) { return "harness_sk_abcdefghijklmnopqrstuvwxyz0123456789", nil }
 
@@ -98,7 +98,7 @@ func TestPrepareRewritesModelCodeToUpstreamModelID(t *testing.T) {
 			ProviderID: "provider-1", ProviderStatus: "active", ProviderBaseURL: "https://api.deepseek.com", ProviderAPIKey: "secret", ProviderTimeoutMS: 15000,
 		},
 	}
-	service := NewService(repository, nil)
+	service := NewService(repository, nil, &policyRepositoryStub{})
 	prepared, err := service.Prepare(context.Background(), "harness_sk_abcdefghijklmnopqrstuvwxyz0123456789", []byte(`{"model":"DEEPSEEK_CHAT","messages":[],"stream":true}`))
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestPrepareForUserKeepsOIDCCallerIdentity(t *testing.T) {
 		ModelID: "model-1", ModelCode: "main", ModelStatus: "active", UpstreamModelID: "upstream-main",
 		ProviderID: "provider-1", ProviderStatus: "active",
 	}}
-	prepared, err := NewService(repository, nil).PrepareForUser(
+	prepared, err := NewService(repository, nil, &policyRepositoryStub{}).PrepareForUser(
 		context.Background(), "org-1", "user-1", []byte(`{"model":"main","messages":[]}`),
 	)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestPrepareForUserKeepsOIDCCallerIdentity(t *testing.T) {
 func TestPrepareRejectsRevokedAndExpiredKeys(t *testing.T) {
 	now := time.Date(2026, 10, 13, 8, 0, 0, 0, time.UTC)
 	repository := &repositoryStub{apiKey: APIKey{ID: "key-1", OrganizationID: "org-1", Status: "revoked"}}
-	service := NewService(repository, nil)
+	service := NewService(repository, nil, &policyRepositoryStub{})
 	service.now = func() time.Time { return now }
 	_, err := service.Prepare(context.Background(), "harness_sk_abcdefghijklmnopqrstuvwxyz0123456789", []byte(`{"model":"main"}`))
 	if !errors.Is(err, ErrAPIKeyRevoked) {
@@ -155,7 +155,7 @@ func TestPrepareEnforcesModelScopeRateLimitAndMonthlyQuota(t *testing.T) {
 	repository := &repositoryStub{apiKey: APIKey{
 		ID: "key-1", OrganizationID: "org-1", Status: "active", AllowedModelCodes: []string{"other"},
 	}}
-	service := NewService(repository, nil)
+	service := NewService(repository, nil, &policyRepositoryStub{})
 	if _, err := service.Prepare(context.Background(), credential, body); !errors.Is(err, ErrModelNotAllowed) {
 		t.Fatalf("模型范围错误 = %v", err)
 	}
@@ -170,7 +170,7 @@ func TestPrepareEnforcesModelScopeRateLimitAndMonthlyQuota(t *testing.T) {
 	repository.apiKey.MonthlyTokenLimit = 0
 	repository.apiKey.RequestsPerMinute = 2
 	limiter := &requestLimiterStub{allowed: false}
-	service = NewService(repository, limiter)
+	service = NewService(repository, limiter, &policyRepositoryStub{})
 	if _, err := service.Prepare(context.Background(), credential, body); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("每分钟限流错误 = %v", err)
 	}
@@ -181,7 +181,7 @@ func TestPrepareEnforcesModelScopeRateLimitAndMonthlyQuota(t *testing.T) {
 
 func TestCreateAPIKeyNormalizesAllowedModelCodes(t *testing.T) {
 	repository := &repositoryStub{}
-	service := NewService(repository, nil)
+	service := NewService(repository, nil, &policyRepositoryStub{})
 	service.newSecret = func() (string, error) { return "harness_sk_abcdefghijklmnopqrstuvwxyz0123456789", nil }
 	_, err := service.CreateAPIKey(context.Background(), CreateAPIKeyInput{
 		OrganizationID: "org-1", ActorID: "user-1", Name: "生产调用",

@@ -33,6 +33,8 @@ type ModelGatewayService interface {
 	PrepareForUser(context.Context, string, string, []byte) (modelgateway.PreparedRequest, error)
 	RecordCall(context.Context, modelgateway.RecordCallInput) error
 	ListCalls(context.Context, modelgateway.CallQuery) (modelgateway.CallPage, error)
+	ListModelsForAPIKey(context.Context, string) ([]modelgateway.AvailableModel, error)
+	ListModelsForUser(context.Context, string, string) ([]modelgateway.AvailableModel, error)
 }
 
 type ModelGatewayForwarder interface {
@@ -102,6 +104,41 @@ func registerModelGatewayRoutes(router *gin.Engine, deps Dependencies) {
 	admin.GET("/calls", requirePermission(deps, "model.gateway.read"), listGatewayCallsHandler(deps))
 
 	router.POST("/v1/chat/completions", chatCompletionsGatewayHandler(deps))
+	router.GET("/v1/models", listGatewayModelsHandler(deps))
+}
+
+func listGatewayModelsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		credential := bearerCredential(ctx.GetHeader("Authorization"))
+		var items []modelgateway.AvailableModel
+		var err error
+		if strings.HasPrefix(credential, "harness_sk_") {
+			items, err = deps.ModelGateway.ListModelsForAPIKey(ctx.Request.Context(), credential)
+		} else if deps.OIDCProvider != nil {
+			var subject oidcmodule.Subject
+			subject, err = deps.OIDCProvider.AuthenticateAccessToken(ctx.Request.Context(), credential, "model.invoke")
+			if err == nil {
+				items, err = deps.ModelGateway.ListModelsForUser(ctx.Request.Context(), subject.OrganizationID, subject.ID)
+			} else {
+				err = modelgateway.ErrInvalidCredential
+			}
+		} else {
+			err = modelgateway.ErrInvalidCredential
+		}
+		if err != nil {
+			handleGatewayRequestError(ctx, deps.Logger, err)
+			return
+		}
+		data := make([]gin.H, 0, len(items))
+		for _, item := range items {
+			data = append(data, gin.H{
+				"id": item.Code, "object": "model", "created": item.CreatedAt.Unix(), "owned_by": "harness-admin",
+				"name": item.Name, "capabilities": item.Capabilities,
+			})
+		}
+		ctx.Header("Cache-Control", "no-store")
+		ctx.JSON(http.StatusOK, gin.H{"object": "list", "data": data})
+	}
 }
 
 func listGatewayAPIKeysHandler(deps Dependencies) gin.HandlerFunc {
@@ -398,7 +435,8 @@ func recordGatewayCall(deps Dependencies, ctx *gin.Context, prepared modelgatewa
 	err := deps.ModelGateway.RecordCall(recordCtx, modelgateway.RecordCallInput{
 		OrganizationID: prepared.Caller.OrganizationID, APIKeyID: prepared.Caller.APIKeyID,
 		UserID: prepared.Caller.UserID, AuthType: prepared.Caller.AuthType,
-		ModelID: prepared.Route.ModelID, ProviderID: prepared.Route.ProviderID,
+		DepartmentID: prepared.Caller.DepartmentID,
+		ModelID:      prepared.Route.ModelID, ProviderID: prepared.Route.ProviderID,
 		RequestID: contextString(ctx, "request_id"), ModelCode: prepared.Route.ModelCode,
 		UpstreamModelID: prepared.Route.UpstreamModelID, Streaming: prepared.Streaming,
 		Result: result, HTTPStatus: status, LatencyMS: latency.Milliseconds(),

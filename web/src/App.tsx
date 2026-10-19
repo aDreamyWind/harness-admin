@@ -33,6 +33,7 @@ import { RolesPage } from './pages/RolesPage'
 import { UsersPage } from './pages/UsersPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { ModelGatewayPage } from './pages/ModelGatewayPage'
+import { ModelPoliciesPage } from './pages/ModelPoliciesPage'
 import { ApplicationAccessPage } from './pages/ApplicationAccessPage'
 
 const { Header, Sider, Content } = Layout
@@ -45,6 +46,7 @@ const menuRoutes: Record<string, string> = {
   applications: '/ai-resources/applications',
   models: '/ai-resources/models',
   gateway: '/ai-resources/gateway',
+  policies: '/ai-resources/policies',
   audit: '/audit',
   settings: '/settings/organization',
 }
@@ -93,6 +95,8 @@ export function App() {
           ? 'models'
           : location.pathname.startsWith('/ai-resources/gateway')
             ? 'gateway'
+          : location.pathname.startsWith('/ai-resources/policies')
+            ? 'policies'
         : location.pathname.startsWith('/audit')
           ? 'audit'
           : location.pathname.startsWith('/settings/organization')
@@ -219,6 +223,7 @@ export function App() {
               <Route path="/ai-resources/applications" element={<PermissionPage permission="oidc.client.read"><ApplicationAccessPage /></PermissionPage>} />
               <Route path="/ai-resources/models" element={<PermissionPage permission={['model.provider.read', 'model.catalog.read']}><ModelsPage /></PermissionPage>} />
               <Route path="/ai-resources/gateway" element={<PermissionPage permission="model.gateway.read"><ModelGatewayPage /></PermissionPage>} />
+              <Route path="/ai-resources/policies" element={<PermissionPage permission="model.policy.read"><ModelPoliciesPage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
               <Route path="/settings/organization" element={<PermissionPage permission="iam.organization.read"><OrganizationSettingsPage /></PermissionPage>} />
               <Route path="/account/security" element={<AccountSecurityPage />} />
@@ -241,17 +246,19 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
   const canReadApplications = hasPermission('oidc.client.read')
   const canReadModels = hasPermission('model.provider.read') || hasPermission('model.catalog.read')
   const canReadGateway = hasPermission('model.gateway.read')
+  const canReadPolicies = hasPermission('model.policy.read')
 
   return [
     { key: 'overview', icon: <DashboardOutlined />, label: '首页' },
     identityItems.length ? {
       key: 'identity', icon: <TeamOutlined />, label: '身份与组织', children: identityItems,
     } : null,
-    canReadApplications || canReadModels || canReadGateway ? {
+    canReadApplications || canReadModels || canReadGateway || canReadPolicies ? {
       key: 'ai-resources', icon: <AppstoreOutlined />, label: 'AI 资源管理', children: [
         canReadApplications ? { key: 'applications', icon: <LinkOutlined />, label: '应用接入' } : null,
         canReadModels ? { key: 'models', icon: <ApiOutlined />, label: '模型目录' } : null,
         canReadGateway ? { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关' } : null,
+        canReadPolicies ? { key: 'policies', icon: <SafetyCertificateOutlined />, label: '模型策略' } : null,
       ].filter(Boolean),
     } : null,
     { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },

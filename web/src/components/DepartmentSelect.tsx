@@ -13,14 +13,14 @@ export function DepartmentSelect({ departments, excludeDepartmentId, ...props }:
     const excluded = collectDepartmentAndDescendants(departments, excludeDepartmentId)
     const paths = buildDepartmentPaths(departments)
     return departments
-      .filter((department) => department.status === 'active' && !excluded.has(department.id))
+      .filter((department) => (department.status === 'active' || department.id === props.value) && !excluded.has(department.id))
       .map((department) => ({
         value: department.id,
         label: department.name,
         pathLabel: paths.get(department.id) ?? department.name,
         searchText: `${department.name} ${paths.get(department.id) ?? ''}`.toLocaleLowerCase('zh-CN'),
       }))
-  }, [departments, excludeDepartmentId])
+  }, [departments, excludeDepartmentId, props.value])
 
   return (
     <Select

@@ -77,7 +77,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelRepository := pgstore.NewModelAdminRepository(db, credentialCipher)
 	modelAdminService := modeladmin.NewService(modelRepository, modelprovider.NewProber(cfg.ModelPrivateHosts))
 	modelGatewayRepository := pgstore.NewModelGatewayRepository(db, credentialCipher)
-	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient))
+	modelPolicyRepository := pgstore.NewModelPolicyRepository(db)
+	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient), modelPolicyRepository)
+	modelPolicyService := modelgateway.NewPolicyService(modelPolicyRepository)
 	oidcRepository := pgstore.NewOIDCRepository(db, credentialCipher)
 	oidcService := oidc.NewService(oidcRepository)
 	oidcSigner, err := oidc.NewRS256Signer(cfg.OIDCSigningPrivateKey)
@@ -111,6 +113,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		AuditEvents:           auditEventService,
 		ModelAdmin:            modelAdminService,
 		ModelGateway:          modelGatewayService,
+		ModelPolicy:           modelPolicyService,
 		GatewayForwarder:      modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts),
 		OIDCAdmin:             oidcService,
 		OIDCProvider:          oidcProviderService,

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.17.0
+  version: 0.19.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -1238,6 +1238,83 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ModelCatalogEnvelope' }
+  /model-policies:
+    get:
+      summary: 查询部门和用户的模型策略
+      operationId: listModelPolicies
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 当前企业的模型策略及本月用量，需要 `model.policy.read` 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelPolicyListEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /model-policies/departments:
+    put:
+      summary: 批量设置部门模型策略
+      description: 在一个事务中为所列部门分别设置相同策略，各部门的共享额度池独立。只对请求中明确列出的部门生效，不自动覆盖现有或今后新增的下级部门。需要 `model.policy.write` 权限。
+      operationId: saveDepartmentModelPolicies
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveDepartmentModelPoliciesRequest' }
+      responses:
+        '200':
+          description: 所选部门的策略已原子保存。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelPolicyListEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 一个或多个部门不属于当前企业。 }
+  /model-policies/{subjectType}/{subjectId}:
+    parameters:
+      - name: subjectType
+        in: path
+        required: true
+        schema: { type: string, enum: [department, user] }
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      summary: 设置部门或用户的模型策略
+      description: 用户模型范围可覆盖其所属部门的模型范围；所属部门及用户的月度额度同时生效，上级部门策略不穿透。每分钟请求上限始终按用户独立计算。需要 `model.policy.write` 权限。
+      operationId: saveModelPolicy
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveModelPolicyRequest' }
+      responses:
+        '200':
+          description: 策略已保存。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelPolicyEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 部门或用户不属于当前企业。 }
+    delete:
+      summary: 删除部门或用户的模型策略
+      description: 删除策略后恢复默认规则；对应的月度策略用量一并删除。需要 `model.policy.write` 权限。
+      operationId: deleteModelPolicy
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        '200': { description: 策略已删除。 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 策略不存在。 }
   /model-gateway/api-keys:
     get:
       summary: 查询当前企业的模型网关调用密钥
@@ -1372,12 +1449,29 @@ paths:
               schema: { $ref: '#/components/schemas/GatewayCallPageEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/models:
+    servers:
+      - url: /
+    get:
+      summary: OpenAI 兼容可用模型目录
+      description: 使用网关调用密钥或带 `model.invoke` scope 的 OIDC 用户令牌；只返回当前身份有权使用且模型与供应商均已启用的模型。
+      operationId: listGatewayModels
+      security:
+        - gatewayBearer: []
+        - oidcBearer: []
+      responses:
+        '200':
+          description: OpenAI 兼容模型列表。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenAIModelList' }
+        '401': { description: 调用身份无效、已吊销或已过期。 }
   /v1/chat/completions:
     servers:
       - url: /
     post:
       summary: OpenAI 兼容聊天补全入口
-      description: 使用企业模型编码选择已启用的模型，支持流式与非流式响应透传。可使用网关调用密钥，或包含 `model.invoke` scope 的 OIDC 用户访问令牌。
+      description: 使用企业模型编码选择已启用且当前身份有权调用的模型，支持流式与非流式响应透传。可使用网关调用密钥，或包含 `model.invoke` scope 的 OIDC 用户访问令牌。用户调用还受部门共享及个人请求上限、月度额度约束。
       operationId: gatewayChatCompletions
       security:
         - gatewayBearer: []
@@ -1401,10 +1495,10 @@ paths:
           description: 上游 OpenAI 兼容响应，流式调用返回 `text/event-stream`。
         '400': { description: 请求格式不正确。 }
         '401': { description: 调用密钥无效、已吊销或已过期。 }
-        '403': { description: 调用密钥无权访问请求的模型。 }
+        '403': { description: 当前调用身份无权访问请求的模型。 }
         '404': { description: 模型编码不存在。 }
         '409': { description: 模型或供应商连接已停用。 }
-        '429': { description: 超过每分钟请求限制，或当月 Token 额度已用尽。 }
+        '429': { description: 超过调用身份、部门或用户的每分钟请求限制，或当月 Token 额度已用尽。 }
         '502': { description: 无法连接模型供应商。 }
 components:
   securitySchemes:
@@ -1796,6 +1890,67 @@ components:
         status: { type: string, enum: [active, disabled] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    SaveModelPolicyRequest:
+      type: object
+      required: [scopeMode, requestsPerMinute, monthlyTokenLimit]
+      properties:
+        scopeMode: { type: string, enum: [inherit, all, selected, none], description: '用户策略 inherit 使用所属部门范围；部门策略不应使用 inherit。selected 必须提供非空模型编码。' }
+        allowedModelCodes:
+          type: array
+          items: { type: string }
+        requestsPerMinute: { type: integer, minimum: 0, maximum: 100000, description: '0 表示不限；部门及用户策略均按每名用户独立限流。' }
+        monthlyTokenLimit: { type: integer, format: int64, minimum: 0, description: 'UTC 自然月 Token 额度，0 表示不限。' }
+        monthlyTokenMode: { type: string, enum: [shared, per_user], default: shared, description: '部门策略选择共享或每名用户独立；用户策略只能使用 shared（其额度本身属于该用户）。' }
+    SaveDepartmentModelPoliciesRequest:
+      allOf:
+        - $ref: '#/components/schemas/SaveModelPolicyRequest'
+        - type: object
+          required: [subjectIds, monthlyTokenMode]
+          properties:
+            subjectIds:
+              type: array
+              minItems: 1
+              maxItems: 10000
+              uniqueItems: true
+              items: { type: string, format: uuid }
+    ModelPolicy:
+      type: object
+      required: [subjectType, subjectId, subjectName, scopeMode, requestsPerMinute, monthlyTokenLimit, monthlyTokenMode, monthlyTokenUsed, createdAt, updatedAt]
+      properties:
+        subjectType: { type: string, enum: [department, user] }
+        subjectId: { type: string, format: uuid }
+        subjectName: { type: string }
+        scopeMode: { type: string, enum: [inherit, all, selected, none] }
+        allowedModelCodes:
+          type: array
+          nullable: true
+          items: { type: string }
+        requestsPerMinute: { type: integer }
+        monthlyTokenLimit: { type: integer, format: int64 }
+        monthlyTokenMode: { type: string, enum: [shared, per_user] }
+        monthlyTokenUsed: { type: integer, format: int64, description: '该部门或用户本月已用 Token 合计；部门 per_user 模式下不是单个用户的用量。' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    OpenAIModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object: { type: string, enum: [list] }
+        data:
+          type: array
+          items:
+            type: object
+            required: [id, object, created, owned_by]
+            properties:
+              id: { type: string, description: 企业模型编码。 }
+              object: { type: string, enum: [model] }
+              created: { type: integer, format: int64, description: Unix 秒时间戳。 }
+              owned_by: { type: string, enum: [harness-admin] }
+              name: { type: string, description: Harness Admin 中配置的模型显示名称。 }
+              capabilities:
+                type: array
+                description: Harness Admin 中配置的模型能力代码。
+                items: { type: string }
     CreateGatewayAPIKeyRequest:
       type: object
       required: [name]
@@ -2212,6 +2367,18 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/ModelCatalogEntry' }
+    ModelPolicyEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ModelPolicy' }
+    ModelPolicyListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ModelPolicy' }
     GatewayAPIKeyEnvelope:
       type: object
       required: [data]

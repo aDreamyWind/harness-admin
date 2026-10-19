@@ -31,6 +31,7 @@ type Dependencies struct {
 	AuditEvents           AuditEventService
 	ModelAdmin            ModelAdminService
 	ModelGateway          ModelGatewayService
+	ModelPolicy           ModelPolicyService
 	GatewayForwarder      ModelGatewayForwarder
 	OIDCAdmin             OIDCAdminService
 	OIDCProvider          OIDCProviderService
@@ -95,6 +96,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.ModelGateway != nil && deps.GatewayForwarder != nil {
 		registerModelGatewayRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.Access != nil && deps.ModelPolicy != nil {
+		registerModelPolicyRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.OIDCAdmin != nil {
 		registerOIDCAdminRoutes(router, deps)

@@ -46,6 +46,9 @@ const actionLabels: Record<string, string> = {
   'oidc.consent.grant': '同意应用授权',
   'oidc.consent.deny': '拒绝应用授权',
   'oidc.consent.revoke': '撤销应用授权',
+  'model.policy.save': '保存模型策略',
+  'model.policy.batch_save': '批量保存部门模型策略',
+  'model.policy.delete': '删除模型策略',
   'test_data.organization_tree.seed': '生成测试组织',
 }
 

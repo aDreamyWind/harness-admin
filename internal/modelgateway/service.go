@@ -21,13 +21,14 @@ var gatewayModelCodePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,79}$`)
 
 type Service struct {
 	repository Repository
+	policy     PolicyRepository
 	limiter    RequestLimiter
 	now        func() time.Time
 	newSecret  func() (string, error)
 }
 
-func NewService(repository Repository, limiter RequestLimiter) *Service {
-	return &Service{repository: repository, limiter: limiter, now: time.Now, newSecret: generateSecret}
+func NewService(repository Repository, limiter RequestLimiter, policy PolicyRepository) *Service {
+	return &Service{repository: repository, limiter: limiter, policy: policy, now: time.Now, newSecret: generateSecret}
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context, organizationID string) ([]APIKey, error) {
@@ -156,7 +157,55 @@ func (s *Service) PrepareForUser(ctx context.Context, organizationID, userID str
 	if organizationID == "" || userID == "" {
 		return PreparedRequest{}, ErrInvalidCredential
 	}
-	return s.prepareForCaller(ctx, Caller{OrganizationID: organizationID, UserID: userID, AuthType: "user"}, body, nil)
+	if s.policy == nil {
+		return PreparedRequest{}, errors.New("模型策略仓储未配置")
+	}
+	caller := Caller{OrganizationID: organizationID, UserID: userID, AuthType: "user"}
+	snapshot, err := s.policy.FindUserPolicy(ctx, organizationID, userID)
+	if err != nil {
+		return PreparedRequest{}, fmt.Errorf("查询用户模型策略失败: %w", err)
+	}
+	caller.DepartmentID = snapshot.DepartmentID
+	allowed := effectiveUserModels(snapshot)
+	prepared, err := s.prepareForCaller(ctx, caller, body, allowed)
+	if err != nil {
+		return PreparedRequest{}, err
+	}
+	policies := []*SubjectPolicy{snapshot.UserPolicy, snapshot.DepartmentPolicy}
+	for _, policy := range policies {
+		if policy != nil && policy.MonthlyTokenLimit > 0 && policy.MonthlyTokenUsed >= policy.MonthlyTokenLimit {
+			if policy.SubjectType == "department" {
+				if policy.MonthlyTokenMode == "per_user" {
+					return PreparedRequest{}, fmt.Errorf("部门策略的个人额度已用尽: %w", ErrMonthlyQuota)
+				}
+				return PreparedRequest{}, fmt.Errorf("部门共享额度已用尽: %w", ErrMonthlyQuota)
+			}
+			return PreparedRequest{}, fmt.Errorf("个人额度已用尽: %w", ErrMonthlyQuota)
+		}
+	}
+	for _, policy := range policies {
+		if policy == nil || policy.RequestsPerMinute == 0 {
+			continue
+		}
+		if s.limiter == nil {
+			return PreparedRequest{}, errors.New("模型网关限流器未配置")
+		}
+		key := "policy:" + organizationID + ":" + policy.SubjectType + ":" + policy.SubjectID
+		if policy.SubjectType == "department" {
+			key += ":user:" + userID
+		}
+		ok, err := s.limiter.Allow(ctx, key, policy.RequestsPerMinute)
+		if err != nil {
+			return PreparedRequest{}, fmt.Errorf("检查用户模型调用频率失败: %w", err)
+		}
+		if !ok {
+			if policy.SubjectType == "department" {
+				return PreparedRequest{}, fmt.Errorf("部门策略的个人每分钟请求次数已达上限: %w", ErrRateLimited)
+			}
+			return PreparedRequest{}, fmt.Errorf("个人每分钟请求次数已达上限: %w", ErrRateLimited)
+		}
+	}
+	return prepared, nil
 }
 
 func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []byte, allowedModelCodes []string) (PreparedRequest, error) {
@@ -169,7 +218,8 @@ func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []by
 		return PreparedRequest{}, ErrInvalidInput
 	}
 	modelCode = strings.ToLower(strings.TrimSpace(modelCode))
-	if caller.AuthType == "api_key" && !modelAllowed(allowedModelCodes, modelCode) {
+	if (caller.AuthType == "api_key" && !modelAllowed(allowedModelCodes, modelCode)) ||
+		(caller.AuthType == "user" && !policyModelAllowed(allowedModelCodes, modelCode)) {
 		return PreparedRequest{}, ErrModelNotAllowed
 	}
 	var streaming bool
@@ -233,6 +283,56 @@ func (s *Service) ListCalls(ctx context.Context, query CallQuery) (CallPage, err
 		return CallPage{}, fmt.Errorf("查询模型网关调用记录失败: %w", err)
 	}
 	return items, nil
+}
+
+func (s *Service) ListModelsForUser(ctx context.Context, organizationID, userID string) ([]AvailableModel, error) {
+	if organizationID == "" || userID == "" || s.policy == nil {
+		return nil, ErrInvalidCredential
+	}
+	snapshot, err := s.policy.FindUserPolicy(ctx, organizationID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("查询用户模型策略失败: %w", err)
+	}
+	return s.listAvailableModels(ctx, organizationID, effectiveUserModels(snapshot))
+}
+
+func (s *Service) ListModelsForAPIKey(ctx context.Context, credential string) ([]AvailableModel, error) {
+	if !strings.HasPrefix(credential, gatewayKeyPrefix) || len(credential) < len(gatewayKeyPrefix)+20 || s.policy == nil {
+		return nil, ErrInvalidCredential
+	}
+	digest := sha256.Sum256([]byte(credential))
+	key, err := s.repository.FindAPIKeyByHash(ctx, digest[:])
+	if errors.Is(err, ErrAPIKeyNotFound) {
+		return nil, ErrInvalidCredential
+	}
+	if err != nil {
+		return nil, fmt.Errorf("校验模型网关调用密钥失败: %w", err)
+	}
+	if key.Status != "active" {
+		return nil, ErrAPIKeyRevoked
+	}
+	if key.ExpiresAt != nil && !key.ExpiresAt.After(s.now()) {
+		return nil, ErrAPIKeyExpired
+	}
+	allowed := key.AllowedModelCodes
+	if len(allowed) == 0 {
+		allowed = nil
+	}
+	return s.listAvailableModels(ctx, key.OrganizationID, allowed)
+}
+
+func (s *Service) listAvailableModels(ctx context.Context, organizationID string, allowed []string) ([]AvailableModel, error) {
+	items, err := s.policy.ListAvailableModels(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("查询可用模型目录失败: %w", err)
+	}
+	result := make([]AvailableModel, 0, len(items))
+	for _, item := range items {
+		if policyModelAllowed(allowed, strings.ToLower(item.Code)) {
+			result = append(result, item)
+		}
+	}
+	return result, nil
 }
 
 func normalizeModelCodes(values []string) []string {

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,7 +50,7 @@ func (s *modelGatewayStub) Prepare(_ context.Context, credential string, body []
 	return modelgateway.PreparedRequest{
 		Caller: modelgateway.Caller{OrganizationID: "org-1", APIKeyID: "key-1", AuthType: "api_key"},
 		Route:  modelgateway.Route{ModelID: "model-1", ModelCode: "main", UpstreamModelID: "upstream-main", ProviderID: "provider-1"},
-		Body:   body,
+		Body:   body, Streaming: strings.Contains(string(body), `"stream":true`),
 	}, nil
 }
 func (s *modelGatewayStub) PrepareForUser(_ context.Context, organizationID, userID string, body []byte) (modelgateway.PreparedRequest, error) {
@@ -68,6 +69,12 @@ func (s *modelGatewayStub) ListCalls(_ context.Context, query modelgateway.CallQ
 	s.listQuery = query
 	return modelgateway.CallPage{Items: []modelgateway.Call{}, Total: 21, Page: query.Page, PageSize: query.PageSize}, nil
 }
+func (*modelGatewayStub) ListModelsForAPIKey(context.Context, string) ([]modelgateway.AvailableModel, error) {
+	return []modelgateway.AvailableModel{{Code: "main", CreatedAt: time.Unix(100, 0)}}, nil
+}
+func (*modelGatewayStub) ListModelsForUser(context.Context, string, string) ([]modelgateway.AvailableModel, error) {
+	return []modelgateway.AvailableModel{{Code: "main", CreatedAt: time.Unix(100, 0)}}, nil
+}
 
 type gatewayForwarderStub struct{}
 
@@ -76,6 +83,21 @@ func (gatewayForwarderStub) Forward(context.Context, modelgateway.Route, []byte,
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"id":"chat-1","usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`)),
+	}, nil
+}
+
+type streamingForwarderStub struct{}
+
+func (streamingForwarderStub) Forward(_ context.Context, _ modelgateway.Route, _ []byte, streaming bool) (*http.Response, error) {
+	if !streaming {
+		return nil, errors.New("期望流式转发")
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call-1\",\"type\":\"function\"}]}}]}\n\n" +
+			"data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":5,\"total_tokens\":8}}\n\n" +
+			"data: [DONE]\n\n")),
 	}, nil
 }
 
@@ -191,6 +213,26 @@ func TestChatCompletionsAcceptsOIDCUserAccessToken(t *testing.T) {
 	}
 	if gateway.recorded.AuthType != "user" || gateway.recorded.UserID != "user-1" || gateway.recorded.OrganizationID != "org-1" {
 		t.Fatalf("用户调用记录身份不完整: %#v", gateway.recorded)
+	}
+}
+
+func TestChatCompletionsPreservesStreamingToolCallsAndUsage(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
+		ModelGateway: gateway, GatewayForwarder: streamingForwarderStub{}, SessionCookie: "test_session",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"main","messages":[{"role":"user","content":[{"type":"text","text":"你好"},{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}],"stream":true}`))
+	request.Header.Set("Authorization", "Bearer harness_sk_abcdefghijklmnopqrstuvwxyz0123456789")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"tool_calls"`) ||
+		!strings.Contains(response.Body.String(), "data: [DONE]") || gateway.recorded.TotalTokens != 8 || !gateway.recorded.Streaming {
+		t.Fatalf("流式工具调用或用量转发异常: status=%d response=%s record=%#v", response.Code, response.Body.String(), gateway.recorded)
+	}
+	if !strings.Contains(gateway.requestBody, `"image_url"`) {
+		t.Fatalf("多模态请求未传入网关: %s", gateway.requestBody)
 	}
 }
 

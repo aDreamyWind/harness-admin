@@ -287,6 +287,48 @@ func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgate
 		if err != nil {
 			return err
 		}
+	} else if input.AuthType == "user" {
+		_, err = tx.Exec(ctx, `INSERT INTO model_subject_monthly_usage (
+			organization_id, subject_type, subject_id, usage_month, request_count, total_tokens
+		) SELECT p.organization_id, p.subject_type, p.subject_id,
+			DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::DATE, 1, $3
+		FROM model_subject_policies p
+		WHERE p.organization_id = $1 AND p.subject_type = 'user' AND p.subject_id = $2
+		ON CONFLICT (organization_id, subject_type, subject_id, usage_month) DO UPDATE
+		SET request_count = model_subject_monthly_usage.request_count + 1,
+			total_tokens = model_subject_monthly_usage.total_tokens + EXCLUDED.total_tokens,
+			updated_at = NOW()`, input.OrganizationID, input.UserID, input.TotalTokens)
+		if err != nil {
+			return err
+		}
+		if input.DepartmentID != "" {
+			_, err = tx.Exec(ctx, `INSERT INTO model_subject_monthly_usage (
+				organization_id, subject_type, subject_id, usage_month, request_count, total_tokens
+			) SELECT p.organization_id, p.subject_type, p.subject_id,
+				DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::DATE, 1, $3
+			FROM model_subject_policies p
+			WHERE p.organization_id = $1 AND p.subject_type = 'department' AND p.subject_id = $2
+			ON CONFLICT (organization_id, subject_type, subject_id, usage_month) DO UPDATE
+			SET request_count = model_subject_monthly_usage.request_count + 1,
+				total_tokens = model_subject_monthly_usage.total_tokens + EXCLUDED.total_tokens,
+				updated_at = NOW()`, input.OrganizationID, input.DepartmentID, input.TotalTokens)
+			if err != nil {
+				return err
+			}
+			_, err = tx.Exec(ctx, `INSERT INTO model_department_user_monthly_usage (
+				organization_id, subject_type, subject_id, user_id, usage_month, request_count, total_tokens
+			) SELECT p.organization_id, p.subject_type, p.subject_id, $3,
+				DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::DATE, 1, $4
+			FROM model_subject_policies p
+			WHERE p.organization_id = $1 AND p.subject_type = 'department' AND p.subject_id = $2
+			ON CONFLICT (organization_id, subject_id, user_id, usage_month) DO UPDATE
+			SET request_count = model_department_user_monthly_usage.request_count + 1,
+				total_tokens = model_department_user_monthly_usage.total_tokens + EXCLUDED.total_tokens,
+				updated_at = NOW()`, input.OrganizationID, input.DepartmentID, input.UserID, input.TotalTokens)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit(ctx)
 }
