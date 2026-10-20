@@ -21,6 +21,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -140,14 +141,14 @@ export function ModelsPage() {
 
   function openProviderCreate() {
     setEditingProvider(null)
-    providerForm.setFieldsValue({ code: '', name: '', providerKind: 'openai_compatible', baseUrl: providerPresetByKind.get('openai_compatible')?.baseUrl, apiKey: '', requestTimeoutMs: 15000 })
+    providerForm.setFieldsValue({ code: '', name: '', providerKind: 'openai_compatible', baseUrl: providerPresetByKind.get('openai_compatible')?.baseUrl, apiKey: '', requestTimeoutMs: 15000, streamUsageEnabled: false })
     saveProvider.reset()
     setProviderModalOpen(true)
   }
 
   function openProviderEdit(provider: ModelProvider) {
     setEditingProvider(provider)
-    providerForm.setFieldsValue({ code: provider.code, name: provider.name, providerKind: provider.providerKind, baseUrl: provider.baseUrl, apiKey: '', requestTimeoutMs: provider.requestTimeoutMs })
+    providerForm.setFieldsValue({ code: provider.code, name: provider.name, providerKind: provider.providerKind, baseUrl: provider.baseUrl, apiKey: '', requestTimeoutMs: provider.requestTimeoutMs, streamUsageEnabled: provider.streamUsageEnabled })
     saveProvider.reset()
     setProviderModalOpen(true)
   }
@@ -304,6 +305,7 @@ export function ModelsPage() {
             <Form.Item label={editingProvider ? '替换 API Key' : 'API Key'} name="apiKey" extra={editingProvider ? '留空表示继续使用当前凭据。' : '密钥将加密保存。'} rules={editingProvider ? [] : [{ required: true, message: '请输入 API Key' }]}><Input.Password autoComplete="new-password" placeholder={editingProvider ? '不修改请留空' : '输入供应商访问密钥'} /></Form.Item>
             <Form.Item label="请求超时（毫秒）" name="requestTimeoutMs" rules={[{ required: true }]}><InputNumber min={1000} max={120000} step={1000} style={{ width: '100%' }} /></Form.Item>
           </div>
+          <Form.Item label="请求流式 Token 用量" name="streamUsageEnabled" valuePropName="checked" extra="默认关闭。确认上游支持 stream_options.include_usage 后再开启；不支持时可能拒绝流式请求，网关不会自动重试。"><Switch /></Form.Item>
         </Form>
       </Modal>
 

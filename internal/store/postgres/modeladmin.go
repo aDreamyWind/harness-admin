@@ -25,7 +25,7 @@ func NewModelAdminRepository(pool *pgxpool.Pool, cipher *secret.Cipher) *ModelAd
 }
 
 const providerColumns = `
-	p.id, p.code, p.name, p.provider_kind, p.base_url, p.status, p.request_timeout_ms,
+	p.id, p.code, p.name, p.provider_kind, p.base_url, p.status, p.request_timeout_ms, p.stream_usage_enabled,
 	EXISTS (SELECT 1 FROM model_provider_credentials c WHERE c.provider_connection_id = p.id),
 	p.last_probe_status, p.last_probe_at, p.created_at, p.updated_at
 `
@@ -65,9 +65,9 @@ func (r *ModelAdminRepository) CreateProvider(ctx context.Context, input modelad
 	providerID := uuid.NewString()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO model_provider_connections (
-			id, organization_id, code, name, provider_kind, base_url, request_timeout_ms
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, providerID, input.OrganizationID, input.Code, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS)
+			id, organization_id, code, name, provider_kind, base_url, request_timeout_ms, stream_usage_enabled
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, providerID, input.OrganizationID, input.Code, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS, input.StreamUsageEnabled)
 	if err != nil {
 		return modeladmin.Provider{}, translateProviderWriteError(err)
 	}
@@ -81,7 +81,7 @@ func (r *ModelAdminRepository) CreateProvider(ctx context.Context, input modelad
 		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
 		Action: "model.provider.create", ResourceType: "model_provider", ResourceID: providerID,
 		Result: "success", SourceIP: input.SourceIP,
-		Detail: map[string]any{"code": input.Code, "name": input.Name, "providerKind": input.ProviderKind, "baseUrl": input.BaseURL},
+		Detail: map[string]any{"code": input.Code, "name": input.Name, "providerKind": input.ProviderKind, "baseUrl": input.BaseURL, "streamUsageEnabled": input.StreamUsageEnabled},
 	}); err != nil {
 		return modeladmin.Provider{}, err
 	}
@@ -103,9 +103,10 @@ func (r *ModelAdminRepository) UpdateProvider(ctx context.Context, input modelad
 	defer tx.Rollback(ctx)
 	command, err := tx.Exec(ctx, `
 		UPDATE model_provider_connections
-		SET name = $1, provider_kind = $2, base_url = $3, request_timeout_ms = $4, updated_at = NOW()
-		WHERE id = $5 AND organization_id = $6
-	`, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS, input.ProviderID, input.OrganizationID)
+		SET name = $1, provider_kind = $2, base_url = $3, request_timeout_ms = $4,
+		    stream_usage_enabled = COALESCE($5, stream_usage_enabled), updated_at = NOW()
+		WHERE id = $6 AND organization_id = $7
+	`, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS, input.StreamUsageEnabled, input.ProviderID, input.OrganizationID)
 	if err != nil {
 		return modeladmin.Provider{}, err
 	}
@@ -131,7 +132,7 @@ func (r *ModelAdminRepository) UpdateProvider(ctx context.Context, input modelad
 		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
 		Action: "model.provider.update", ResourceType: "model_provider", ResourceID: input.ProviderID,
 		Result: "success", SourceIP: input.SourceIP,
-		Detail: map[string]any{"name": input.Name, "providerKind": input.ProviderKind, "baseUrl": input.BaseURL, "credentialRotated": credentialRotated},
+		Detail: map[string]any{"name": input.Name, "providerKind": input.ProviderKind, "baseUrl": input.BaseURL, "streamUsageEnabled": input.StreamUsageEnabled, "credentialRotated": credentialRotated},
 	}); err != nil {
 		return modeladmin.Provider{}, err
 	}
@@ -189,7 +190,7 @@ func (r *ModelAdminRepository) GetProviderCredential(ctx context.Context, organi
 	var ciphertext []byte
 	err := row.Scan(
 		&credential.Provider.ID, &credential.Provider.Code, &credential.Provider.Name, &credential.Provider.ProviderKind,
-		&credential.Provider.BaseURL, &credential.Provider.Status, &credential.Provider.RequestTimeoutMS,
+		&credential.Provider.BaseURL, &credential.Provider.Status, &credential.Provider.RequestTimeoutMS, &credential.Provider.StreamUsageEnabled,
 		&credential.Provider.CredentialConfigured, &credential.Provider.LastProbeStatus, &credential.Provider.LastProbeAt,
 		&credential.Provider.CreatedAt, &credential.Provider.UpdatedAt, &ciphertext,
 	)
@@ -462,7 +463,7 @@ func ensureProviderOwnership(ctx context.Context, queryer interface {
 func scanProvider(row rowScanner) (modeladmin.Provider, error) {
 	var provider modeladmin.Provider
 	err := row.Scan(&provider.ID, &provider.Code, &provider.Name, &provider.ProviderKind, &provider.BaseURL,
-		&provider.Status, &provider.RequestTimeoutMS, &provider.CredentialConfigured, &provider.LastProbeStatus,
+		&provider.Status, &provider.RequestTimeoutMS, &provider.StreamUsageEnabled, &provider.CredentialConfigured, &provider.LastProbeStatus,
 		&provider.LastProbeAt, &provider.CreatedAt, &provider.UpdatedAt)
 	return provider, err
 }

@@ -28,12 +28,13 @@ type ModelAdminService interface {
 }
 
 type providerWriteRequest struct {
-	Code             string  `json:"code"`
-	Name             string  `json:"name"`
-	ProviderKind     string  `json:"providerKind"`
-	BaseURL          string  `json:"baseUrl"`
-	APIKey           *string `json:"apiKey"`
-	RequestTimeoutMS int     `json:"requestTimeoutMs"`
+	Code               string  `json:"code"`
+	Name               string  `json:"name"`
+	ProviderKind       string  `json:"providerKind"`
+	BaseURL            string  `json:"baseUrl"`
+	APIKey             *string `json:"apiKey"`
+	RequestTimeoutMS   int     `json:"requestTimeoutMs"`
+	StreamUsageEnabled *bool   `json:"streamUsageEnabled"`
 }
 
 type statusWriteRequest struct {
@@ -59,6 +60,7 @@ type providerResponse struct {
 	BaseURL              string     `json:"baseUrl"`
 	Status               string     `json:"status"`
 	RequestTimeoutMS     int        `json:"requestTimeoutMs"`
+	StreamUsageEnabled   bool       `json:"streamUsageEnabled"`
 	CredentialConfigured bool       `json:"credentialConfigured"`
 	LastProbeStatus      string     `json:"lastProbeStatus"`
 	LastProbeAt          *time.Time `json:"lastProbeAt,omitempty"`
@@ -127,7 +129,8 @@ func createProviderHandler(deps Dependencies) gin.HandlerFunc {
 		provider, err := deps.ModelAdmin.CreateProvider(ctx.Request.Context(), modeladmin.CreateProviderInput{
 			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, Code: request.Code,
 			Name: request.Name, ProviderKind: request.ProviderKind, BaseURL: request.BaseURL, APIKey: *request.APIKey,
-			RequestTimeoutMS: request.RequestTimeoutMS, RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+			RequestTimeoutMS: request.RequestTimeoutMS, StreamUsageEnabled: request.StreamUsageEnabled != nil && *request.StreamUsageEnabled,
+			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
 		})
 		if err != nil {
 			handleModelAdminError(ctx, deps.Logger, err)
@@ -150,7 +153,8 @@ func updateProviderHandler(deps Dependencies) gin.HandlerFunc {
 		provider, err := deps.ModelAdmin.UpdateProvider(ctx.Request.Context(), modeladmin.UpdateProviderInput{
 			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, ProviderID: ctx.Param("id"),
 			Name: request.Name, ProviderKind: request.ProviderKind, BaseURL: request.BaseURL, APIKey: request.APIKey, RequestTimeoutMS: request.RequestTimeoutMS,
-			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+			StreamUsageEnabled: request.StreamUsageEnabled,
+			RequestID:          contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
 		})
 		if err != nil {
 			handleModelAdminError(ctx, deps.Logger, err)
@@ -329,7 +333,7 @@ func validUUIDParam(ctx *gin.Context, resource string) bool {
 
 func presentProvider(item modeladmin.Provider) providerResponse {
 	return providerResponse{ID: item.ID, Code: item.Code, Name: item.Name, ProviderKind: item.ProviderKind, BaseURL: item.BaseURL,
-		Status: item.Status, RequestTimeoutMS: item.RequestTimeoutMS, CredentialConfigured: item.CredentialConfigured,
+		Status: item.Status, RequestTimeoutMS: item.RequestTimeoutMS, StreamUsageEnabled: item.StreamUsageEnabled, CredentialConfigured: item.CredentialConfigured,
 		LastProbeStatus: item.LastProbeStatus, LastProbeAt: item.LastProbeAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }
 

@@ -165,6 +165,77 @@ func TestPrepareRewritesModelCodeToUpstreamModelID(t *testing.T) {
 	}
 }
 
+func TestPrepareRequestsStreamUsageOnlyForEnabledProvider(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		enabled     bool
+		body        string
+		wantOptions string
+	}{
+		{name: "默认关闭", body: `{"model":"main","stream":true}`},
+		{name: "开启流式用量", enabled: true, body: `{"model":"main","stream":true}`, wantOptions: `{"include_usage":true}`},
+		{name: "保留已有选项并覆盖用量开关", enabled: true, body: `{"model":"main","stream":true,"stream_options":{"other":"keep","include_usage":false}}`, wantOptions: `{"other":"keep","include_usage":true}`},
+		{name: "非流式不添加选项", enabled: true, body: `{"model":"main","stream":false}`},
+		{name: "关闭时保留客户端选项", body: `{"model":"main","stream":true,"stream_options":{"include_usage":true}}`, wantOptions: `{"include_usage":true}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &repositoryStub{route: Route{
+				ModelID: "model-1", ModelStatus: "active", UpstreamModelID: "upstream-main",
+				ProviderID: "provider-1", ProviderStatus: "active", ProviderStreamUsageEnabled: test.enabled,
+			}}
+			prepared, err := NewService(repository, nil, nil).prepareForCaller(context.Background(),
+				Caller{OrganizationID: "org-1", UserID: "user-1", AuthType: "user"}, []byte(test.body), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload map[string]json.RawMessage
+			if err := json.Unmarshal(prepared.Body, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if string(payload["model"]) != `"upstream-main"` {
+				t.Fatalf("模型未改写: %s", prepared.Body)
+			}
+			options, found := payload["stream_options"]
+			if test.wantOptions == "" {
+				if found {
+					t.Fatalf("意外添加流式选项: %s", prepared.Body)
+				}
+				return
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal(options, &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(test.wantOptions), &want); err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(want) {
+				t.Fatalf("流式选项不匹配: %#v", got)
+			}
+			for key, value := range want {
+				if got[key] != value {
+					t.Fatalf("流式选项不匹配: %#v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareRejectsMalformedStreamOptionsWhenProviderRequestsUsage(t *testing.T) {
+	repository := &repositoryStub{route: Route{
+		ModelID: "model-1", ModelStatus: "active", UpstreamModelID: "upstream-main",
+		ProviderID: "provider-1", ProviderStatus: "active", ProviderStreamUsageEnabled: true,
+	}}
+	for _, options := range []string{`null`, `[]`, `"invalid"`} {
+		body := []byte(`{"model":"main","stream":true,"stream_options":` + options + `}`)
+		_, err := NewService(repository, nil, nil).prepareForCaller(context.Background(),
+			Caller{OrganizationID: "org-1", UserID: "user-1", AuthType: "user"}, body, nil)
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("无效流式选项 %s 应拒绝，实际: %v", options, err)
+		}
+	}
+}
+
 func TestPrepareForUserKeepsOIDCCallerIdentity(t *testing.T) {
 	repository := &repositoryStub{route: Route{
 		ModelID: "model-1", ModelCode: "main", ModelStatus: "active", UpstreamModelID: "upstream-main",

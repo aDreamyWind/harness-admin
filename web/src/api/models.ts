@@ -10,6 +10,7 @@ export interface ModelProvider {
   baseUrl: string
   status: 'active' | 'disabled'
   requestTimeoutMs: number
+  streamUsageEnabled: boolean
   credentialConfigured: boolean
   lastProbeStatus: 'unknown' | 'success' | 'failed'
   lastProbeAt?: string
@@ -40,6 +41,7 @@ export interface ProviderInput {
   baseUrl: string
   apiKey?: string
   requestTimeoutMs: number
+  streamUsageEnabled: boolean
 }
 
 export interface ModelInput {

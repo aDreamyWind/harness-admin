@@ -233,7 +233,7 @@ func (r *ModelGatewayRepository) FindRoute(ctx context.Context, organizationID, 
 	var encryptedSecret []byte
 	err := r.pool.QueryRow(ctx, `
 		SELECT m.id, m.code, m.status, m.upstream_model_id,
-		       p.id, p.status, p.base_url, p.request_timeout_ms, c.encrypted_secret
+		       p.id, p.status, p.base_url, p.request_timeout_ms, p.stream_usage_enabled, c.encrypted_secret
 		FROM model_catalog_entries m
 		JOIN model_provider_connections p
 		  ON p.organization_id = m.organization_id AND p.id = m.provider_connection_id
@@ -241,7 +241,7 @@ func (r *ModelGatewayRepository) FindRoute(ctx context.Context, organizationID, 
 		WHERE m.organization_id = $1 AND LOWER(m.code) = LOWER($2)
 	`, organizationID, modelCode).Scan(
 		&route.ModelID, &route.ModelCode, &route.ModelStatus, &route.UpstreamModelID,
-		&route.ProviderID, &route.ProviderStatus, &route.ProviderBaseURL, &route.ProviderTimeoutMS, &encryptedSecret,
+		&route.ProviderID, &route.ProviderStatus, &route.ProviderBaseURL, &route.ProviderTimeoutMS, &route.ProviderStreamUsageEnabled, &encryptedSecret,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return modelgateway.Route{}, modelgateway.ErrModelNotFound

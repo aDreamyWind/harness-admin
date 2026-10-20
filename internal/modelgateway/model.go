@@ -95,15 +95,16 @@ type Caller struct {
 }
 
 type Route struct {
-	ModelID           string
-	ModelCode         string
-	ModelStatus       string
-	UpstreamModelID   string
-	ProviderID        string
-	ProviderStatus    string
-	ProviderBaseURL   string
-	ProviderAPIKey    string
-	ProviderTimeoutMS int
+	ModelID                    string
+	ModelCode                  string
+	ModelStatus                string
+	UpstreamModelID            string
+	ProviderID                 string
+	ProviderStatus             string
+	ProviderBaseURL            string
+	ProviderAPIKey             string
+	ProviderTimeoutMS          int
+	ProviderStreamUsageEnabled bool
 }
 
 type PreparedRequest struct {

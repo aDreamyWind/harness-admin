@@ -242,6 +242,20 @@ func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []by
 	}
 	encodedModel, _ := json.Marshal(route.UpstreamModelID)
 	payload["model"] = encodedModel
+	if streaming && route.ProviderStreamUsageEnabled {
+		streamOptions := make(map[string]json.RawMessage)
+		if raw, ok := payload["stream_options"]; ok {
+			if err := json.Unmarshal(raw, &streamOptions); err != nil || streamOptions == nil {
+				return PreparedRequest{}, ErrInvalidInput
+			}
+		}
+		streamOptions["include_usage"] = json.RawMessage("true")
+		encodedOptions, err := json.Marshal(streamOptions)
+		if err != nil {
+			return PreparedRequest{}, ErrInvalidInput
+		}
+		payload["stream_options"] = encodedOptions
+	}
 	rewritten, err := json.Marshal(payload)
 	if err != nil {
 		return PreparedRequest{}, ErrInvalidInput

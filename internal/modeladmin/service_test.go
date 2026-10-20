@@ -65,12 +65,12 @@ func TestCreateProviderNormalizesInput(t *testing.T) {
 	service := NewService(repository, proberStub{})
 	_, err := service.CreateProvider(context.Background(), CreateProviderInput{
 		OrganizationID: "org-1", ActorID: "user-1", Code: " Primary_AI ", Name: " 主模型连接 ",
-		BaseURL: "https://models.example.com/v1/", APIKey: " secret ",
+		BaseURL: "https://models.example.com/v1/", APIKey: " secret ", StreamUsageEnabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repository.createdProvider.Code != "primary_ai" || repository.createdProvider.BaseURL != "https://models.example.com/v1" || repository.createdProvider.RequestTimeoutMS != 15000 {
+	if repository.createdProvider.Code != "primary_ai" || repository.createdProvider.BaseURL != "https://models.example.com/v1" || repository.createdProvider.RequestTimeoutMS != 15000 || !repository.createdProvider.StreamUsageEnabled {
 		t.Fatalf("供应商参数未正确规范化: %#v", repository.createdProvider)
 	}
 }

@@ -24,6 +24,7 @@ type Provider struct {
 	BaseURL              string
 	Status               string
 	RequestTimeoutMS     int
+	StreamUsageEnabled   bool
 	CredentialConfigured bool
 	LastProbeStatus      string
 	LastProbeAt          *time.Time
@@ -48,29 +49,31 @@ type CatalogModel struct {
 }
 
 type CreateProviderInput struct {
-	OrganizationID   string
-	ActorID          string
-	Code             string
-	Name             string
-	ProviderKind     string
-	BaseURL          string
-	APIKey           string
-	RequestTimeoutMS int
-	RequestID        string
-	SourceIP         string
+	OrganizationID     string
+	ActorID            string
+	Code               string
+	Name               string
+	ProviderKind       string
+	BaseURL            string
+	APIKey             string
+	RequestTimeoutMS   int
+	StreamUsageEnabled bool
+	RequestID          string
+	SourceIP           string
 }
 
 type UpdateProviderInput struct {
-	OrganizationID   string
-	ActorID          string
-	ProviderID       string
-	Name             string
-	ProviderKind     string
-	BaseURL          string
-	APIKey           *string
-	RequestTimeoutMS int
-	RequestID        string
-	SourceIP         string
+	OrganizationID     string
+	ActorID            string
+	ProviderID         string
+	Name               string
+	ProviderKind       string
+	BaseURL            string
+	APIKey             *string
+	RequestTimeoutMS   int
+	StreamUsageEnabled *bool
+	RequestID          string
+	SourceIP           string
 }
 
 type ChangeProviderStatusInput struct {

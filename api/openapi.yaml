@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.20.0
+  version: 0.21.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -1710,6 +1710,10 @@ components:
         baseUrl: { type: string, format: uri }
         apiKey: { type: string, format: password, minLength: 1, maxLength: 4096, writeOnly: true }
         requestTimeoutMs: { type: integer, minimum: 1000, maximum: 120000, default: 15000 }
+        streamUsageEnabled:
+          type: boolean
+          default: false
+          description: 启用后仅在流式聊天请求中发送 stream_options.include_usage=true；请先确认上游兼容，网关不会对拒绝的请求自动重试。上游仍未返回 usage 时用量保持未知。
     UpdateModelProviderRequest:
       type: object
       required: [name, providerKind, baseUrl, requestTimeoutMs]
@@ -1728,6 +1732,9 @@ components:
           writeOnly: true
           description: 省略时保留当前凭据。
         requestTimeoutMs: { type: integer, minimum: 1000, maximum: 120000 }
+        streamUsageEnabled:
+          type: boolean
+          description: 是否在流式聊天请求中向上游请求 Token 用量；省略时保持当前设置。
     StatusChangeRequest:
       type: object
       required: [status]
@@ -1886,7 +1893,7 @@ components:
         maxOutputTokens: { type: integer, minimum: 0, default: 0 }
     ModelProvider:
       type: object
-      required: [id, code, name, providerKind, baseUrl, status, requestTimeoutMs, credentialConfigured, lastProbeStatus, createdAt, updatedAt]
+      required: [id, code, name, providerKind, baseUrl, status, requestTimeoutMs, streamUsageEnabled, credentialConfigured, lastProbeStatus, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         code: { type: string }
@@ -1895,6 +1902,7 @@ components:
         baseUrl: { type: string, format: uri }
         status: { type: string, enum: [active, disabled] }
         requestTimeoutMs: { type: integer }
+        streamUsageEnabled: { type: boolean, description: 是否向上游请求流式 Token 用量。 }
         credentialConfigured: { type: boolean }
         lastProbeStatus: { type: string, enum: [unknown, success, failed] }
         lastProbeAt: { type: string, format: date-time }

@@ -25,7 +25,7 @@ func (*modelAdminStub) ListProviders(context.Context, string) ([]modeladmin.Prov
 }
 func (s *modelAdminStub) CreateProvider(_ context.Context, input modeladmin.CreateProviderInput) (modeladmin.Provider, error) {
 	s.createProviderInput = input
-	return modeladmin.Provider{ID: "10000000-0000-4000-8000-000000000001", Code: input.Code, Name: input.Name, ProviderKind: input.ProviderKind, BaseURL: input.BaseURL, Status: "active", RequestTimeoutMS: input.RequestTimeoutMS, CredentialConfigured: true, LastProbeStatus: "unknown", CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
+	return modeladmin.Provider{ID: "10000000-0000-4000-8000-000000000001", Code: input.Code, Name: input.Name, ProviderKind: input.ProviderKind, BaseURL: input.BaseURL, Status: "active", RequestTimeoutMS: input.RequestTimeoutMS, StreamUsageEnabled: input.StreamUsageEnabled, CredentialConfigured: true, LastProbeStatus: "unknown", CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
 }
 func (s *modelAdminStub) UpdateProvider(_ context.Context, input modeladmin.UpdateProviderInput) (modeladmin.Provider, error) {
 	s.updateProviderInput = input
@@ -60,7 +60,7 @@ func TestCreateModelProviderUsesCurrentOrganizationAndHidesCredential(t *testing
 	router := newModelTestRouter(models)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/model-providers", strings.NewReader(`{
 		"code":"primary","name":"主连接","providerKind":"deepseek",
-		"baseUrl":"https://api.deepseek.com","apiKey":"top-secret","requestTimeoutMs":15000
+		"baseUrl":"https://api.deepseek.com","apiKey":"top-secret","requestTimeoutMs":15000,"streamUsageEnabled":true
 	}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", "csrf-token")
@@ -71,11 +71,47 @@ func TestCreateModelProviderUsesCurrentOrganizationAndHidesCredential(t *testing
 	if response.Code != http.StatusCreated {
 		t.Fatalf("状态码 = %d；响应 = %s", response.Code, response.Body.String())
 	}
-	if models.createProviderInput.OrganizationID != "org-1" || models.createProviderInput.ActorID != "user-1" || models.createProviderInput.ProviderKind != "deepseek" || models.createProviderInput.APIKey != "top-secret" {
+	if models.createProviderInput.OrganizationID != "org-1" || models.createProviderInput.ActorID != "user-1" || models.createProviderInput.ProviderKind != "deepseek" || models.createProviderInput.APIKey != "top-secret" || !models.createProviderInput.StreamUsageEnabled {
 		t.Fatalf("创建供应商参数不完整: %#v", models.createProviderInput)
 	}
 	if strings.Contains(response.Body.String(), "top-secret") || strings.Contains(response.Body.String(), "apiKey") {
 		t.Fatalf("响应泄露了供应商凭据: %s", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"streamUsageEnabled":true`) {
+		t.Fatalf("响应未返回流式用量设置: %s", response.Body.String())
+	}
+}
+
+func TestUpdateModelProviderKeepsStreamUsageSettingWhenOmitted(t *testing.T) {
+	models := &modelAdminStub{}
+	router := newModelTestRouter(models)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/model-providers/10000000-0000-4000-8000-000000000001", strings.NewReader(`{
+		"name":"主连接","providerKind":"deepseek","baseUrl":"https://api.deepseek.com","requestTimeoutMs":15000
+	}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || models.updateProviderInput.StreamUsageEnabled != nil {
+		t.Fatalf("省略设置时不应更改现有值: status=%d input=%#v", response.Code, models.updateProviderInput)
+	}
+}
+
+func TestUpdateModelProviderAcceptsExplicitlyDisabledStreamUsage(t *testing.T) {
+	models := &modelAdminStub{}
+	router := newModelTestRouter(models)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/model-providers/10000000-0000-4000-8000-000000000001", strings.NewReader(`{
+		"name":"主连接","providerKind":"deepseek","baseUrl":"https://api.deepseek.com",
+		"requestTimeoutMs":15000,"streamUsageEnabled":false
+	}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || models.updateProviderInput.StreamUsageEnabled == nil || *models.updateProviderInput.StreamUsageEnabled {
+		t.Fatalf("明确关闭流式用量设置未传递: status=%d input=%#v", response.Code, models.updateProviderInput)
 	}
 }
 
