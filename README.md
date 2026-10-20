@@ -211,6 +211,8 @@ Harness 使用包含 `model.invoke` scope 的 OIDC 访问令牌请求 `GET /v1/m
 
 调用密钥可配置每分钟请求上限、按 UTC 自然月统计的 Token 额度和允许访问的模型编码范围。调用记录支持按调用密钥、模型编码、调用结果和发生时间筛选，并使用服务端分页。
 
+无需真实 Harness 即可运行网关模拟上游测试：`go test ./internal/httpserver -run '^TestGatewayE2E' -count=1`。常规测试覆盖真实 HTTP 转发、SSE 首块实时送达、分块工具调用、多模态请求透传以及用量已知/未知记录。设置 `HARNESS_TEST_WRITE_DATABASE_URL` 为已完成迁移的可写测试库连接后，同一命令还会运行并发软额度集成测试；测试创建独立企业、供应商、模型和密钥，并在结束时清理这些数据。不要将该变量指向生产数据库。
+
 调用方可以使用创建密钥时返回的完整调用密钥，或包含 `model.invoke` scope 的 OIDC 用户访问令牌访问 OpenAI 兼容入口，并把模型目录中的“模型编码”填入 `model`：
 
 ```bash
