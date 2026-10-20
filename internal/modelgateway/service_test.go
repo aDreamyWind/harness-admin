@@ -10,12 +10,16 @@ import (
 )
 
 type repositoryStub struct {
-	createdInput CreateAPIKeyInput
-	apiKey       APIKey
-	route        Route
-	touchedID    string
-	usageQuery   UsageQuery
-	recorded     RecordCallInput
+	createdInput    CreateAPIKeyInput
+	apiKey          APIKey
+	route           Route
+	touchedID       string
+	usageQuery      UsageQuery
+	recorded        RecordCallInput
+	alertCandidates []AlertCandidate
+	alertSignals    []AlertSignal
+	alertQuery      AlertQuery
+	alertSyncCount  int
 }
 
 type requestLimiterStub struct {
@@ -70,6 +74,21 @@ func (*repositoryStub) ListCalls(context.Context, CallQuery) (CallPage, error) {
 func (r *repositoryStub) ListUsage(_ context.Context, query UsageQuery) (UsagePage, error) {
 	r.usageQuery = query
 	return UsagePage{}, nil
+}
+func (r *repositoryStub) ListAlertCandidates(context.Context, string, string) ([]AlertCandidate, error) {
+	return r.alertCandidates, nil
+}
+func (r *repositoryStub) SyncAlerts(_ context.Context, _, _ string, signals []AlertSignal) error {
+	r.alertSignals = signals
+	r.alertSyncCount++
+	return nil
+}
+func (r *repositoryStub) ListAlerts(_ context.Context, query AlertQuery) (AlertPage, error) {
+	r.alertQuery = query
+	return AlertPage{Month: query.Month, Page: query.Page, PageSize: query.PageSize, Items: []Alert{}}, nil
+}
+func (*repositoryStub) AcknowledgeAlert(_ context.Context, input AcknowledgeAlertInput) (Alert, error) {
+	return Alert{ID: input.AlertID}, nil
 }
 
 func TestUsageQueryUsesUTCMonthAndValidatesDimensions(t *testing.T) {

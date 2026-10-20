@@ -32,8 +32,10 @@ import { useMemo, useState, type ReactNode } from 'react'
 
 import { ApiError } from '../api/client'
 import {
+  acknowledgeGatewayAlert,
   createGatewayAPIKey,
   listGatewayAPIKeys,
+  listGatewayAlerts,
   listGatewayCalls,
   listGatewayUsage,
   revokeGatewayAPIKey,
@@ -41,11 +43,14 @@ import {
   updateGatewayAPIKey,
   type CreatedGatewayAPIKey,
   type GatewayAPIKey,
+  type GatewayAlert,
+  type GatewayAlertQuery,
   type GatewayCall,
   type GatewayCallQuery,
   type GatewayUsageGroup,
   type GatewayUsageQuery,
 } from '../api/modelGateway'
+import { listModelPolicies, type ModelPolicy } from '../api/modelPolicy'
 import { useAuth } from '../auth/AuthContext'
 import { StatusIndicator } from '../components/StatusIndicator'
 
@@ -70,6 +75,7 @@ interface CallFilterValue {
 export function ModelGatewayPage() {
   const { hasPermission } = useAuth()
   const canWrite = hasPermission('model.gateway.write')
+  const canReadPolicies = hasPermission('model.policy.read')
   const queryClient = useQueryClient()
   const [messageApi, messageContext] = message.useMessage()
   const [form] = Form.useForm<APIKeyFormValue>()
@@ -83,13 +89,21 @@ export function ModelGatewayPage() {
   const [usageQuery, setUsageQuery] = useState<GatewayUsageQuery>({
     month: new Date().toISOString().slice(0, 7), groupBy: 'department', page: 1, pageSize: 20,
   })
+  const [alertQuery, setAlertQuery] = useState<GatewayAlertQuery>({
+    month: new Date().toISOString().slice(0, 7), status: 'active', page: 1, pageSize: 20,
+  })
 
   const keysQuery = useQuery({ queryKey: ['model-gateway-api-keys'], queryFn: listGatewayAPIKeys })
   const callsQuery = useQuery({ queryKey: ['model-gateway-calls', callQuery], queryFn: () => listGatewayCalls(callQuery), refetchInterval: 15000 })
   const usageResult = useQuery({ queryKey: ['model-gateway-usage', usageQuery], queryFn: () => listGatewayUsage(usageQuery), enabled: activeTab === 'usage' })
+  const policiesResult = useQuery({ queryKey: ['model-policies'], queryFn: listModelPolicies, enabled: canReadPolicies && activeTab === 'usage' })
+  const alertsResult = useQuery({ queryKey: ['model-gateway-alerts', alertQuery], queryFn: () => listGatewayAlerts(alertQuery), refetchInterval: 60000 })
   const keys = keysQuery.data ?? []
   const callsPage = callsQuery.data ?? { items: [], total: 0, page: callQuery.page, pageSize: callQuery.pageSize }
   const usagePage = usageResult.data
+  const alertsPage = alertsResult.data
+  const currentUTCMonth = new Date().toISOString().slice(0, 7)
+  const policyBySubject = new Map((policiesResult.data ?? []).map((policy) => [`${policy.subjectType}:${policy.subjectId}`, policy]))
 
   const saveKey = useMutation({
     mutationFn: (value: APIKeyFormValue) => {
@@ -123,6 +137,14 @@ export function ModelGatewayPage() {
     mutationFn: async (key: GatewayAPIKey) => ({ key, result: await revealGatewayAPIKeySecret(key.id) }),
     onSuccess: ({ key, result }) => setRevealedKey({ name: key.name, secret: result.secret }),
     onError: (error) => messageApi.error(errorMessage(error, '调用密钥查看失败')),
+  })
+  const acknowledgeAlert = useMutation({
+    mutationFn: acknowledgeGatewayAlert,
+    onSuccess: async () => {
+      messageApi.success('预警已标记为知悉')
+      await queryClient.invalidateQueries({ queryKey: ['model-gateway-alerts'] })
+    },
+    onError: (error) => messageApi.error(errorMessage(error, '确认预警失败')),
   })
 
   const openCreateKey = () => {
@@ -181,6 +203,10 @@ export function ModelGatewayPage() {
       render: (_, item) => <div className="gateway-limit-cell">
         <span>{item.requestsPerMinute > 0 ? `${item.requestsPerMinute} 次 / 分钟` : '不限每分钟请求'}</span>
         <small>{item.monthlyTokenLimit > 0 ? `本月 ${item.monthlyTokenUsed.toLocaleString()} / ${item.monthlyTokenLimit.toLocaleString()} Token` : '不限月度 Token'}</small>
+        {item.monthlyTokenLimit > 0 && item.monthlyTokenUsed >= item.monthlyTokenLimit
+          ? <Tag color="red">已达上限</Tag>
+          : item.monthlyTokenLimit > 0 && item.monthlyTokenUsed >= item.monthlyTokenLimit - Math.floor(item.monthlyTokenLimit / 5)
+            ? <Tag color="orange">接近上限</Tag> : null}
       </div>,
     },
     {
@@ -227,6 +253,23 @@ export function ModelGatewayPage() {
     { title: '已统计 Token', dataIndex: 'knownTokens', key: 'knownTokens', render: (value: number) => value.toLocaleString() },
     { title: '用量未知', dataIndex: 'unknownUsageCalls', key: 'unknownUsageCalls', render: (value: number) => value > 0 ? <Tag color="orange">{value} 次</Tag> : '—' },
     { title: '超额调用', dataIndex: 'overQuotaCalls', key: 'overQuotaCalls', render: (value: number) => value > 0 ? <Tag color="red">{value} 次</Tag> : '—' },
+    ...(canReadPolicies && usageQuery.month === currentUTCMonth && usageQuery.groupBy !== 'model' ? [{
+      title: '策略额度', key: 'quota', width: 230,
+      render: (_: unknown, item: GatewayUsageGroup) => renderPolicyQuota(policyBySubject.get(`${usageQuery.groupBy}:${item.id}`)),
+    }] : []),
+  ]
+
+  const alertColumns: TableColumnsType<GatewayAlert> = [
+    { title: '级别', key: 'severity', width: 105, render: (_, item) => <Tag color={item.severity === 'critical' ? 'red' : 'orange'}>{item.severity === 'critical' ? '已达上限' : '需关注'}</Tag> },
+    { title: '对象', dataIndex: 'subjectName', key: 'subjectName', width: 200 },
+    { title: '预警内容', key: 'detail', render: (_, item) => item.kind === 'quota'
+      ? <span>已统计 {item.usedTokens.toLocaleString()} / {item.tokenLimit.toLocaleString()} Token（{Math.floor(item.usedTokens / item.tokenLimit * 100)}%）</span>
+      : <span>成功调用 {item.callCount.toLocaleString()} 次，其中 {item.unknownUsageCalls.toLocaleString()} 次用量未知</span> },
+    { title: '首次发现', dataIndex: 'firstDetectedAt', key: 'firstDetectedAt', width: 170, render: formatTime },
+    { title: '处理状态', key: 'acknowledgedAt', width: 100, render: (_, item) => item.resolvedAt ? <Tag>已解除</Tag> : item.acknowledgedAt ? <Tag color="blue">已知悉</Tag> : <Tag color="gold">待查看</Tag> },
+    ...(canWrite ? [{ title: '操作', key: 'actions', width: 90, render: (_: unknown, item: GatewayAlert) => !item.resolvedAt && !item.acknowledgedAt
+      ? <Button type="link" size="small" loading={acknowledgeAlert.isPending && acknowledgeAlert.variables === item.id} onClick={() => acknowledgeAlert.mutate(item.id)}>标记知悉</Button>
+      : null }] : []),
   ]
 
   const tabs = [
@@ -259,11 +302,36 @@ export function ModelGatewayPage() {
             options={[{ value: 'department', label: '按部门' }, { value: 'user', label: '按用户' }, { value: 'model', label: '按模型' }]} />
           <Text type="secondary">{usagePage ? `调用 ${usagePage.callCount.toLocaleString()} 次 · 已统计 ${usagePage.knownTokens.toLocaleString()} Token · 用量未知 ${usagePage.unknownUsageCalls.toLocaleString()} 次 · 超额 ${usagePage.overQuotaCalls.toLocaleString()} 次` : '正在加载统计'}</Text>
         </div>
+        {usagePage && usagePage.unknownUsageCalls > 0 ? <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="部分调用未返回 Token 用量，额度使用率只反映已统计部分；请检查对应供应商是否支持流式用量返回。" /> : null}
         <Table<GatewayUsageGroup> rowKey={(item) => item.id || 'unknown'} columns={usageColumns} dataSource={usagePage?.items ?? []}
           loading={usageResult.isLoading} pagination={{ current: usageQuery.page, pageSize: usageQuery.pageSize,
             total: usagePage?.total ?? 0, showSizeChanger: true, showTotal: (total) => `共 ${total} 项`,
             onChange: (page, pageSize) => setUsageQuery((current) => ({ ...current, page, pageSize })) }}
           scroll={{ x: 780 }} locale={{ emptyText: '此月份没有调用记录' }} />
+      </GatewayResource>,
+    },
+    {
+      key: 'alerts', label: <span>站内预警{alertsPage?.activeCount ? <Tag color="orange" style={{ marginLeft: 6, marginRight: 0 }}>{alertsPage.activeCount}</Tag> : null}</span>,
+      children: <GatewayResource
+        title="站内预警"
+        hint="额度达到 80% 提醒、达到 100% 标为紧急；模型成功调用中，至少 5 次且至少 20% 用量未知时提醒。按月份和对象去重，严重程度升级后需重新确认。"
+        action={<Button icon={<ReloadOutlined />} loading={alertsResult.isFetching} onClick={() => alertsResult.refetch()}>刷新</Button>}
+        error={alertsResult.isError ? errorMessage(alertsResult.error, '站内预警加载失败') : ''}
+        retry={() => alertsResult.refetch()}
+      >
+        <div className="gateway-usage-controls">
+          <Input type="month" aria-label="预警月份" value={alertQuery.month} onChange={(event) => {
+            if (event.target.value) setAlertQuery((current) => ({ ...current, month: event.target.value, page: 1 }))
+          }} />
+          <Select aria-label="预警状态" value={alertQuery.status} onChange={(status) => setAlertQuery((current) => ({ ...current, status, page: 1 }))}
+            options={[{ value: 'active', label: '当前预警' }, { value: 'all', label: '含已解除' }]} />
+          <Text type="secondary">当前有效 {alertsPage?.activeCount ?? 0} 条 · 已确认的预警仍保留记录</Text>
+        </div>
+        <Table<GatewayAlert> rowKey="id" columns={alertColumns} dataSource={alertsPage?.items ?? []}
+          loading={alertsResult.isLoading} pagination={{ current: alertQuery.page, pageSize: alertQuery.pageSize,
+            total: alertsPage?.total ?? 0, showSizeChanger: true, showTotal: (total) => `共 ${total} 条`,
+            onChange: (page, pageSize) => setAlertQuery((current) => ({ ...current, page, pageSize })) }}
+          scroll={{ x: 950 }} locale={{ emptyText: '此月份没有符合条件的预警' }} />
       </GatewayResource>,
     },
     {
@@ -419,6 +487,20 @@ function keyStatus(item: GatewayAPIKey) {
 
 function keyTone(item: GatewayAPIKey): 'success' | 'muted' | 'danger' {
   return keyStatus(item) === '可用' ? 'success' : 'muted'
+}
+
+function renderPolicyQuota(policy?: ModelPolicy) {
+  if (!policy || policy.monthlyTokenLimit <= 0) return <Text type="secondary">未设置额度</Text>
+  if (policy.subjectType === 'department' && policy.monthlyTokenMode === 'per_user') {
+    return <Text type="secondary">每人 {policy.monthlyTokenLimit.toLocaleString()}；预警按人判断</Text>
+  }
+  const used = policy.monthlyTokenUsed
+  const limit = policy.monthlyTokenLimit
+  const ratio = Math.floor(used / limit * 100)
+  return <Space size={4}>
+    <span>{used.toLocaleString()} / {limit.toLocaleString()}（{ratio}%）</span>
+    {used >= limit ? <Tag color="red">已达上限</Tag> : used >= limit - Math.floor(limit / 5) ? <Tag color="orange">接近上限</Tag> : null}
+  </Space>
 }
 
 function formatTime(value: string) {

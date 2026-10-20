@@ -107,8 +107,8 @@ export function ModelPoliciesPage() {
     { title: '每人每分钟上限', dataIndex: 'requestsPerMinute', key: 'rpm', render: (value: number) => value > 0 ? `${value} 次` : '不限' },
     { title: '本月 Token', key: 'tokens', render: (_, item) => item.monthlyTokenLimit > 0
       ? item.subjectType === 'department' && item.monthlyTokenMode === 'per_user'
-        ? `每人上限 ${item.monthlyTokenLimit.toLocaleString()} · 合计已用 ${item.monthlyTokenUsed.toLocaleString()}`
-        : `${item.monthlyTokenUsed.toLocaleString()} / ${item.monthlyTokenLimit.toLocaleString()}`
+        ? <span>每人上限 {item.monthlyTokenLimit.toLocaleString()} · 部门合计 {item.monthlyTokenUsed.toLocaleString()}<Text type="secondary">（按人预警见模型网关）</Text></span>
+        : <Space size={4}><span>{item.monthlyTokenUsed.toLocaleString()} / {item.monthlyTokenLimit.toLocaleString()}</span>{quotaTag(item.monthlyTokenUsed, item.monthlyTokenLimit)}</Space>
       : `${item.monthlyTokenUsed.toLocaleString()} / 不限` },
     ...(canWrite ? [{ title: '操作', key: 'actions', width: 180, render: (_: unknown, item: ModelPolicy) => <Space>
       <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(item)}>编辑</Button>
@@ -127,7 +127,7 @@ export function ModelPoliciesPage() {
     {messageContext}
     <section className="module-heading"><Text className="module-kicker">AI 资源管理 / 模型策略</Text></section>
     <Card className="content-card" variant="borderless">
-      <Alert type="info" showIcon message="部门策略只对选中的部门生效。勾选上级时会同时勾选现有下级，也可以单独取消；RPM 按人，Token 可选部门共享或按人。" />
+      <Alert type="info" showIcon message="部门策略只对选中的部门生效。勾选上级时会同时勾选现有下级，也可以单独取消；RPM 按人，Token 可选部门共享或按人。额度只统计上游已返回的 Token 用量。" />
       {policiesQuery.isError ? <Alert type="error" showIcon message={policiesQuery.error instanceof Error ? policiesQuery.error.message : '策略加载失败'} /> : null}
       <Tabs activeKey={subjectType} onChange={(key) => setSubjectType(key as PolicySubjectType)} items={([
         ['department', '部门策略'], ['user', '用户策略'],
@@ -178,4 +178,11 @@ function scopeLabel(mode: ModelScopeMode, subjectType: PolicySubjectType) {
   if (mode === 'all') return '全部已启用模型'
   if (mode === 'none') return '禁止调用模型'
   return subjectType === 'department' ? '全部已启用模型' : '继承所属部门规则'
+}
+
+function quotaTag(used: number, limit: number) {
+  if (limit <= 0) return null
+  if (used >= limit) return <Tag color="red">已达上限</Tag>
+  if (used >= limit - Math.floor(limit / 5)) return <Tag color="orange">接近上限</Tag>
+  return null
 }

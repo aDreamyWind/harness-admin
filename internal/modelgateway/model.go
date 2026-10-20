@@ -210,6 +210,57 @@ type UsagePage struct {
 	PageSize          int          `json:"pageSize"`
 }
 
+type AlertCandidate struct {
+	DedupeKey         string `json:"dedupeKey"`
+	Kind              string `json:"kind"`
+	SubjectType       string `json:"subjectType"`
+	SubjectName       string `json:"subjectName"`
+	UsedTokens        int64  `json:"usedTokens"`
+	TokenLimit        int64  `json:"tokenLimit"`
+	CallCount         int64  `json:"callCount"`
+	UnknownUsageCalls int64  `json:"unknownUsageCalls"`
+}
+
+type AlertSignal struct {
+	AlertCandidate
+	Severity string `json:"severity"`
+}
+
+type Alert struct {
+	ID    string `json:"id"`
+	Month string `json:"month"`
+	AlertSignal
+	FirstDetectedAt time.Time  `json:"firstDetectedAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+	AcknowledgedAt  *time.Time `json:"acknowledgedAt,omitempty"`
+	ResolvedAt      *time.Time `json:"resolvedAt,omitempty"`
+}
+
+type AlertQuery struct {
+	OrganizationID string
+	Month          string
+	Status         string
+	Page           int
+	PageSize       int
+}
+
+type AlertPage struct {
+	Month       string  `json:"month"`
+	ActiveCount int64   `json:"activeCount"`
+	Items       []Alert `json:"items"`
+	Total       int64   `json:"total"`
+	Page        int     `json:"page"`
+	PageSize    int     `json:"pageSize"`
+}
+
+type AcknowledgeAlertInput struct {
+	OrganizationID string
+	ActorID        string
+	AlertID        string
+	RequestID      string
+	SourceIP       string
+}
+
 type Repository interface {
 	ListAPIKeys(context.Context, string) ([]APIKey, error)
 	CreateAPIKey(context.Context, CreateAPIKeyInput) (APIKey, error)
@@ -222,6 +273,10 @@ type Repository interface {
 	RecordCall(context.Context, RecordCallInput) error
 	ListCalls(context.Context, CallQuery) (CallPage, error)
 	ListUsage(context.Context, UsageQuery) (UsagePage, error)
+	ListAlertCandidates(context.Context, string, string) ([]AlertCandidate, error)
+	SyncAlerts(context.Context, string, string, []AlertSignal) error
+	ListAlerts(context.Context, AlertQuery) (AlertPage, error)
+	AcknowledgeAlert(context.Context, AcknowledgeAlertInput) (Alert, error)
 }
 
 type RequestLimiter interface {

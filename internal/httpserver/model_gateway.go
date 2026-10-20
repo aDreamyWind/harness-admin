@@ -34,6 +34,8 @@ type ModelGatewayService interface {
 	RecordCall(context.Context, modelgateway.RecordCallInput) error
 	ListCalls(context.Context, modelgateway.CallQuery) (modelgateway.CallPage, error)
 	ListUsage(context.Context, modelgateway.UsageQuery) (modelgateway.UsagePage, error)
+	ListAlerts(context.Context, modelgateway.AlertQuery) (modelgateway.AlertPage, error)
+	AcknowledgeAlert(context.Context, modelgateway.AcknowledgeAlertInput) (modelgateway.Alert, error)
 	ListModelsForAPIKey(context.Context, string) ([]modelgateway.AvailableModel, error)
 	ListModelsForUser(context.Context, string, string) ([]modelgateway.AvailableModel, error)
 }
@@ -107,6 +109,8 @@ func registerModelGatewayRoutes(router *gin.Engine, deps Dependencies) {
 	admin.GET("/api-keys/:id/secret", requirePermission(deps, "model.gateway.write"), revealGatewayAPIKeySecretHandler(deps))
 	admin.GET("/calls", requirePermission(deps, "model.gateway.read"), listGatewayCallsHandler(deps))
 	admin.GET("/usage", requirePermission(deps, "model.gateway.read"), listGatewayUsageHandler(deps))
+	admin.GET("/alerts", requirePermission(deps, "model.gateway.read"), listGatewayAlertsHandler(deps))
+	admin.POST("/alerts/:id/acknowledge", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), acknowledgeGatewayAlertHandler(deps))
 
 	router.POST("/v1/chat/completions", chatCompletionsGatewayHandler(deps))
 	router.GET("/v1/models", listGatewayModelsHandler(deps))
@@ -325,6 +329,47 @@ func listGatewayUsageHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, result)
+	}
+}
+
+func listGatewayAlertsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		page, ok := positiveQueryInt(ctx, "page", 1)
+		if !ok {
+			return
+		}
+		pageSize, ok := positiveQueryInt(ctx, "pageSize", 20)
+		if !ok {
+			return
+		}
+		result, err := deps.ModelGateway.ListAlerts(ctx.Request.Context(), modelgateway.AlertQuery{
+			OrganizationID: currentSession(ctx).User.OrganizationID,
+			Month:          ctx.Query("month"), Status: ctx.Query("status"), Page: page, PageSize: pageSize,
+		})
+		if err != nil {
+			handleModelGatewayAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, result)
+	}
+}
+
+func acknowledgeGatewayAlertHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if _, err := uuid.Parse(ctx.Param("id")); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "预警标识格式不正确")
+			return
+		}
+		session := currentSession(ctx)
+		item, err := deps.ModelGateway.AcknowledgeAlert(ctx.Request.Context(), modelgateway.AcknowledgeAlertInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, AlertID: ctx.Param("id"),
+			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if err != nil {
+			handleModelGatewayAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, item)
 	}
 }
 
@@ -564,6 +609,8 @@ func handleModelGatewayAdminError(ctx *gin.Context, logger *slog.Logger, err err
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_gateway_configuration", "模型网关参数不正确")
 	case errors.Is(err, modelgateway.ErrAPIKeyNotFound):
 		httpx.Fail(ctx, http.StatusNotFound, "gateway_api_key_not_found", "模型网关调用密钥不存在")
+	case errors.Is(err, modelgateway.ErrAlertNotFound):
+		httpx.Fail(ctx, http.StatusNotFound, "gateway_alert_not_found", "预警不存在或已解除")
 	case errors.Is(err, modelgateway.ErrAPIKeySecretUnavailable):
 		httpx.Fail(ctx, http.StatusConflict, "gateway_api_key_secret_unavailable", "该密钥创建于支持再次查看之前，请重新创建调用密钥")
 	default:

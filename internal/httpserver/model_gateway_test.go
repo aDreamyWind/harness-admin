@@ -16,13 +16,15 @@ import (
 )
 
 type modelGatewayStub struct {
-	createInput modelgateway.CreateAPIKeyInput
-	credential  string
-	requestBody string
-	recorded    modelgateway.RecordCallInput
-	listQuery   modelgateway.CallQuery
-	usageQuery  modelgateway.UsageQuery
-	revealInput modelgateway.RevealAPIKeySecretInput
+	createInput      modelgateway.CreateAPIKeyInput
+	credential       string
+	requestBody      string
+	recorded         modelgateway.RecordCallInput
+	listQuery        modelgateway.CallQuery
+	usageQuery       modelgateway.UsageQuery
+	alertQuery       modelgateway.AlertQuery
+	acknowledgeInput modelgateway.AcknowledgeAlertInput
+	revealInput      modelgateway.RevealAPIKeySecretInput
 }
 
 func (*modelGatewayStub) ListAPIKeys(context.Context, string) ([]modelgateway.APIKey, error) {
@@ -74,6 +76,46 @@ func (s *modelGatewayStub) ListUsage(_ context.Context, query modelgateway.Usage
 	s.usageQuery = query
 	return modelgateway.UsagePage{Month: query.Month, GroupBy: query.GroupBy, Page: query.Page,
 		PageSize: query.PageSize, Items: []modelgateway.UsageGroup{}}, nil
+}
+func (s *modelGatewayStub) ListAlerts(_ context.Context, query modelgateway.AlertQuery) (modelgateway.AlertPage, error) {
+	s.alertQuery = query
+	return modelgateway.AlertPage{Month: query.Month, ActiveCount: 1, Items: []modelgateway.Alert{}, Page: query.Page, PageSize: query.PageSize}, nil
+}
+func (s *modelGatewayStub) AcknowledgeAlert(_ context.Context, input modelgateway.AcknowledgeAlertInput) (modelgateway.Alert, error) {
+	s.acknowledgeInput = input
+	return modelgateway.Alert{ID: input.AlertID}, nil
+}
+
+func TestGatewayAlertsUseCurrentOrganizationAndProtectAcknowledgement(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}}, Access: accountAccessStub{},
+		ModelGateway: gateway, GatewayForwarder: gatewayForwarderStub{}, SessionCookie: "test_session",
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/model-gateway/alerts?month=2026-10&status=all&page=2&pageSize=10", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || gateway.alertQuery.OrganizationID != "org-1" || gateway.alertQuery.Month != "2026-10" || gateway.alertQuery.Status != "all" || gateway.alertQuery.Page != 2 {
+		t.Fatalf("预警查询参数不正确: status=%d query=%#v", response.Code, gateway.alertQuery)
+	}
+	if !strings.Contains(response.Body.String(), `"activeCount":1`) {
+		t.Fatalf("预警返回不符合契约: %s", response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/model-gateway/alerts/30000000-0000-4000-8000-000000000001/acknowledge", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("未提供 CSRF 时应拒绝确认预警: %d", response.Code)
+	}
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || gateway.acknowledgeInput.OrganizationID != "org-1" || gateway.acknowledgeInput.ActorID != "user-1" {
+		t.Fatalf("确认预警未使用当前企业身份: status=%d input=%#v", response.Code, gateway.acknowledgeInput)
+	}
 }
 
 func TestListGatewayUsageUsesCurrentOrganizationAndPagination(t *testing.T) {

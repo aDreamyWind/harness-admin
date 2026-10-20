@@ -75,6 +75,40 @@ export interface GatewayUsageQuery {
   pageSize: number
 }
 
+export interface GatewayAlert {
+  id: string
+  month: string
+  dedupeKey: string
+  kind: 'quota' | 'unknown_usage'
+  subjectType: 'department' | 'user' | 'department_user' | 'api_key' | 'model'
+  subjectName: string
+  severity: 'warning' | 'critical'
+  usedTokens: number
+  tokenLimit: number
+  callCount: number
+  unknownUsageCalls: number
+  firstDetectedAt: string
+  updatedAt: string
+  acknowledgedAt?: string
+  resolvedAt?: string
+}
+
+export interface GatewayAlertPage {
+  month: string
+  activeCount: number
+  items: GatewayAlert[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface GatewayAlertQuery {
+  month: string
+  status: 'active' | 'all'
+  page: number
+  pageSize: number
+}
+
 export interface CreateGatewayAPIKeyInput {
   name: string
   expiresAt?: string
@@ -104,6 +138,15 @@ export const listGatewayAPIKeys = () => request<GatewayAPIKey[]>('/api/v1/model-
 export function listGatewayUsage(query: GatewayUsageQuery) {
   const params = new URLSearchParams({ month: query.month, groupBy: query.groupBy, page: String(query.page), pageSize: String(query.pageSize) })
   return request<GatewayUsagePage>(`/api/v1/model-gateway/usage?${params}`)
+}
+export function listGatewayAlerts(query: GatewayAlertQuery) {
+  const params = new URLSearchParams({ month: query.month, status: query.status, page: String(query.page), pageSize: String(query.pageSize) })
+  return request<GatewayAlertPage>(`/api/v1/model-gateway/alerts?${params}`)
+}
+export function acknowledgeGatewayAlert(id: string) {
+  return request<GatewayAlert>(`/api/v1/model-gateway/alerts/${id}/acknowledge`, {
+    method: 'POST', headers: csrfHeaders(),
+  })
 }
 export function listGatewayCalls(query: GatewayCallQuery) {
   const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) })

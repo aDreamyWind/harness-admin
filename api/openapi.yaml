@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.21.0
+  version: 0.22.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -1478,6 +1478,57 @@ paths:
               schema: { $ref: '#/components/schemas/GatewayUsagePageEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /model-gateway/alerts:
+    get:
+      summary: 查询并刷新模型网关站内预警
+      description: 查询当前 UTC 月时按实时已统计用量刷新记录，并按企业、月份和对象去重；历史月份只读取记录。额度达到 80% 预警、达到 100% 紧急。模型成功调用至少 5 次用量未知且占比至少 20% 时预警。部门按人额度逐人判断，不把部门合计与个人上限比较。需要 `model.gateway.read` 权限。
+      operationId: listModelGatewayAlerts
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: month
+          in: query
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+          description: UTC 月份，格式 YYYY-MM；省略时为当前 UTC 月。
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, all], default: active }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 预警记录及当前有效预警总数。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayAlertPageEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /model-gateway/alerts/{id}/acknowledge:
+    post:
+      summary: 标记模型网关预警为已知悉
+      description: 仅可确认本企业尚未解除的预警；严重程度从提醒升级为紧急或解除后重新出现时，会清除确认状态。需要 `model.gateway.write` 权限和 CSRF 校验。
+      operationId: acknowledgeModelGatewayAlert
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 已知悉的预警。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayAlertEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/models:
     servers:
       - url: /
@@ -1564,6 +1615,11 @@ components:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     Forbidden:
       description: 权限不足或 CSRF 校验失败。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NotFound:
+      description: 请求的资源不存在。
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -2092,6 +2148,37 @@ components:
         total: { type: integer, format: int64 }
         page: { type: integer, minimum: 1 }
         pageSize: { type: integer, minimum: 1, maximum: 100 }
+    GatewayAlert:
+      type: object
+      required: [id, month, dedupeKey, kind, subjectType, subjectName, severity, usedTokens, tokenLimit, callCount, unknownUsageCalls, firstDetectedAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        month: { type: string, description: UTC 月份，YYYY-MM。 }
+        dedupeKey: { type: string, description: 企业内当月唯一的预警对象键。 }
+        kind: { type: string, enum: [quota, unknown_usage] }
+        subjectType: { type: string, enum: [department, user, department_user, api_key, model] }
+        subjectName: { type: string }
+        severity: { type: string, enum: [warning, critical] }
+        usedTokens: { type: integer, format: int64 }
+        tokenLimit: { type: integer, format: int64 }
+        callCount: { type: integer, format: int64 }
+        unknownUsageCalls: { type: integer, format: int64 }
+        firstDetectedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        acknowledgedAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time }
+    GatewayAlertPage:
+      type: object
+      required: [month, activeCount, items, total, page, pageSize]
+      properties:
+        month: { type: string }
+        activeCount: { type: integer, format: int64, minimum: 0 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/GatewayAlert' }
+        total: { type: integer, format: int64, minimum: 0 }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
     AuthUser:
       type: object
       required: [id, organizationId, organization, organizationCode, username, displayName, permissionCodes]
@@ -2472,6 +2559,16 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/GatewayUsagePage' }
+    GatewayAlertEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/GatewayAlert' }
+    GatewayAlertPageEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/GatewayAlertPage' }
     AuditEventEnvelope:
       type: object
       required: [data]
