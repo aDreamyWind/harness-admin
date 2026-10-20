@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"harness-admin/internal/access"
@@ -30,9 +31,10 @@ import (
 )
 
 type Application struct {
-	Server *http.Server
-	DB     *pgxpool.Pool
-	Redis  *cache.Client
+	Server       *http.Server
+	DB           *pgxpool.Pool
+	Redis        *cache.Client
+	alertService *modelgateway.Service
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Application, error) {
@@ -134,9 +136,71 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 			WriteTimeout: 0,
 			IdleTimeout:  60 * time.Second,
 		},
-		DB:    db,
-		Redis: redisClient,
+		DB:           db,
+		Redis:        redisClient,
+		alertService: modelGatewayService,
 	}, nil
+}
+
+// RunAlertRefresh 在本进程内定时计算已开启的企业预警；跨实例使用 PostgreSQL 事务锁避免重复扫描。
+func (a *Application) RunAlertRefresh(ctx context.Context, logger *slog.Logger) {
+	refresh := func() {
+		refreshCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		defer cancel()
+		conn, err := pgx.ConnectConfig(refreshCtx, a.DB.Config().ConnConfig)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Error("获取预警刷新数据库连接失败", "error", err)
+			}
+			return
+		}
+		defer func() {
+			closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer closeCancel()
+			if err := conn.Close(closeCtx); err != nil {
+				logger.Error("关闭预警刷新锁连接失败", "error", err)
+			}
+		}()
+		tx, err := conn.Begin(refreshCtx)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Error("创建预警刷新锁事务失败", "error", err)
+			}
+			return
+		}
+		defer func() {
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer rollbackCancel()
+			if err := tx.Rollback(rollbackCtx); err != nil {
+				logger.Error("释放预警刷新事务锁失败", "error", err)
+			}
+		}()
+		var locked bool
+		if err := tx.QueryRow(refreshCtx, `SELECT pg_try_advisory_xact_lock(20261020, 19)`).Scan(&locked); err != nil {
+			if ctx.Err() == nil {
+				logger.Error("获取预警刷新锁失败", "error", err)
+			}
+			return
+		}
+		if !locked {
+			return
+		}
+		if err := a.alertService.RefreshEnabledAlerts(refreshCtx); err != nil && ctx.Err() == nil {
+			logger.Error("后台刷新模型预警失败", "error", err)
+		}
+	}
+
+	refresh()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
 }
 
 type platformLimiterAdapter struct {

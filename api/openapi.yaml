@@ -1507,6 +1507,44 @@ paths:
               schema: { $ref: '#/components/schemas/GatewayAlertPageEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /model-gateway/alerts/settings:
+    get:
+      summary: 查询站内预警后台刷新设置
+      description: 按企业读取开关；尚未保存时默认关闭。需要 `model.gateway.read` 权限。
+      operationId: getModelGatewayAlertSettings
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 站内预警后台刷新设置。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayAlertSettingsEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: 修改站内预警后台刷新设置
+      description: 开启后由服务端每分钟刷新当前 UTC 月预警；关闭后仅管理员打开站内预警页签或手动刷新时计算。需要 `model.gateway.write` 权限和 CSRF 校验。
+      operationId: updateModelGatewayAlertSettings
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [autoRefreshEnabled]
+              properties:
+                autoRefreshEnabled: { type: boolean }
+      responses:
+        '200':
+          description: 更新后的设置。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayAlertSettingsEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /model-gateway/alerts/{id}/acknowledge:
     post:
       summary: 标记模型网关预警为已知悉
@@ -2167,6 +2205,17 @@ components:
         updatedAt: { type: string, format: date-time }
         acknowledgedAt: { type: string, format: date-time }
         resolvedAt: { type: string, format: date-time }
+    GatewayAlertSettings:
+      type: object
+      required: [autoRefreshEnabled]
+      properties:
+        autoRefreshEnabled: { type: boolean, description: 是否每分钟在后台生成当前 UTC 月预警。 }
+        updatedAt: { type: string, format: date-time }
+    GatewayAlertSettingsEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/GatewayAlertSettings' }
     GatewayAlertPage:
       type: object
       required: [month, activeCount, items, total, page, pageSize]

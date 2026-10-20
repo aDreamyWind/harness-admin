@@ -27,6 +27,16 @@ func main() {
 		os.Exit(1)
 	}
 	defer application.Close()
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		application.RunAlertRefresh(workerCtx, logger)
+	}()
+	defer func() {
+		stopWorker()
+		<-workerDone
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {

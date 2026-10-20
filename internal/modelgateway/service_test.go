@@ -10,16 +10,21 @@ import (
 )
 
 type repositoryStub struct {
-	createdInput    CreateAPIKeyInput
-	apiKey          APIKey
-	route           Route
-	touchedID       string
-	usageQuery      UsageQuery
-	recorded        RecordCallInput
-	alertCandidates []AlertCandidate
-	alertSignals    []AlertSignal
-	alertQuery      AlertQuery
-	alertSyncCount  int
+	createdInput         CreateAPIKeyInput
+	apiKey               APIKey
+	route                Route
+	touchedID            string
+	usageQuery           UsageQuery
+	recorded             RecordCallInput
+	alertCandidates      []AlertCandidate
+	alertSignals         []AlertSignal
+	alertQuery           AlertQuery
+	alertSyncCount       int
+	alertSettings        AlertSettings
+	alertSettingInput    UpdateAlertSettingsInput
+	refreshOrganizations []string
+	alertCandidateOrg    string
+	alertSyncOrg         string
 }
 
 type requestLimiterStub struct {
@@ -75,11 +80,13 @@ func (r *repositoryStub) ListUsage(_ context.Context, query UsageQuery) (UsagePa
 	r.usageQuery = query
 	return UsagePage{}, nil
 }
-func (r *repositoryStub) ListAlertCandidates(context.Context, string, string) ([]AlertCandidate, error) {
+func (r *repositoryStub) ListAlertCandidates(_ context.Context, organizationID, _ string) ([]AlertCandidate, error) {
+	r.alertCandidateOrg = organizationID
 	return r.alertCandidates, nil
 }
-func (r *repositoryStub) SyncAlerts(_ context.Context, _, _ string, signals []AlertSignal) error {
+func (r *repositoryStub) SyncAlerts(_ context.Context, organizationID, _ string, signals []AlertSignal) error {
 	r.alertSignals = signals
+	r.alertSyncOrg = organizationID
 	r.alertSyncCount++
 	return nil
 }
@@ -89,6 +96,17 @@ func (r *repositoryStub) ListAlerts(_ context.Context, query AlertQuery) (AlertP
 }
 func (*repositoryStub) AcknowledgeAlert(_ context.Context, input AcknowledgeAlertInput) (Alert, error) {
 	return Alert{ID: input.AlertID}, nil
+}
+func (r *repositoryStub) GetAlertSettings(context.Context, string) (AlertSettings, error) {
+	return r.alertSettings, nil
+}
+func (r *repositoryStub) UpdateAlertSettings(_ context.Context, input UpdateAlertSettingsInput) (AlertSettings, error) {
+	r.alertSettingInput = input
+	r.alertSettings = AlertSettings{AutoRefreshEnabled: input.AutoRefreshEnabled}
+	return r.alertSettings, nil
+}
+func (r *repositoryStub) ListAutoRefreshOrganizations(context.Context) ([]string, error) {
+	return r.refreshOrganizations, nil
 }
 
 func TestUsageQueryUsesUTCMonthAndValidatesDimensions(t *testing.T) {

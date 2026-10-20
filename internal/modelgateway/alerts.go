@@ -57,6 +57,60 @@ func (s *Service) AcknowledgeAlert(ctx context.Context, input AcknowledgeAlertIn
 	return item, nil
 }
 
+func (s *Service) GetAlertSettings(ctx context.Context, organizationID string) (AlertSettings, error) {
+	if organizationID == "" {
+		return AlertSettings{}, ErrInvalidInput
+	}
+	settings, err := s.repository.GetAlertSettings(ctx, organizationID)
+	if err != nil {
+		return AlertSettings{}, fmt.Errorf("读取模型预警设置失败: %w", err)
+	}
+	return settings, nil
+}
+
+func (s *Service) UpdateAlertSettings(ctx context.Context, input UpdateAlertSettingsInput) (AlertSettings, error) {
+	if input.OrganizationID == "" || input.ActorID == "" {
+		return AlertSettings{}, ErrInvalidInput
+	}
+	settings, err := s.repository.UpdateAlertSettings(ctx, input)
+	if err != nil {
+		return AlertSettings{}, fmt.Errorf("修改模型预警设置失败: %w", err)
+	}
+	return settings, nil
+}
+
+// RefreshEnabledAlerts 只计算已开启后台刷新的企业，始终使用当前 UTC 月。
+func (s *Service) RefreshEnabledAlerts(ctx context.Context) error {
+	organizations, err := s.repository.ListAutoRefreshOrganizations(ctx)
+	if err != nil {
+		return fmt.Errorf("查询启用后台预警的企业失败: %w", err)
+	}
+	month := s.now().UTC().Format("2006-01")
+	var refreshErrors []error
+	for _, organizationID := range organizations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		settings, err := s.repository.GetAlertSettings(ctx, organizationID)
+		if err != nil {
+			refreshErrors = append(refreshErrors, fmt.Errorf("复核企业 %s 的后台预警开关失败: %w", organizationID, err))
+			continue
+		}
+		if !settings.AutoRefreshEnabled {
+			continue
+		}
+		candidates, err := s.repository.ListAlertCandidates(ctx, organizationID, month)
+		if err != nil {
+			refreshErrors = append(refreshErrors, fmt.Errorf("读取企业 %s 的模型预警指标失败: %w", organizationID, err))
+			continue
+		}
+		if err := s.repository.SyncAlerts(ctx, organizationID, month, evaluateAlertCandidates(candidates)); err != nil {
+			refreshErrors = append(refreshErrors, fmt.Errorf("刷新企业 %s 的模型预警记录失败: %w", organizationID, err))
+		}
+	}
+	return errors.Join(refreshErrors...)
+}
+
 func evaluateAlertCandidates(candidates []AlertCandidate) []AlertSignal {
 	signals := make([]AlertSignal, 0, len(candidates))
 	for _, candidate := range candidates {

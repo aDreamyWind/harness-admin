@@ -79,6 +79,9 @@ func TestModelGatewayAlertDeduplicationAgainstDatabase(t *testing.T) {
 		if _, err := pool.Exec(cleanupCtx, `DELETE FROM model_gateway_alerts WHERE organization_id = $1`, organizationID); err != nil {
 			t.Errorf("清理测试预警失败: %v", err)
 		}
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM model_gateway_alert_settings WHERE organization_id = $1`, organizationID); err != nil {
+			t.Errorf("清理测试预警设置失败: %v", err)
+		}
 		if _, err := pool.Exec(cleanupCtx, `DELETE FROM users WHERE organization_id = $1`, organizationID); err != nil {
 			t.Errorf("清理测试用户失败: %v", err)
 		}
@@ -92,6 +95,32 @@ func TestModelGatewayAlertDeduplicationAgainstDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := NewModelGatewayRepository(pool, nil)
+	settings, err := repository.GetAlertSettings(ctx, organizationID)
+	if err != nil || settings.AutoRefreshEnabled {
+		t.Fatalf("预警自动刷新默认应关闭: %#v, %v", settings, err)
+	}
+	settings, err = repository.UpdateAlertSettings(ctx, modelgateway.UpdateAlertSettingsInput{
+		OrganizationID: organizationID, ActorID: actorID, AutoRefreshEnabled: true,
+		RequestID: "alert-settings-test", SourceIP: "127.0.0.1",
+	})
+	if err != nil || !settings.AutoRefreshEnabled || settings.UpdatedAt == nil {
+		t.Fatalf("保存开启状态失败: %#v, %v", settings, err)
+	}
+	enabledOrganizations, err := repository.ListAutoRefreshOrganizations(ctx)
+	if err != nil || !containsOrganization(enabledOrganizations, organizationID) {
+		t.Fatalf("后台刷新任务未看到启用企业: %v, %v", enabledOrganizations, err)
+	}
+	settings, err = repository.UpdateAlertSettings(ctx, modelgateway.UpdateAlertSettingsInput{
+		OrganizationID: organizationID, ActorID: actorID, AutoRefreshEnabled: false,
+		RequestID: "alert-settings-test", SourceIP: "127.0.0.1",
+	})
+	if err != nil || settings.AutoRefreshEnabled {
+		t.Fatalf("关闭后台刷新失败: %#v, %v", settings, err)
+	}
+	enabledOrganizations, err = repository.ListAutoRefreshOrganizations(ctx)
+	if err != nil || containsOrganization(enabledOrganizations, organizationID) {
+		t.Fatalf("关闭后仍被后台任务读取: %v, %v", enabledOrganizations, err)
+	}
 	month := time.Now().UTC().Format("2006-01")
 	if candidates, err := repository.ListAlertCandidates(ctx, organizationID, month); err != nil || len(candidates) != 0 {
 		t.Fatalf("预警候选查询失败: %#v, %v", candidates, err)
@@ -133,4 +162,13 @@ func TestModelGatewayAlertDeduplicationAgainstDatabase(t *testing.T) {
 	if err != nil || page.ActiveCount != 0 || page.Items[0].ResolvedAt == nil {
 		t.Fatalf("条件消失后预警应解除: %#v, %v", page, err)
 	}
+}
+
+func containsOrganization(organizations []string, target string) bool {
+	for _, organizationID := range organizations {
+		if organizationID == target {
+			return true
+		}
+	}
+	return false
 }

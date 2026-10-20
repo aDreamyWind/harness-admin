@@ -261,6 +261,19 @@ type AcknowledgeAlertInput struct {
 	SourceIP       string
 }
 
+type AlertSettings struct {
+	AutoRefreshEnabled bool       `json:"autoRefreshEnabled"`
+	UpdatedAt          *time.Time `json:"updatedAt,omitempty"`
+}
+
+type UpdateAlertSettingsInput struct {
+	OrganizationID     string
+	ActorID            string
+	AutoRefreshEnabled bool
+	RequestID          string
+	SourceIP           string
+}
+
 type Repository interface {
 	ListAPIKeys(context.Context, string) ([]APIKey, error)
 	CreateAPIKey(context.Context, CreateAPIKeyInput) (APIKey, error)
@@ -277,6 +290,9 @@ type Repository interface {
 	SyncAlerts(context.Context, string, string, []AlertSignal) error
 	ListAlerts(context.Context, AlertQuery) (AlertPage, error)
 	AcknowledgeAlert(context.Context, AcknowledgeAlertInput) (Alert, error)
+	GetAlertSettings(context.Context, string) (AlertSettings, error)
+	UpdateAlertSettings(context.Context, UpdateAlertSettingsInput) (AlertSettings, error)
+	ListAutoRefreshOrganizations(context.Context) ([]string, error)
 }
 
 type RequestLimiter interface {

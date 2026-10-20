@@ -36,6 +36,8 @@ type ModelGatewayService interface {
 	ListUsage(context.Context, modelgateway.UsageQuery) (modelgateway.UsagePage, error)
 	ListAlerts(context.Context, modelgateway.AlertQuery) (modelgateway.AlertPage, error)
 	AcknowledgeAlert(context.Context, modelgateway.AcknowledgeAlertInput) (modelgateway.Alert, error)
+	GetAlertSettings(context.Context, string) (modelgateway.AlertSettings, error)
+	UpdateAlertSettings(context.Context, modelgateway.UpdateAlertSettingsInput) (modelgateway.AlertSettings, error)
 	ListModelsForAPIKey(context.Context, string) ([]modelgateway.AvailableModel, error)
 	ListModelsForUser(context.Context, string, string) ([]modelgateway.AvailableModel, error)
 }
@@ -50,6 +52,10 @@ type createGatewayAPIKeyRequest struct {
 	RequestsPerMinute *int       `json:"requestsPerMinute"`
 	MonthlyTokenLimit *int64     `json:"monthlyTokenLimit"`
 	AllowedModelCodes []string   `json:"allowedModelCodes"`
+}
+
+type updateGatewayAlertSettingsRequest struct {
+	AutoRefreshEnabled *bool `json:"autoRefreshEnabled"`
 }
 
 type gatewayAPIKeyResponse struct {
@@ -110,6 +116,8 @@ func registerModelGatewayRoutes(router *gin.Engine, deps Dependencies) {
 	admin.GET("/calls", requirePermission(deps, "model.gateway.read"), listGatewayCallsHandler(deps))
 	admin.GET("/usage", requirePermission(deps, "model.gateway.read"), listGatewayUsageHandler(deps))
 	admin.GET("/alerts", requirePermission(deps, "model.gateway.read"), listGatewayAlertsHandler(deps))
+	admin.GET("/alerts/settings", requirePermission(deps, "model.gateway.read"), getGatewayAlertSettingsHandler(deps))
+	admin.PUT("/alerts/settings", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), updateGatewayAlertSettingsHandler(deps))
 	admin.POST("/alerts/:id/acknowledge", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), acknowledgeGatewayAlertHandler(deps))
 
 	router.POST("/v1/chat/completions", chatCompletionsGatewayHandler(deps))
@@ -370,6 +378,41 @@ func acknowledgeGatewayAlertHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, item)
+	}
+}
+
+func getGatewayAlertSettingsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		settings, err := deps.ModelGateway.GetAlertSettings(ctx.Request.Context(), currentSession(ctx).User.OrganizationID)
+		if err != nil {
+			handleModelGatewayAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, settings)
+	}
+}
+
+func updateGatewayAlertSettingsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		var request updateGatewayAlertSettingsRequest
+		if !bindModelJSON(ctx, &request) {
+			return
+		}
+		if request.AutoRefreshEnabled == nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "必须提供后台自动刷新开关")
+			return
+		}
+		session := currentSession(ctx)
+		settings, err := deps.ModelGateway.UpdateAlertSettings(ctx.Request.Context(), modelgateway.UpdateAlertSettingsInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID,
+			AutoRefreshEnabled: *request.AutoRefreshEnabled,
+			RequestID:          contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if err != nil {
+			handleModelGatewayAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, settings)
 	}
 }
 

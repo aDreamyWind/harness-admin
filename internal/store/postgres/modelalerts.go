@@ -198,3 +198,60 @@ func scanGatewayAlert(row interface{ Scan(...any) error }) (modelgateway.Alert, 
 	item.Month = month.Format("2006-01")
 	return item, nil
 }
+
+func (r *ModelGatewayRepository) GetAlertSettings(ctx context.Context, organizationID string) (modelgateway.AlertSettings, error) {
+	var settings modelgateway.AlertSettings
+	err := r.pool.QueryRow(ctx, `SELECT auto_refresh_enabled, updated_at FROM model_gateway_alert_settings
+		WHERE organization_id = $1`, organizationID).Scan(&settings.AutoRefreshEnabled, &settings.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return modelgateway.AlertSettings{AutoRefreshEnabled: false}, nil
+	}
+	return settings, err
+}
+
+func (r *ModelGatewayRepository) UpdateAlertSettings(ctx context.Context, input modelgateway.UpdateAlertSettingsInput) (modelgateway.AlertSettings, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return modelgateway.AlertSettings{}, err
+	}
+	defer tx.Rollback(ctx)
+	var settings modelgateway.AlertSettings
+	err = tx.QueryRow(ctx, `INSERT INTO model_gateway_alert_settings (organization_id, auto_refresh_enabled, updated_by)
+		VALUES ($1, $2, $3) ON CONFLICT (organization_id) DO UPDATE SET
+		auto_refresh_enabled = EXCLUDED.auto_refresh_enabled, updated_at = NOW(), updated_by = EXCLUDED.updated_by
+		RETURNING auto_refresh_enabled, updated_at`, input.OrganizationID, input.AutoRefreshEnabled, input.ActorID).
+		Scan(&settings.AutoRefreshEnabled, &settings.UpdatedAt)
+	if err != nil {
+		return modelgateway.AlertSettings{}, err
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
+		Action: "model.gateway_alert_settings.update", ResourceType: "model_gateway_alert_settings",
+		ResourceID: input.OrganizationID, Result: "success", SourceIP: input.SourceIP,
+		Detail: map[string]any{"autoRefreshEnabled": input.AutoRefreshEnabled},
+	}); err != nil {
+		return modelgateway.AlertSettings{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return modelgateway.AlertSettings{}, err
+	}
+	return settings, nil
+}
+
+func (r *ModelGatewayRepository) ListAutoRefreshOrganizations(ctx context.Context) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `SELECT organization_id FROM model_gateway_alert_settings
+		WHERE auto_refresh_enabled ORDER BY organization_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	organizations := make([]string, 0)
+	for rows.Next() {
+		var organizationID string
+		if err := rows.Scan(&organizationID); err != nil {
+			return nil, err
+		}
+		organizations = append(organizations, organizationID)
+	}
+	return organizations, rows.Err()
+}

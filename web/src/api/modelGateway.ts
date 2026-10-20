@@ -102,6 +102,11 @@ export interface GatewayAlertPage {
   pageSize: number
 }
 
+export interface GatewayAlertSettings {
+  autoRefreshEnabled: boolean
+  updatedAt?: string
+}
+
 export interface GatewayAlertQuery {
   month: string
   status: 'active' | 'all'
@@ -142,6 +147,13 @@ export function listGatewayUsage(query: GatewayUsageQuery) {
 export function listGatewayAlerts(query: GatewayAlertQuery) {
   const params = new URLSearchParams({ month: query.month, status: query.status, page: String(query.page), pageSize: String(query.pageSize) })
   return request<GatewayAlertPage>(`/api/v1/model-gateway/alerts?${params}`)
+}
+export const getGatewayAlertSettings = () => request<GatewayAlertSettings>('/api/v1/model-gateway/alerts/settings')
+export function updateGatewayAlertSettings(autoRefreshEnabled: boolean) {
+  return request<GatewayAlertSettings>('/api/v1/model-gateway/alerts/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+    body: JSON.stringify({ autoRefreshEnabled }),
+  })
 }
 export function acknowledgeGatewayAlert(id: string) {
   return request<GatewayAlert>(`/api/v1/model-gateway/alerts/${id}/acknowledge`, {

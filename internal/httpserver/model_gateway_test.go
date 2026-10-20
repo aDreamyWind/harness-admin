@@ -16,15 +16,16 @@ import (
 )
 
 type modelGatewayStub struct {
-	createInput      modelgateway.CreateAPIKeyInput
-	credential       string
-	requestBody      string
-	recorded         modelgateway.RecordCallInput
-	listQuery        modelgateway.CallQuery
-	usageQuery       modelgateway.UsageQuery
-	alertQuery       modelgateway.AlertQuery
-	acknowledgeInput modelgateway.AcknowledgeAlertInput
-	revealInput      modelgateway.RevealAPIKeySecretInput
+	createInput        modelgateway.CreateAPIKeyInput
+	credential         string
+	requestBody        string
+	recorded           modelgateway.RecordCallInput
+	listQuery          modelgateway.CallQuery
+	usageQuery         modelgateway.UsageQuery
+	alertQuery         modelgateway.AlertQuery
+	acknowledgeInput   modelgateway.AcknowledgeAlertInput
+	alertSettingsInput modelgateway.UpdateAlertSettingsInput
+	revealInput        modelgateway.RevealAPIKeySecretInput
 }
 
 func (*modelGatewayStub) ListAPIKeys(context.Context, string) ([]modelgateway.APIKey, error) {
@@ -85,6 +86,13 @@ func (s *modelGatewayStub) AcknowledgeAlert(_ context.Context, input modelgatewa
 	s.acknowledgeInput = input
 	return modelgateway.Alert{ID: input.AlertID}, nil
 }
+func (*modelGatewayStub) GetAlertSettings(context.Context, string) (modelgateway.AlertSettings, error) {
+	return modelgateway.AlertSettings{AutoRefreshEnabled: false}, nil
+}
+func (s *modelGatewayStub) UpdateAlertSettings(_ context.Context, input modelgateway.UpdateAlertSettingsInput) (modelgateway.AlertSettings, error) {
+	s.alertSettingsInput = input
+	return modelgateway.AlertSettings{AutoRefreshEnabled: input.AutoRefreshEnabled}, nil
+}
 
 func TestGatewayAlertsUseCurrentOrganizationAndProtectAcknowledgement(t *testing.T) {
 	gateway := &modelGatewayStub{}
@@ -115,6 +123,45 @@ func TestGatewayAlertsUseCurrentOrganizationAndProtectAcknowledgement(t *testing
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || gateway.acknowledgeInput.OrganizationID != "org-1" || gateway.acknowledgeInput.ActorID != "user-1" {
 		t.Fatalf("确认预警未使用当前企业身份: status=%d input=%#v", response.Code, gateway.acknowledgeInput)
+	}
+}
+
+func TestGatewayAlertSettingsAreScopedAndCSRFProtected(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}}, Access: accountAccessStub{},
+		ModelGateway: gateway, GatewayForwarder: gatewayForwarderStub{}, SessionCookie: "test_session",
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/model-gateway/alerts/settings", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"autoRefreshEnabled":false`) {
+		t.Fatalf("读取默认设置失败: %d %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPut, "/api/v1/model-gateway/alerts/settings", strings.NewReader(`{"autoRefreshEnabled":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("未提供 CSRF 时应拒绝设置修改: %d", response.Code)
+	}
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || gateway.alertSettingsInput.OrganizationID != "org-1" || gateway.alertSettingsInput.ActorID != "user-1" || !gateway.alertSettingsInput.AutoRefreshEnabled {
+		t.Fatalf("修改设置时未正确传入企业身份: %d %#v", response.Code, gateway.alertSettingsInput)
+	}
+	request = httptest.NewRequest(http.MethodPut, "/api/v1/model-gateway/alerts/settings", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("缺少明确开关值时应拒绝: %d", response.Code)
 	}
 }
 

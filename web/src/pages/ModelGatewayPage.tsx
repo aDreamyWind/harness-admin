@@ -21,6 +21,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -34,6 +35,7 @@ import { ApiError } from '../api/client'
 import {
   acknowledgeGatewayAlert,
   createGatewayAPIKey,
+  getGatewayAlertSettings,
   listGatewayAPIKeys,
   listGatewayAlerts,
   listGatewayCalls,
@@ -41,6 +43,7 @@ import {
   revokeGatewayAPIKey,
   revealGatewayAPIKeySecret,
   updateGatewayAPIKey,
+  updateGatewayAlertSettings,
   type CreatedGatewayAPIKey,
   type GatewayAPIKey,
   type GatewayAlert,
@@ -97,7 +100,9 @@ export function ModelGatewayPage() {
   const callsQuery = useQuery({ queryKey: ['model-gateway-calls', callQuery], queryFn: () => listGatewayCalls(callQuery), refetchInterval: 15000 })
   const usageResult = useQuery({ queryKey: ['model-gateway-usage', usageQuery], queryFn: () => listGatewayUsage(usageQuery), enabled: activeTab === 'usage' })
   const policiesResult = useQuery({ queryKey: ['model-policies'], queryFn: listModelPolicies, enabled: canReadPolicies && activeTab === 'usage' })
-  const alertsResult = useQuery({ queryKey: ['model-gateway-alerts', alertQuery], queryFn: () => listGatewayAlerts(alertQuery), refetchInterval: 60000 })
+  const alertSettingsResult = useQuery({ queryKey: ['model-gateway-alert-settings'], queryFn: getGatewayAlertSettings, enabled: activeTab === 'alerts' })
+  const alertsResult = useQuery({ queryKey: ['model-gateway-alerts', alertQuery], queryFn: () => listGatewayAlerts(alertQuery),
+    enabled: activeTab === 'alerts', refetchInterval: alertSettingsResult.data?.autoRefreshEnabled ? 60000 : false })
   const keys = keysQuery.data ?? []
   const callsPage = callsQuery.data ?? { items: [], total: 0, page: callQuery.page, pageSize: callQuery.pageSize }
   const usagePage = usageResult.data
@@ -145,6 +150,15 @@ export function ModelGatewayPage() {
       await queryClient.invalidateQueries({ queryKey: ['model-gateway-alerts'] })
     },
     onError: (error) => messageApi.error(errorMessage(error, '确认预警失败')),
+  })
+  const saveAlertSettings = useMutation({
+    mutationFn: updateGatewayAlertSettings,
+    onSuccess: async (settings) => {
+      queryClient.setQueryData(['model-gateway-alert-settings'], settings)
+      messageApi.success(settings.autoRefreshEnabled ? '后台定时刷新已开启' : '后台定时刷新已关闭')
+      await queryClient.invalidateQueries({ queryKey: ['model-gateway-alerts'] })
+    },
+    onError: (error) => messageApi.error(errorMessage(error, '修改预警刷新设置失败')),
   })
 
   const openCreateKey = () => {
@@ -315,10 +329,17 @@ export function ModelGatewayPage() {
       children: <GatewayResource
         title="站内预警"
         hint="额度达到 80% 提醒、达到 100% 标为紧急；模型成功调用中，至少 5 次且至少 20% 用量未知时提醒。按月份和对象去重，严重程度升级后需重新确认。"
-        action={<Button icon={<ReloadOutlined />} loading={alertsResult.isFetching} onClick={() => alertsResult.refetch()}>刷新</Button>}
+        action={<Space>
+          <Space size={6}><Text>后台定时刷新</Text><Switch aria-label="后台定时刷新预警" checked={alertSettingsResult.data?.autoRefreshEnabled ?? false}
+            loading={alertSettingsResult.isLoading || saveAlertSettings.isPending} disabled={!canWrite || alertSettingsResult.isError}
+            onChange={(checked) => saveAlertSettings.mutate(checked)} /></Space>
+          <Button icon={<ReloadOutlined />} loading={alertsResult.isFetching} onClick={() => alertsResult.refetch()}>刷新</Button>
+        </Space>}
         error={alertsResult.isError ? errorMessage(alertsResult.error, '站内预警加载失败') : ''}
         retry={() => alertsResult.refetch()}
       >
+        {alertSettingsResult.isError ? <Alert type="error" showIcon style={{ marginBottom: 12 }} message={errorMessage(alertSettingsResult.error, '读取预警刷新设置失败')}
+          action={<Button size="small" onClick={() => alertSettingsResult.refetch()}>重试</Button>} /> : null}
         <div className="gateway-usage-controls">
           <Input type="month" aria-label="预警月份" value={alertQuery.month} onChange={(event) => {
             if (event.target.value) setAlertQuery((current) => ({ ...current, month: event.target.value, page: 1 }))

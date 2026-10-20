@@ -77,3 +77,35 @@ func TestListAlertsRefreshesOnlyCurrentUTCMonth(t *testing.T) {
 		}
 	}
 }
+
+func TestAlertSettingsAndBackgroundRefresh(t *testing.T) {
+	repository := &repositoryStub{alertCandidates: []AlertCandidate{{DedupeKey: "quota:user:1", Kind: "quota", UsedTokens: 8, TokenLimit: 10}}}
+	service := NewService(repository, nil, nil)
+	service.now = func() time.Time { return time.Date(2026, 11, 1, 0, 30, 0, 0, time.UTC) }
+	ctx := context.Background()
+	settings, err := service.GetAlertSettings(ctx, "org-1")
+	if err != nil || settings.AutoRefreshEnabled {
+		t.Fatalf("默认应关闭后台刷新: %#v, %v", settings, err)
+	}
+	if err := service.RefreshEnabledAlerts(ctx); err != nil || repository.alertSyncCount != 0 {
+		t.Fatalf("未开启时不应刷新: %d, %v", repository.alertSyncCount, err)
+	}
+	settings, err = service.UpdateAlertSettings(ctx, UpdateAlertSettingsInput{OrganizationID: "org-1", ActorID: "user-1", AutoRefreshEnabled: true})
+	if err != nil || !settings.AutoRefreshEnabled || repository.alertSettingInput.ActorID != "user-1" {
+		t.Fatalf("开启后台刷新失败: %#v, %v", settings, err)
+	}
+	repository.refreshOrganizations = []string{"org-1"}
+	if err := service.RefreshEnabledAlerts(ctx); err != nil || repository.alertSyncCount != 1 || repository.alertSyncOrg != "org-1" || len(repository.alertSignals) != 1 {
+		t.Fatalf("后台预警未按开启企业计算: %#v, %v", repository, err)
+	}
+	settings, err = service.UpdateAlertSettings(ctx, UpdateAlertSettingsInput{OrganizationID: "org-1", ActorID: "user-1", AutoRefreshEnabled: false})
+	if err != nil || settings.AutoRefreshEnabled {
+		t.Fatalf("关闭后台刷新失败: %#v, %v", settings, err)
+	}
+	if err := service.RefreshEnabledAlerts(ctx); err != nil || repository.alertSyncCount != 1 {
+		t.Fatalf("关闭后不应继续刷新: %d, %v", repository.alertSyncCount, err)
+	}
+	if _, err := service.UpdateAlertSettings(ctx, UpdateAlertSettingsInput{OrganizationID: "org-1"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("缺少操作人应拒绝: %v", err)
+	}
+}
