@@ -10,8 +10,10 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-//go:embed migrations/*.sql
+//go:embed migrations/*.sql migrations/legacy/*.sql
 var migrationFiles embed.FS
+
+const baselineVersion = 20
 
 func Migrate(ctx context.Context, databaseURL string) error {
 	config, err := pgx.ParseConfig(databaseURL)
@@ -29,6 +31,15 @@ func Migrate(ctx context.Context, databaseURL string) error {
 	goose.SetBaseFS(migrationFiles)
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("设置迁移方言失败: %w", err)
+	}
+	version, err := goose.GetDBVersionContext(ctx, db)
+	if err != nil {
+		return fmt.Errorf("读取当前迁移版本失败: %w", err)
+	}
+	if version > 0 && version < baselineVersion {
+		if err := goose.UpContext(ctx, db, "migrations/legacy"); err != nil {
+			return fmt.Errorf("升级历史数据库迁移失败: %w", err)
+		}
 	}
 	if err := goose.UpContext(ctx, db, "migrations"); err != nil {
 		return fmt.Errorf("执行数据库迁移失败: %w", err)

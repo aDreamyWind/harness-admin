@@ -83,6 +83,8 @@ go run ./cmd/server
 
 `make seed-test-organization` 仅允许在 `development` 或 `test` 环境执行，会为指定企业写入一套常见企业组织树，包括集团总部、总经理办公室、人力资源、财务、产品、研发、营销、法务等 17 个部门。该命令可重复执行：已有部门会按代码更新层级、名称、排序和启用状态，不会重复创建。默认使用 `default` 企业和 `admin` 操作人，可通过 `TEST_ORG_CODE`、`TEST_ORG_ACTOR_USERNAME` 配置。
 
+数据库迁移已合并为版本 20 的当前结构基线：全新数据库只执行 `internal/database/migrations/00020_baseline.sql`，不会逐条重放开发期间的 1～20 号结构修改。历史 SQL 保存在 `internal/database/migrations/legacy/`；迁移版本处于 1～19 的已有数据库仍沿历史路径升级到 20，已到 20 的数据库不会重建表或清理数据。后续增量迁移从 21 开始。不要手动清空已有数据库的 `goose_db_version`，也不要将基线 SQL 直接执行到已有业务库。
+
 身份接口：
 
 - `GET /api/v1/auth/organizations`
@@ -241,6 +243,8 @@ make test
 make build
 make web-build
 ```
+
+需要核对合并基线时，可在具备 `CREATE DATABASE` 权限的专用测试 PostgreSQL 实例上设置 `HARNESS_TEST_MIGRATION_ADMIN_URL`，运行 `go test ./internal/database -run '^TestMigrateBaselineMatchesLegacy$' -count=1`。测试会自动创建并删除两个独立数据库，对比新库基线和历史迁移的最终结构、权限数据，并检查新库只执行一个迁移及管理员权限。不要把此变量指向生产实例。
 
 ## 第一阶段收口范围
 

@@ -271,6 +271,12 @@ func ensureEnterpriseAdminRole(ctx context.Context, tx pgx.Tx, organizationID st
 		{"model.provider.write", "管理模型供应商", "model_provider", "write"},
 		{"model.catalog.read", "查看模型目录", "model_catalog", "read"},
 		{"model.catalog.write", "管理模型目录", "model_catalog", "write"},
+		{"model.gateway.read", "查看模型网关", "model_gateway", "read"},
+		{"model.gateway.write", "管理模型网关", "model_gateway", "write"},
+		{"oidc.client.read", "查看应用接入", "oidc_client", "read"},
+		{"oidc.client.write", "管理应用接入", "oidc_client", "write"},
+		{"model.policy.read", "查看模型策略", "model_policy", "read"},
+		{"model.policy.write", "管理模型策略", "model_policy", "write"},
 	}
 	for _, permission := range permissions {
 		permissionID := uuid.NewString()
