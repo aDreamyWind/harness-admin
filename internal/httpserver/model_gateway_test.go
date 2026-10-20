@@ -21,6 +21,7 @@ type modelGatewayStub struct {
 	requestBody string
 	recorded    modelgateway.RecordCallInput
 	listQuery   modelgateway.CallQuery
+	usageQuery  modelgateway.UsageQuery
 	revealInput modelgateway.RevealAPIKeySecretInput
 }
 
@@ -68,6 +69,27 @@ func (s *modelGatewayStub) RecordCall(_ context.Context, input modelgateway.Reco
 func (s *modelGatewayStub) ListCalls(_ context.Context, query modelgateway.CallQuery) (modelgateway.CallPage, error) {
 	s.listQuery = query
 	return modelgateway.CallPage{Items: []modelgateway.Call{}, Total: 21, Page: query.Page, PageSize: query.PageSize}, nil
+}
+func (s *modelGatewayStub) ListUsage(_ context.Context, query modelgateway.UsageQuery) (modelgateway.UsagePage, error) {
+	s.usageQuery = query
+	return modelgateway.UsagePage{Month: query.Month, GroupBy: query.GroupBy, Page: query.Page,
+		PageSize: query.PageSize, Items: []modelgateway.UsageGroup{}}, nil
+}
+
+func TestListGatewayUsageUsesCurrentOrganizationAndPagination(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	router := newGatewayTestRouter(gateway)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/model-gateway/usage?month=2026-10&groupBy=user&page=2&pageSize=10", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || gateway.usageQuery.OrganizationID != "org-1" ||
+		gateway.usageQuery.Month != "2026-10" || gateway.usageQuery.GroupBy != "user" || gateway.usageQuery.Page != 2 || gateway.usageQuery.PageSize != 10 {
+		t.Fatalf("用量统计参数不正确: status=%d query=%#v", response.Code, gateway.usageQuery)
+	}
+	if !strings.Contains(response.Body.String(), `"groupBy":"user"`) || !strings.Contains(response.Body.String(), `"knownTokens":0`) {
+		t.Fatalf("用量统计 JSON 字段不符合契约: %s", response.Body.String())
+	}
 }
 func (*modelGatewayStub) ListModelsForAPIKey(context.Context, string) ([]modelgateway.AvailableModel, error) {
 	return []modelgateway.AvailableModel{{Code: "main", CreatedAt: time.Unix(100, 0)}}, nil
@@ -170,6 +192,18 @@ func TestParseSSETokenUsage(t *testing.T) {
 	}
 	if _, ok := parseSSETokenUsage("data: [DONE]"); ok {
 		t.Fatal("[DONE] 不应被识别为 Token 用量")
+	}
+	if usage, ok := parseSSETokenUsage(`data: {"usage":{"total_tokens":0}}`); !ok || !usage.Reported {
+		t.Fatalf("明确返回零 Token 也应视为已统计: %#v, %v", usage, ok)
+	}
+	if usage := parseTokenUsage([]byte(`{"choices":[]}`)); usage.Reported {
+		t.Fatal("未返回 usage 时不能误记零 Token")
+	}
+	if usage := parseTokenUsage([]byte(`{"usage":{"total_tokens":null}}`)); usage.Reported {
+		t.Fatal("null 用量不能误记零 Token")
+	}
+	if usage := parseTokenUsage([]byte(`{"usage":{"prompt_tokens":2,"completion_tokens":3}}`)); !usage.Reported || usage.TotalTokens != 5 {
+		t.Fatalf("分项用量应合计为总量: %#v", usage)
 	}
 }
 

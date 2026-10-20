@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.19.0
+  version: 0.20.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -1449,6 +1449,35 @@ paths:
               schema: { $ref: '#/components/schemas/GatewayCallPageEnvelope' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /model-gateway/usage:
+    get:
+      summary: 查询模型网关月度用量
+      description: 按 UTC 自然月汇总；部门和用户维度只包含 OIDC 用户调用，模型维度包含用户和调用密钥。缺少上游 usage 的调用计为用量未知，不当作零 Token。需要 `model.gateway.read` 权限。
+      operationId: listModelGatewayUsage
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: month
+          in: query
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+          description: UTC 月份，格式 YYYY-MM；省略时为当前 UTC 月。
+        - name: groupBy
+          in: query
+          schema: { type: string, enum: [department, user, model], default: department }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 月度用量分页汇总。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatewayUsagePageEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /v1/models:
     servers:
       - url: /
@@ -1995,7 +2024,7 @@ components:
             secret: { type: string, readOnly: true, description: 创建成功时返回的完整调用密钥；后续可通过密钥查看接口再次读取。 }
     GatewayCall:
       type: object
-      required: [id, authType, requestId, modelCode, upstreamModelId, streaming, result, httpStatus, latencyMs, promptTokens, completionTokens, totalTokens, errorCode, sourceIp, createdAt]
+      required: [id, authType, requestId, modelCode, upstreamModelId, streaming, result, httpStatus, latencyMs, promptTokens, completionTokens, totalTokens, usageReported, quotaExceeded, errorCode, sourceIp, createdAt]
       properties:
         id: { type: string, format: uuid }
         authType: { type: string, enum: [api_key, user] }
@@ -2003,6 +2032,7 @@ components:
         apiKeyName: { type: string, description: authType 为 api_key 时返回。 }
         userId: { type: string, format: uuid, description: authType 为 user 时返回。 }
         userName: { type: string, description: authType 为 user 时返回。 }
+        departmentId: { type: string, format: uuid, description: 调用发生时的部门标识；历史数据可能没有。 }
         requestId: { type: string }
         modelCode: { type: string }
         upstreamModelId: { type: string }
@@ -2013,6 +2043,8 @@ components:
         promptTokens: { type: integer }
         completionTokens: { type: integer }
         totalTokens: { type: integer }
+        usageReported: { type: boolean, description: 上游是否明确返回 Token 用量；false 时显示为未知。 }
+        quotaExceeded: { type: boolean, description: 本次记账后是否超过调用身份的月度 Token 额度。 }
         errorCode: { type: string }
         sourceIp: { type: string }
         createdAt: { type: string, format: date-time }
@@ -2024,6 +2056,32 @@ components:
           type: array
           items: { $ref: '#/components/schemas/GatewayCall' }
         total: { type: integer, format: int64, minimum: 0 }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+    GatewayUsageGroup:
+      type: object
+      required: [id, name, callCount, knownTokens, unknownUsageCalls, overQuotaCalls]
+      properties:
+        id: { type: string, description: 部门或用户 UUID、模型编码；历史缺失部门时为空字符串。 }
+        name: { type: string }
+        callCount: { type: integer, format: int64 }
+        knownTokens: { type: integer, format: int64 }
+        unknownUsageCalls: { type: integer, format: int64 }
+        overQuotaCalls: { type: integer, format: int64 }
+    GatewayUsagePage:
+      type: object
+      required: [month, groupBy, callCount, knownTokens, unknownUsageCalls, overQuotaCalls, items, total, page, pageSize]
+      properties:
+        month: { type: string, description: UTC 月份，YYYY-MM。 }
+        groupBy: { type: string, enum: [department, user, model] }
+        callCount: { type: integer, format: int64 }
+        knownTokens: { type: integer, format: int64 }
+        unknownUsageCalls: { type: integer, format: int64 }
+        overQuotaCalls: { type: integer, format: int64 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/GatewayUsageGroup' }
+        total: { type: integer, format: int64 }
         page: { type: integer, minimum: 1 }
         pageSize: { type: integer, minimum: 1, maximum: 100 }
     AuthUser:
@@ -2401,6 +2459,11 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/GatewayCallPage' }
+    GatewayUsagePageEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/GatewayUsagePage' }
     AuditEventEnvelope:
       type: object
       required: [data]

@@ -33,6 +33,7 @@ type ModelGatewayService interface {
 	PrepareForUser(context.Context, string, string, []byte) (modelgateway.PreparedRequest, error)
 	RecordCall(context.Context, modelgateway.RecordCallInput) error
 	ListCalls(context.Context, modelgateway.CallQuery) (modelgateway.CallPage, error)
+	ListUsage(context.Context, modelgateway.UsageQuery) (modelgateway.UsagePage, error)
 	ListModelsForAPIKey(context.Context, string) ([]modelgateway.AvailableModel, error)
 	ListModelsForUser(context.Context, string, string) ([]modelgateway.AvailableModel, error)
 }
@@ -79,6 +80,7 @@ type gatewayCallResponse struct {
 	AuthType         string    `json:"authType"`
 	UserID           string    `json:"userId,omitempty"`
 	UserName         string    `json:"userName,omitempty"`
+	DepartmentID     string    `json:"departmentId,omitempty"`
 	RequestID        string    `json:"requestId"`
 	ModelCode        string    `json:"modelCode"`
 	UpstreamModelID  string    `json:"upstreamModelId"`
@@ -89,6 +91,8 @@ type gatewayCallResponse struct {
 	PromptTokens     int       `json:"promptTokens"`
 	CompletionTokens int       `json:"completionTokens"`
 	TotalTokens      int       `json:"totalTokens"`
+	UsageReported    bool      `json:"usageReported"`
+	QuotaExceeded    bool      `json:"quotaExceeded"`
 	ErrorCode        string    `json:"errorCode"`
 	SourceIP         string    `json:"sourceIp"`
 	CreatedAt        time.Time `json:"createdAt"`
@@ -102,6 +106,7 @@ func registerModelGatewayRoutes(router *gin.Engine, deps Dependencies) {
 	admin.PATCH("/api-keys/:id/revoke", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), revokeGatewayAPIKeyHandler(deps))
 	admin.GET("/api-keys/:id/secret", requirePermission(deps, "model.gateway.write"), revealGatewayAPIKeySecretHandler(deps))
 	admin.GET("/calls", requirePermission(deps, "model.gateway.read"), listGatewayCallsHandler(deps))
+	admin.GET("/usage", requirePermission(deps, "model.gateway.read"), listGatewayUsageHandler(deps))
 
 	router.POST("/v1/chat/completions", chatCompletionsGatewayHandler(deps))
 	router.GET("/v1/models", listGatewayModelsHandler(deps))
@@ -289,14 +294,37 @@ func listGatewayCallsHandler(deps Dependencies) gin.HandlerFunc {
 		for _, item := range result.Items {
 			response = append(response, gatewayCallResponse{
 				ID: item.ID, APIKeyID: item.APIKeyID, APIKeyName: item.APIKeyName,
-				AuthType: item.AuthType, UserID: item.UserID, UserName: item.UserName, RequestID: item.RequestID,
+				AuthType: item.AuthType, UserID: item.UserID, UserName: item.UserName, DepartmentID: item.DepartmentID, RequestID: item.RequestID,
 				ModelCode: item.ModelCode, UpstreamModelID: item.UpstreamModelID, Streaming: item.Streaming,
 				Result: item.Result, HTTPStatus: item.HTTPStatus, LatencyMS: item.LatencyMS,
 				PromptTokens: item.PromptTokens, CompletionTokens: item.CompletionTokens, TotalTokens: item.TotalTokens,
+				UsageReported: item.UsageReported, QuotaExceeded: item.QuotaExceeded,
 				ErrorCode: item.ErrorCode, SourceIP: item.SourceIP, CreatedAt: item.CreatedAt,
 			})
 		}
 		httpx.OK(ctx, http.StatusOK, gatewayCallPageResponse{Items: response, Total: result.Total, Page: result.Page, PageSize: result.PageSize})
+	}
+}
+
+func listGatewayUsageHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		page, ok := positiveQueryInt(ctx, "page", 1)
+		if !ok {
+			return
+		}
+		pageSize, ok := positiveQueryInt(ctx, "pageSize", 20)
+		if !ok {
+			return
+		}
+		result, err := deps.ModelGateway.ListUsage(ctx.Request.Context(), modelgateway.UsageQuery{
+			OrganizationID: currentSession(ctx).User.OrganizationID,
+			Month:          ctx.Query("month"), GroupBy: ctx.Query("groupBy"), Page: page, PageSize: pageSize,
+		})
+		if err != nil {
+			handleModelGatewayAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, result)
 	}
 }
 
@@ -387,21 +415,49 @@ func parseSSETokenUsage(line string) (tokenUsage, bool) {
 		return tokenUsage{}, false
 	}
 	usage := parseTokenUsage([]byte(payload))
-	return usage, usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0
+	return usage, usage.Reported
 }
 
 type tokenUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     int  `json:"prompt_tokens"`
+	CompletionTokens int  `json:"completion_tokens"`
+	TotalTokens      int  `json:"total_tokens"`
+	Reported         bool `json:"-"`
 }
 
 func parseTokenUsage(body []byte) tokenUsage {
 	var envelope struct {
-		Usage tokenUsage `json:"usage"`
+		Usage json.RawMessage `json:"usage"`
 	}
-	_ = json.Unmarshal(body, &envelope)
-	return envelope.Usage
+	if json.Unmarshal(body, &envelope) != nil || len(envelope.Usage) == 0 || string(envelope.Usage) == "null" {
+		return tokenUsage{}
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(envelope.Usage, &fields) != nil || len(fields) == 0 {
+		return tokenUsage{}
+	}
+	reported := false
+	for _, key := range []string{"total_tokens", "prompt_tokens", "completion_tokens"} {
+		if raw, exists := fields[key]; exists && string(raw) != "null" {
+			var count int
+			if json.Unmarshal(raw, &count) != nil || count < 0 {
+				return tokenUsage{}
+			}
+			reported = true
+		}
+	}
+	if !reported {
+		return tokenUsage{}
+	}
+	var usage tokenUsage
+	if json.Unmarshal(envelope.Usage, &usage) != nil || usage.PromptTokens < 0 || usage.CompletionTokens < 0 || usage.TotalTokens < 0 {
+		return tokenUsage{}
+	}
+	if _, hasTotal := fields["total_tokens"]; !hasTotal {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	usage.Reported = true
+	return usage
 }
 
 func upstreamErrorCode(status int, body []byte) string {
@@ -441,7 +497,8 @@ func recordGatewayCall(deps Dependencies, ctx *gin.Context, prepared modelgatewa
 		UpstreamModelID: prepared.Route.UpstreamModelID, Streaming: prepared.Streaming,
 		Result: result, HTTPStatus: status, LatencyMS: latency.Milliseconds(),
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
-		TotalTokens: usage.TotalTokens, ErrorCode: errorCode, SourceIP: ctx.ClientIP(),
+		TotalTokens: usage.TotalTokens, UsageReported: usage.Reported,
+		ErrorCode: errorCode, SourceIP: ctx.ClientIP(),
 	})
 	if err != nil {
 		deps.Logger.Error("记录模型网关调用失败", "error", err, "request_id", contextString(ctx, "request_id"))

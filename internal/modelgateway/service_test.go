@@ -14,6 +14,8 @@ type repositoryStub struct {
 	apiKey       APIKey
 	route        Route
 	touchedID    string
+	usageQuery   UsageQuery
+	recorded     RecordCallInput
 }
 
 type requestLimiterStub struct {
@@ -58,9 +60,57 @@ func (r *repositoryStub) FindRoute(context.Context, string, string) (Route, erro
 	}
 	return r.route, nil
 }
-func (*repositoryStub) RecordCall(context.Context, RecordCallInput) error { return nil }
+func (r *repositoryStub) RecordCall(_ context.Context, input RecordCallInput) error {
+	r.recorded = input
+	return nil
+}
 func (*repositoryStub) ListCalls(context.Context, CallQuery) (CallPage, error) {
 	return CallPage{}, nil
+}
+func (r *repositoryStub) ListUsage(_ context.Context, query UsageQuery) (UsagePage, error) {
+	r.usageQuery = query
+	return UsagePage{}, nil
+}
+
+func TestUsageQueryUsesUTCMonthAndValidatesDimensions(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository, nil, nil)
+	service.now = func() time.Time { return time.Date(2026, 11, 1, 0, 30, 0, 0, time.UTC) }
+	if _, err := service.ListUsage(context.Background(), UsageQuery{OrganizationID: "org-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if repository.usageQuery.Month != "2026-11" || repository.usageQuery.GroupBy != "department" || repository.usageQuery.Page != 1 {
+		t.Fatalf("默认统计条件错误: %#v", repository.usageQuery)
+	}
+	for _, query := range []UsageQuery{
+		{OrganizationID: "org-1", Month: "2026-13", GroupBy: "model"},
+		{OrganizationID: "org-1", Month: "2026-10", GroupBy: "api_key"},
+		{OrganizationID: "org-1", Month: "2026-10", GroupBy: "user", PageSize: 101},
+	} {
+		if _, err := service.ListUsage(context.Background(), query); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("无效统计条件应拒绝: %#v, err=%v", query, err)
+		}
+	}
+}
+
+func TestRecordCallDistinguishesReportedUsage(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository, nil, nil)
+	input := RecordCallInput{OrganizationID: "org-1", APIKeyID: "key-1", AuthType: "api_key",
+		ModelID: "model-1", ProviderID: "provider-1", RequestID: "request-1", Result: "success", HTTPStatus: 200}
+	if err := service.RecordCall(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if repository.recorded.UsageReported {
+		t.Fatal("没有上游 usage 时不应标为已统计")
+	}
+	input.TotalTokens = 8
+	if err := service.RecordCall(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if !repository.recorded.UsageReported {
+		t.Fatal("上游有 Token 用量时应标为已统计")
+	}
 }
 
 func TestCreateAPIKeyPersistsHashAndEncryptedSecretInput(t *testing.T) {

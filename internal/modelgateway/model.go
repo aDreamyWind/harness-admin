@@ -120,6 +120,7 @@ type Call struct {
 	AuthType         string
 	UserID           string
 	UserName         string
+	DepartmentID     string
 	RequestID        string
 	ModelCode        string
 	UpstreamModelID  string
@@ -130,6 +131,8 @@ type Call struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	UsageReported    bool
+	QuotaExceeded    bool
 	ErrorCode        string
 	SourceIP         string
 	CreatedAt        time.Time
@@ -171,8 +174,39 @@ type RecordCallInput struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	UsageReported    bool
 	ErrorCode        string
 	SourceIP         string
+}
+
+type UsageQuery struct {
+	OrganizationID string
+	Month          string
+	GroupBy        string
+	Page           int
+	PageSize       int
+}
+
+type UsageGroup struct {
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	CallCount         int64  `json:"callCount"`
+	KnownTokens       int64  `json:"knownTokens"`
+	UnknownUsageCalls int64  `json:"unknownUsageCalls"`
+	OverQuotaCalls    int64  `json:"overQuotaCalls"`
+}
+
+type UsagePage struct {
+	Month             string       `json:"month"`
+	GroupBy           string       `json:"groupBy"`
+	CallCount         int64        `json:"callCount"`
+	KnownTokens       int64        `json:"knownTokens"`
+	UnknownUsageCalls int64        `json:"unknownUsageCalls"`
+	OverQuotaCalls    int64        `json:"overQuotaCalls"`
+	Items             []UsageGroup `json:"items"`
+	Total             int64        `json:"total"`
+	Page              int          `json:"page"`
+	PageSize          int          `json:"pageSize"`
 }
 
 type Repository interface {
@@ -186,6 +220,7 @@ type Repository interface {
 	FindRoute(context.Context, string, string) (Route, error)
 	RecordCall(context.Context, RecordCallInput) error
 	ListCalls(context.Context, CallQuery) (CallPage, error)
+	ListUsage(context.Context, UsageQuery) (UsagePage, error)
 }
 
 type RequestLimiter interface {

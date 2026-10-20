@@ -18,6 +18,7 @@ import (
 const gatewayKeyPrefix = "harness_sk_"
 
 var gatewayModelCodePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,79}$`)
+var usageMonthPattern = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])$`)
 
 type Service struct {
 	repository Repository
@@ -260,6 +261,12 @@ func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
 	if input.Result != "success" && input.Result != "failed" {
 		return ErrInvalidInput
 	}
+	if input.PromptTokens < 0 || input.CompletionTokens < 0 || input.TotalTokens < 0 {
+		return ErrInvalidInput
+	}
+	if input.PromptTokens > 0 || input.CompletionTokens > 0 || input.TotalTokens > 0 {
+		input.UsageReported = true
+	}
 	if err := s.repository.RecordCall(ctx, input); err != nil {
 		return fmt.Errorf("记录模型网关调用失败: %w", err)
 	}
@@ -281,6 +288,31 @@ func (s *Service) ListCalls(ctx context.Context, query CallQuery) (CallPage, err
 	items, err := s.repository.ListCalls(ctx, query)
 	if err != nil {
 		return CallPage{}, fmt.Errorf("查询模型网关调用记录失败: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Service) ListUsage(ctx context.Context, query UsageQuery) (UsagePage, error) {
+	if query.Month == "" {
+		query.Month = s.now().UTC().Format("2006-01")
+	}
+	if query.GroupBy == "" {
+		query.GroupBy = "department"
+	}
+	if query.Page == 0 {
+		query.Page = 1
+	}
+	if query.PageSize == 0 {
+		query.PageSize = 20
+	}
+	if query.OrganizationID == "" || !usageMonthPattern.MatchString(query.Month) || query.Month[:4] == "0000" ||
+		(query.GroupBy != "department" && query.GroupBy != "user" && query.GroupBy != "model") ||
+		query.Page < 1 || query.PageSize < 1 || query.PageSize > 100 {
+		return UsagePage{}, ErrInvalidInput
+	}
+	items, err := s.repository.ListUsage(ctx, query)
+	if err != nil {
+		return UsagePage{}, fmt.Errorf("查询模型用量统计失败: %w", err)
 	}
 	return items, nil
 }

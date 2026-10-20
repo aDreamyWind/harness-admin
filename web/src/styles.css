@@ -2120,6 +2120,24 @@ select {
   background: #fafbfd;
 }
 
+.gateway-usage-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5ebf0;
+  background: #fafbfd;
+}
+
+.gateway-usage-controls .ant-input {
+  width: 168px;
+}
+
+.gateway-usage-controls .ant-select {
+  width: 132px;
+}
+
 .gateway-call-filters .ant-form-item {
   margin-right: 10px;
   margin-bottom: 0;

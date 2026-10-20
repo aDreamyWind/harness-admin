@@ -26,6 +26,7 @@ export interface GatewayCall {
   authType: 'api_key' | 'user'
   userId?: string
   userName?: string
+  departmentId?: string
   requestId: string
   modelCode: string
   upstreamModelId: string
@@ -36,9 +37,42 @@ export interface GatewayCall {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  usageReported: boolean
+  quotaExceeded: boolean
   errorCode: string
   sourceIp: string
   createdAt: string
+}
+
+export type UsageGroupBy = 'department' | 'user' | 'model'
+
+export interface GatewayUsageGroup {
+  id: string
+  name: string
+  callCount: number
+  knownTokens: number
+  unknownUsageCalls: number
+  overQuotaCalls: number
+}
+
+export interface GatewayUsagePage {
+  month: string
+  groupBy: UsageGroupBy
+  callCount: number
+  knownTokens: number
+  unknownUsageCalls: number
+  overQuotaCalls: number
+  items: GatewayUsageGroup[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface GatewayUsageQuery {
+  month: string
+  groupBy: UsageGroupBy
+  page: number
+  pageSize: number
 }
 
 export interface CreateGatewayAPIKeyInput {
@@ -67,6 +101,10 @@ export interface GatewayCallQuery {
 }
 
 export const listGatewayAPIKeys = () => request<GatewayAPIKey[]>('/api/v1/model-gateway/api-keys')
+export function listGatewayUsage(query: GatewayUsageQuery) {
+  const params = new URLSearchParams({ month: query.month, groupBy: query.groupBy, page: String(query.page), pageSize: String(query.pageSize) })
+  return request<GatewayUsagePage>(`/api/v1/model-gateway/usage?${params}`)
+}
 export function listGatewayCalls(query: GatewayCallQuery) {
   const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) })
   if (query.apiKeyId) params.set('apiKeyId', query.apiKeyId)

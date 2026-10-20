@@ -35,6 +35,7 @@ import {
   createGatewayAPIKey,
   listGatewayAPIKeys,
   listGatewayCalls,
+  listGatewayUsage,
   revokeGatewayAPIKey,
   revealGatewayAPIKeySecret,
   updateGatewayAPIKey,
@@ -42,6 +43,8 @@ import {
   type GatewayAPIKey,
   type GatewayCall,
   type GatewayCallQuery,
+  type GatewayUsageGroup,
+  type GatewayUsageQuery,
 } from '../api/modelGateway'
 import { useAuth } from '../auth/AuthContext'
 import { StatusIndicator } from '../components/StatusIndicator'
@@ -76,11 +79,17 @@ export function ModelGatewayPage() {
   const [createdKey, setCreatedKey] = useState<CreatedGatewayAPIKey | null>(null)
   const [revealedKey, setRevealedKey] = useState<{ name: string; secret: string } | null>(null)
   const [callQuery, setCallQuery] = useState<GatewayCallQuery>({ page: 1, pageSize: 20 })
+  const [activeTab, setActiveTab] = useState('keys')
+  const [usageQuery, setUsageQuery] = useState<GatewayUsageQuery>({
+    month: new Date().toISOString().slice(0, 7), groupBy: 'department', page: 1, pageSize: 20,
+  })
 
   const keysQuery = useQuery({ queryKey: ['model-gateway-api-keys'], queryFn: listGatewayAPIKeys })
   const callsQuery = useQuery({ queryKey: ['model-gateway-calls', callQuery], queryFn: () => listGatewayCalls(callQuery), refetchInterval: 15000 })
+  const usageResult = useQuery({ queryKey: ['model-gateway-usage', usageQuery], queryFn: () => listGatewayUsage(usageQuery), enabled: activeTab === 'usage' })
   const keys = keysQuery.data ?? []
   const callsPage = callsQuery.data ?? { items: [], total: 0, page: callQuery.page, pageSize: callQuery.pageSize }
+  const usagePage = usageResult.data
 
   const saveKey = useMutation({
     mutationFn: (value: APIKeyFormValue) => {
@@ -207,9 +216,18 @@ export function ModelGatewayPage() {
     { title: '结果', key: 'result', width: 105, render: (_, item) => <StatusIndicator label={item.result === 'success' ? '成功' : '失败'} tone={item.result === 'success' ? 'success' : 'danger'} /> },
     { title: 'HTTP', dataIndex: 'httpStatus', key: 'httpStatus', width: 80 },
     { title: '耗时', dataIndex: 'latencyMs', key: 'latencyMs', width: 100, render: (value: number) => `${value} ms` },
-    { title: 'Token', dataIndex: 'totalTokens', key: 'totalTokens', width: 100, render: (value: number) => value || '—' },
+    { title: 'Token', key: 'totalTokens', width: 120, render: (_, item) => item.usageReported ? item.totalTokens.toLocaleString() : <Tag color="orange">用量未知</Tag> },
+    { title: '额度', key: 'quota', width: 100, render: (_, item) => item.quotaExceeded ? <Tag color="red">本次超额</Tag> : '—' },
     { title: '请求 ID', dataIndex: 'requestId', key: 'requestId', width: 210, render: (value: string) => <Text code copyable>{value}</Text> },
   ], [])
+
+  const usageColumns: TableColumnsType<GatewayUsageGroup> = [
+    { title: usageQuery.groupBy === 'department' ? '部门' : usageQuery.groupBy === 'user' ? '用户' : '模型编码', key: 'name', render: (_, item) => <span>{item.name}{item.id && usageQuery.groupBy !== 'model' ? <Text type="secondary" style={{ marginLeft: 8 }}>{item.id.slice(0, 8)}</Text> : null}</span> },
+    { title: '调用次数', dataIndex: 'callCount', key: 'callCount', render: (value: number) => value.toLocaleString() },
+    { title: '已统计 Token', dataIndex: 'knownTokens', key: 'knownTokens', render: (value: number) => value.toLocaleString() },
+    { title: '用量未知', dataIndex: 'unknownUsageCalls', key: 'unknownUsageCalls', render: (value: number) => value > 0 ? <Tag color="orange">{value} 次</Tag> : '—' },
+    { title: '超额调用', dataIndex: 'overQuotaCalls', key: 'overQuotaCalls', render: (value: number) => value > 0 ? <Tag color="red">{value} 次</Tag> : '—' },
+  ]
 
   const tabs = [
     {
@@ -222,6 +240,30 @@ export function ModelGatewayPage() {
         retry={() => keysQuery.refetch()}
       >
         <Table<GatewayAPIKey> rowKey="id" columns={keyColumns} dataSource={keys} loading={keysQuery.isLoading} pagination={false} scroll={{ x: 1380 }} locale={{ emptyText: '尚未创建调用密钥' }} />
+      </GatewayResource>,
+    },
+    {
+      key: 'usage', label: '用量统计',
+      children: <GatewayResource
+        title="用量统计"
+        hint="按 UTC 自然月统计；部门和用户仅统计登录用户调用，模型包含调用密钥。未知用量不计入 Token 合计。"
+        action={<Button icon={<ReloadOutlined />} loading={usageResult.isFetching} onClick={() => usageResult.refetch()}>刷新</Button>}
+        error={usageResult.isError ? errorMessage(usageResult.error, '用量统计加载失败') : ''}
+        retry={() => usageResult.refetch()}
+      >
+        <div className="gateway-usage-controls">
+          <Input type="month" aria-label="统计月份" value={usageQuery.month} onChange={(event) => {
+            if (event.target.value) setUsageQuery((current) => ({ ...current, month: event.target.value, page: 1 }))
+          }} />
+          <Select aria-label="统计维度" value={usageQuery.groupBy} onChange={(groupBy) => setUsageQuery((current) => ({ ...current, groupBy, page: 1 }))}
+            options={[{ value: 'department', label: '按部门' }, { value: 'user', label: '按用户' }, { value: 'model', label: '按模型' }]} />
+          <Text type="secondary">{usagePage ? `调用 ${usagePage.callCount.toLocaleString()} 次 · 已统计 ${usagePage.knownTokens.toLocaleString()} Token · 用量未知 ${usagePage.unknownUsageCalls.toLocaleString()} 次 · 超额 ${usagePage.overQuotaCalls.toLocaleString()} 次` : '正在加载统计'}</Text>
+        </div>
+        <Table<GatewayUsageGroup> rowKey={(item) => item.id || 'unknown'} columns={usageColumns} dataSource={usagePage?.items ?? []}
+          loading={usageResult.isLoading} pagination={{ current: usageQuery.page, pageSize: usageQuery.pageSize,
+            total: usagePage?.total ?? 0, showSizeChanger: true, showTotal: (total) => `共 ${total} 项`,
+            onChange: (page, pageSize) => setUsageQuery((current) => ({ ...current, page, pageSize })) }}
+          scroll={{ x: 780 }} locale={{ emptyText: '此月份没有调用记录' }} />
       </GatewayResource>,
     },
     {
@@ -283,7 +325,7 @@ export function ModelGatewayPage() {
         <CheckCircleOutlined />
       </div>
 
-      <Tabs className="model-resource-tabs" items={tabs} />
+      <Tabs className="model-resource-tabs" activeKey={activeTab} onChange={setActiveTab} items={tabs} />
 
       <Modal
         title={editingKey ? '编辑调用密钥' : '创建调用密钥'}
