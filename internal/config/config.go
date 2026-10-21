@@ -24,6 +24,7 @@ type Config struct {
 	PlatformSessionCookie string
 	ModelCredentialKey    string
 	ModelPrivateHosts     []string
+	MCPPrivateHosts       []string
 	OIDCIssuer            string
 	OIDCSigningPrivateKey string
 	ConsoleURL            string
@@ -69,6 +70,7 @@ func Load() (Config, error) {
 		PlatformSessionCookie: value("PLATFORM_SESSION_COOKIE_NAME", "harness_platform_session"),
 		ModelCredentialKey:    value("MODEL_CREDENTIAL_MASTER_KEY", "aGFybmVzcy1hZG1pbi1kZXYtbW9kZWwta2V5LTAwMDE="),
 		ModelPrivateHosts:     csvValue("MODEL_PROVIDER_PRIVATE_HOSTS"),
+		MCPPrivateHosts:       csvValue("MCP_PRIVATE_HOSTS"),
 		OIDCIssuer:            strings.TrimRight(value("OIDC_ISSUER", "http://localhost:8080"), "/"),
 		OIDCSigningPrivateKey: oidcSigningPrivateKey,
 		ConsoleURL:            strings.TrimRight(value("CONSOLE_URL", "http://localhost:5173"), "/"),

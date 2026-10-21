@@ -1,7 +1,7 @@
 import { csrfHeaders, request } from './client'
 
 export type OIDCClientStatus = 'active' | 'disabled'
-export type OIDCScope = 'openid' | 'profile' | 'email' | 'model.invoke' | 'offline_access'
+export type OIDCScope = 'openid' | 'profile' | 'email' | 'model.invoke' | 'mcp.invoke' | 'offline_access'
 export type OIDCApplicationType = 'web' | 'desktop'
 export type OIDCTokenEndpointAuthMethod = 'client_secret_basic' | 'none'
 

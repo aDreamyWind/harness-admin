@@ -26,6 +26,8 @@ Harness Admin 是面向企业 Harness 的控制平面。项目从零构建，不
 - OIDC 用户访问令牌可直接调用模型网关，并以用户身份记录 Token 用量。
 - 部门与用户模型策略、共享及个人额度，以及按调用身份过滤的 OpenAI 兼容模型目录。
 
+MCP 中台开始分阶段实现。“AI 资源管理 / MCP 管理”采用左侧服务列表、右侧服务详情的布局；右侧上方展示描述、连接和接入示例，下方展示工具列表及测试。支持远程 Streamable HTTP／SSE 服务登记、修改、启停、工具发现与管理员测试调用。服务描述支持最长 10000 字的 Markdown 编辑、预览与展示；长描述默认折叠，可展开阅读全文。接入无必填参数的服务后会自动发现工具，有必填参数的服务在生成连接后自动发现，失败时保留服务或连接并提示原因。工具测试按上游输入结构展示常见参数输入项，复杂参数可切换 JSON，结果将内容与元信息分开展示。接入服务时可手动填写或导入 MCP JSON 配置，只保存传输方式、地址及参数字段定义和说明，不要求参数值；生成每条连接时按定义填写独立参数值，并加密保存。已有服务级凭证和旧连接专用凭证保留兼容，不会自动挪用或删除。连接可面向 Harness 员工或开发者应用：员工连接按明确勾选的部门和用户授权，开发者连接默认使用 Bearer 密钥，也可由管理员主动选择无鉴权。连接入口密钥可再次查看。URL 参数可能进入上游日志，优先使用 Header。调用统计从每条连接的操作入口查看；Harness 调用另记录用户及调用时部门。GitHub／本地代码部署、Stdio 运行器、对外 SSE 与 Stdio 桥接尚未交付。完整目标和实施顺序见 [MCP 中台与网关方案](docs/enterprise-skills-mcp-plan.md)。
+
 ## 技术栈
 
 - Go、Gin、pgx、go-redis、Goose
@@ -85,6 +87,8 @@ go run ./cmd/server
 
 数据库迁移已合并为版本 20 的当前结构基线：全新数据库只执行 `internal/database/migrations/00020_baseline.sql`，不会逐条重放开发期间的 1～20 号结构修改。历史 SQL 保存在 `internal/database/migrations/legacy/`；迁移版本处于 1～19 的已有数据库仍沿历史路径升级到 20，已到 20 的数据库不会重建表或清理数据。后续增量迁移从 21 开始。不要手动清空已有数据库的 `goose_db_version`，也不要将基线 SQL 直接执行到已有业务库。
 
+MCP 当前新增 `00021_mcp_services.sql` 至 `00026_mcp_connection_legacy_credentials.sql` 六条增量迁移；全新数据库执行 20 号基线后会自动执行，已有数据库也按 Goose 版本增量升级。MCP 服务和连接的内部编码由系统生成；服务只定义上游实际需要的 Header、URL 参数或路径参数，连接填写并加密保存对应的值。26 号迁移使已有连接保留历史服务级值的继承行为，而新连接不再继承。每分钟请求上限可省略，默认 60 次。远程 MCP 指向私有网络或使用 HTTP 时，必须通过 `MCP_PRIVATE_HOSTS` 显式配置精确主机名；此白名单独立于模型供应商白名单。
+
 身份接口：
 
 - `GET /api/v1/auth/organizations`
@@ -140,7 +144,7 @@ go run ./cmd/server
 - `PATCH /api/v1/oidc/clients/{oidcClientId}/status`
 - `POST /api/v1/oidc/clients/{oidcClientId}/rotate-secret`
 
-企业管理员可在“AI 资源管理 / 应用接入”登记 DeepSeek Harness 等独立系统，配置登录回调地址和 `openid`、`profile`、`email`、`model.invoke`、`offline_access` 授权范围。应用类型分为：
+企业管理员可在“AI 资源管理 / 应用接入”登记 DeepSeek Harness 等独立系统，配置登录回调地址和 `openid`、`profile`、`email`、`model.invoke`、`mcp.invoke`、`offline_access` 授权范围。现有应用如需调用 MCP，应由管理员加入 `mcp.invoke`，员工重新授权后新令牌才包含这一范围。应用类型分为：
 
 - 桌面应用：作为 OAuth 公开客户端，不生成客户端密钥，必须使用 PKCE S256。登记 `http://127.0.0.1/oauth/callback` 后，员工电脑上的实际回调可使用随机端口。
 - 服务端应用：回调地址精确匹配，客户端密钥加密保存，具备管理权限时可再次查看。
@@ -257,4 +261,4 @@ make web-build
 - PostgreSQL 迁移与中文注释、Redis 缓存、OpenAPI 契约及后端自动化测试；
 - React 管理端、响应式布局、侧边栏折叠和统一的企业编码、部门层级展示。
 
-第二阶段已形成“供应商连接 → 模型目录 → 调用身份 → OpenAI 兼容网关 → 调用记录”的闭环，并支持调用密钥、部门和用户的模型范围、请求限流和月度 Token 额度。OIDC 用户可通过 `/v1/models` 读取自身可用模型。当前路由保持一个模型编码对应一个上游模型，不包含权重路由、自动故障转移、Skills、MCP、审批和执行环境；这些能力继续按独立模块推进，避免与已经稳定的身份权限底座耦合。
+第二阶段已形成“供应商连接 → 模型目录 → 调用身份 → OpenAI 兼容网关 → 调用记录”的闭环，并支持调用密钥、部门和用户的模型范围、请求限流和月度 Token 额度。OIDC 用户可通过 `/v1/models` 读取自身可用模型。当前路由保持一个模型编码对应一个上游模型，不包含权重路由、自动故障转移、Skills、审批和通用执行环境；MCP 的已交付范围及未完成项见上文。

@@ -34,6 +34,9 @@ import { UsersPage } from './pages/UsersPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { ModelGatewayPage } from './pages/ModelGatewayPage'
 import { ModelPoliciesPage } from './pages/ModelPoliciesPage'
+import { MCPManagementPage } from './pages/MCPManagementPage'
+import { MCPConnectionsPage } from './pages/MCPConnectionsPage'
+import { MCPConnectionUsagePage } from './pages/MCPConnectionUsagePage'
 import { ApplicationAccessPage } from './pages/ApplicationAccessPage'
 
 const { Header, Sider, Content } = Layout
@@ -47,10 +50,10 @@ const menuRoutes: Record<string, string> = {
   models: '/ai-resources/models',
   gateway: '/ai-resources/gateway',
   policies: '/ai-resources/policies',
+  mcp: '/ai-resources/mcp',
   audit: '/audit',
   settings: '/settings/organization',
 }
-
 function Navigation({ items, selectedKey, onNavigate, collapsed = false }: {
   items: MenuProps['items']
   selectedKey: string
@@ -74,7 +77,6 @@ function Navigation({ items, selectedKey, onNavigate, collapsed = false }: {
     />
   )
 }
-
 export function App() {
   const { user, isLoading, logout, hasPermission } = useAuth()
   const navigate = useNavigate()
@@ -97,6 +99,8 @@ export function App() {
             ? 'gateway'
           : location.pathname.startsWith('/ai-resources/policies')
             ? 'policies'
+          : location.pathname.startsWith('/ai-resources/mcp')
+            ? 'mcp'
         : location.pathname.startsWith('/audit')
           ? 'audit'
           : location.pathname.startsWith('/settings/organization')
@@ -224,6 +228,9 @@ export function App() {
               <Route path="/ai-resources/models" element={<PermissionPage permission={['model.provider.read', 'model.catalog.read']}><ModelsPage /></PermissionPage>} />
               <Route path="/ai-resources/gateway" element={<PermissionPage permission="model.gateway.read"><ModelGatewayPage /></PermissionPage>} />
               <Route path="/ai-resources/policies" element={<PermissionPage permission="model.policy.read"><ModelPoliciesPage /></PermissionPage>} />
+              <Route path="/ai-resources/mcp" element={<PermissionPage permission="mcp.service.read"><MCPManagementPage /></PermissionPage>} />
+              <Route path="/ai-resources/mcp-connections" element={<PermissionPage permission="mcp.connection.read"><MCPConnectionsPage /></PermissionPage>} />
+              <Route path="/ai-resources/mcp-connections/:connectionId/usage" element={<PermissionPage permission="mcp.connection.read"><MCPConnectionUsagePage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
               <Route path="/settings/organization" element={<PermissionPage permission="iam.organization.read"><OrganizationSettingsPage /></PermissionPage>} />
               <Route path="/account/security" element={<AccountSecurityPage />} />
@@ -247,18 +254,21 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
   const canReadModels = hasPermission('model.provider.read') || hasPermission('model.catalog.read')
   const canReadGateway = hasPermission('model.gateway.read')
   const canReadPolicies = hasPermission('model.policy.read')
+  const canReadMCP = hasPermission('mcp.service.read')
+  const canReadMCPConnections = hasPermission('mcp.connection.read')
 
   return [
     { key: 'overview', icon: <DashboardOutlined />, label: '首页' },
     identityItems.length ? {
       key: 'identity', icon: <TeamOutlined />, label: '身份与组织', children: identityItems,
     } : null,
-    canReadApplications || canReadModels || canReadGateway || canReadPolicies ? {
+    canReadApplications || canReadModels || canReadGateway || canReadPolicies || canReadMCP || canReadMCPConnections ? {
       key: 'ai-resources', icon: <AppstoreOutlined />, label: 'AI 资源管理', children: [
         canReadApplications ? { key: 'applications', icon: <LinkOutlined />, label: '应用接入' } : null,
         canReadModels ? { key: 'models', icon: <ApiOutlined />, label: '模型目录' } : null,
         canReadGateway ? { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关' } : null,
         canReadPolicies ? { key: 'policies', icon: <SafetyCertificateOutlined />, label: '模型策略' } : null,
+        canReadMCP || canReadMCPConnections ? { key: 'mcp', icon: <ApiOutlined />, label: 'MCP 管理' } : null,
       ].filter(Boolean),
     } : null,
     { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },

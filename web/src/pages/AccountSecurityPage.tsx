@@ -328,6 +328,7 @@ function scopeLabel(scope: OIDCScope): string {
     profile: '基本资料',
     email: '企业邮箱',
     'model.invoke': '模型调用',
+    'mcp.invoke': 'MCP 调用',
     offline_access: '保持登录',
   } as Record<OIDCScope, string>)[scope] ?? scope
 }

@@ -5,6 +5,7 @@
 
 # Go
 bin/
+/server
 coverage.out
 
 # Frontend

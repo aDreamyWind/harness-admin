@@ -54,6 +54,7 @@ const scopeOptions: Array<{ label: string; value: OIDCScope; description: string
   { label: '基础资料', value: 'profile', description: '用户名和显示名称' },
   { label: '邮箱', value: 'email', description: '用户邮箱地址' },
   { label: '调用模型', value: 'model.invoke', description: '代表用户访问模型网关' },
+  { label: '调用 MCP', value: 'mcp.invoke', description: '代表用户访问已授权的企业 MCP 连接' },
   { label: '长期会话', value: 'offline_access', description: '允许使用刷新令牌' },
 ]
 const scopeLabels = new Map(scopeOptions.map((item) => [item.value, item.label]))
@@ -122,7 +123,7 @@ export function ApplicationAccessPage() {
   function openCreate() {
     setEditingClient(null)
     saveClient.reset()
-    form.setFieldsValue({ name: '', applicationType: 'desktop', redirectUris: ['http://127.0.0.1/oauth/callback'], allowedScopes: ['openid', 'profile', 'model.invoke', 'offline_access'] })
+    form.setFieldsValue({ name: '', applicationType: 'desktop', redirectUris: ['http://127.0.0.1/oauth/callback'], allowedScopes: ['openid', 'profile', 'model.invoke', 'mcp.invoke', 'offline_access'] })
     setModalOpen(true)
   }
 

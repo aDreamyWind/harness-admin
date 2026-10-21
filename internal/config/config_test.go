@@ -33,6 +33,19 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadKeepsMCPPrivateHostsSeparate(t *testing.T) {
+	t.Setenv("MODEL_PROVIDER_PRIVATE_HOSTS", "model.internal")
+	t.Setenv("MCP_PRIVATE_HOSTS", "mcp.internal, 127.0.0.1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ModelPrivateHosts) != 1 || cfg.ModelPrivateHosts[0] != "model.internal" ||
+		len(cfg.MCPPrivateHosts) != 2 || cfg.MCPPrivateHosts[0] != "mcp.internal" || cfg.MCPPrivateHosts[1] != "127.0.0.1" {
+		t.Fatalf("模型与 MCP 私有主机白名单不应混用: %#v, %#v", cfg.ModelPrivateHosts, cfg.MCPPrivateHosts)
+	}
+}
+
 func TestLoadReadsOIDCSigningPrivateKeyFromFile(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "oidc-signing-private-key.pem")
 	const privateKey = "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----\n"

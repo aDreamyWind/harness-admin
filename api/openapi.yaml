@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.22.0
+  version: 0.24.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -1618,6 +1618,399 @@ paths:
         '409': { description: 模型或供应商连接已停用。 }
         '429': { description: 超过调用身份、部门或用户的每分钟请求限制，或当月 Token 额度已用尽。 }
         '502': { description: 无法连接模型供应商。 }
+  /mcp-services:
+    get:
+      summary: 查询企业 MCP 服务
+      operationId: listMCPServices
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 当前企业的远程 MCP 服务列表；要求 mcp.service.read 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPServiceListEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: 登记远程 MCP 服务
+      operationId: createMCPService
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPServiceInput' }
+      responses:
+        '201':
+          description: 已登记；要求 mcp.service.write 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPServiceEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: 服务编码已存在。 }
+  /mcp-services/{serviceId}/status:
+    patch:
+      summary: 启用或停用 MCP 服务
+      operationId: changeMCPServiceStatus
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        '200':
+          description: 状态已更新；要求 mcp.service.write 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPServiceEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /mcp-services/{serviceId}:
+    put:
+      summary: 修改 MCP 服务及参数配置
+      operationId: updateMCPService
+      description: 修改服务名称、描述、传输方式、上游地址及参数字段定义；参数值属于连接，不在此接口填写。要求 mcp.service.write 权限。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPServiceInput' }
+      responses:
+        '200':
+          description: 服务配置已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPServiceEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /mcp-services/{serviceId}/credentials:
+    get:
+      deprecated: true
+      summary: 查看 MCP 服务的上游凭证
+      operationId: revealMCPServiceCredentials
+      description: 仅具有 mcp.service.write 权限的管理员可查看；操作写入审计。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 已解密的服务级上游参数值。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MCPUpstreamCredentials' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      deprecated: true
+      summary: 替换 MCP 服务的上游凭证
+      operationId: updateMCPServiceCredentials
+      description: 仅兼容历史服务级凭证；仅旧连接可继续继承，新连接不继承。新流程应把参数值填写在连接中。要求 mcp.service.write 权限。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/MCPUpstreamCredentials' }
+                - type: object
+                  properties:
+                    definitions:
+                      type: array
+                      description: 可选；同时替换服务参数字段定义，省略时保持不变。
+                      items: { $ref: '#/components/schemas/MCPParameterDefinition' }
+      responses:
+        '200':
+          description: 服务级上游凭证已加密保存。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPServiceEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /mcp-services/{serviceId}/tools:
+    get:
+      summary: 查看 MCP 工具快照
+      operationId: listMCPServiceTools
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 最近发现的工具列表；要求 mcp.service.read 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPToolListEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /mcp-services/{serviceId}/discover:
+    post:
+      summary: 从上游发现 MCP 工具
+      description: 可指定当前服务下的一条有效连接，使用其已保存的参数值发现工具；不指定连接时仅适用于无需参数的服务。要求 mcp.service.write 权限。
+      operationId: discoverMCPServiceTools
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPUpstreamRequest' }
+      responses:
+        '200':
+          description: 已发现并保存工具快照。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPToolListEnvelope' }
+        '502': { description: 上游 MCP 连接或工具发现失败。 }
+  /mcp-services/{serviceId}/test:
+    post:
+      summary: 测试调用 MCP 工具
+      description: 会真实执行上游工具，可能产生业务副作用；不保存工具入参与返回内容；要求 mcp.service.write 权限。
+      operationId: testMCPServiceTool
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPToolTestRequest' }
+      responses:
+        '200': { description: MCP 工具原始调用结果。 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '502': { description: 上游 MCP 工具调用失败。 }
+  /mcp-connections:
+    get:
+      summary: 查询企业 MCP 对外连接
+      operationId: listMCPConnections
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 当前企业连接列表；要求 mcp.connection.read 权限，不返回任何密钥。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPConnectionListEnvelope' }
+    post:
+      summary: 生成 MCP 对外连接
+      operationId: createMCPConnection
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPConnectionInput' }
+      responses:
+        '201':
+          description: 已创建；Bearer 入口密钥只在此响应及管理员再次查看接口中出现。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedMCPConnectionEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: 连接编码已存在或上游服务停用。 }
+  /mcp-connections/{connectionId}/status:
+    patch:
+      summary: 启用或停用 MCP 连接
+      operationId: changeMCPConnectionStatus
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: connectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        '200':
+          description: 连接状态已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPConnectionEnvelope' }
+  /mcp-connections/{connectionId}/grants:
+    put:
+      summary: 替换 Harness MCP 连接的员工授权
+      description: 只保存最终明确选中的部门和用户；新建下级部门不自动继承。空数组会撤销全部授权。
+      operationId: replaceMCPConnectionGrants
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: connectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [departmentIds, userIds]
+              properties:
+                departmentIds: { type: array, items: { type: string, format: uuid } }
+                userIds: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 员工授权已更新。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPConnectionEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /mcp-connections/{connectionId}/secret:
+    get:
+      summary: 再次查看开发者 MCP 连接入口密钥
+      operationId: revealMCPConnectionSecret
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: connectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 要求 mcp.connection.write 权限；记录查看审计且禁止缓存。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      secret: { type: string }
+  /mcp-connections/{connectionId}/rotate-secret:
+    post:
+      summary: 轮换开发者 MCP 连接入口密钥
+      description: 仅适用于 Bearer 鉴权的开发者连接。旧密钥在成功后立即失效；记录审计并禁止缓存。
+      operationId: rotateMCPConnectionSecret
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: connectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 新入口密钥，可由管理员再次查看。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      secret: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /mcp-connections/{connectionId}/upstream-authorization:
+    get:
+      summary: 再次查看该连接的上游 Authorization
+      operationId: revealMCPUpstreamAuthorization
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: connectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 要求 mcp.connection.write 权限；记录查看审计且禁止缓存。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      authorization: { type: string }
+  /mcp-connections/{connectionId}/upstream-credentials:
+    get:
+      summary: 再次查看该连接的全部上游凭据
+      operationId: revealMCPUpstreamCredentials
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: connectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 要求 mcp.connection.write 权限；记录查看审计且禁止缓存。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MCPUpstreamCredentials' }
+    put:
+      summary: 整体替换该连接的上游凭据
+      description: 仅影响本连接；空对象清除所有上游凭据。记录审计，不回显密钥值。
+      operationId: updateMCPUpstreamCredentials
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: connectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPUpstreamCredentials' }
+      responses:
+        '200':
+          description: 已更新的连接元信息。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPConnectionEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /mcp-connections/usage:
+    get:
+      summary: 查询 MCP 连接与工具用量
+      operationId: listMCPConnectionUsage
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 按连接和工具聚合的调用数、失败数及平均耗时。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPUsageListEnvelope' }
+  /mcp/connections:
+    get:
+      summary: 查询当前员工获准使用的 MCP 连接
+      operationId: listUserMCPConnections
+      security: [{ oidcBearer: [] }]
+      responses:
+        '200':
+          description: 仅返回员工有权使用的公开连接信息；令牌须包含 mcp.invoke scope。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPUserConnectionListEnvelope' }
+        '401': { description: 员工访问令牌无效或缺少 mcp.invoke scope。 }
+  /mcp/{code}:
+    servers:
+      - url: /
+    parameters:
+      - { name: code, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Streamable HTTP MCP 网关入口
+      description: 根据连接用途校验应用 Bearer 密钥或员工 OIDC 令牌；显式发布的匿名开发者连接可不携带令牌。支持 MCP tools/list 和 tools/call；网关按连接和工具记录调用统计。
+      operationId: mcpGatewayPost
+      security: [{ gatewayBearer: [] }, { oidcBearer: [] }, {}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: MCP JSON-RPC 响应，可为 text/event-stream。 }
+        '401': { description: 入口密钥或员工令牌无效。 }
+        '403': { description: 员工未获授权。 }
+        '429': { description: 超过连接每分钟请求上限。 }
+    get:
+      summary: MCP 网关可选事件流入口
+      operationId: mcpGatewayGet
+      description: 当前使用无状态 Streamable HTTP；GET 返回 405，客户端应通过 POST 请求。
+      responses:
+        '405': { description: 此模式不提供独立 GET 事件流。 }
 components:
   securitySchemes:
     sessionCookie:
@@ -1662,6 +2055,217 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
+    MCPConnectionInput:
+      type: object
+      required: [serviceId, name, purpose, authMode]
+      properties:
+        serviceId: { type: string, format: uuid }
+        code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,79}$', description: 可选；省略时由服务端自动生成内部编码。 }
+        name: { type: string, maxLength: 120 }
+        purpose: { type: string, enum: [harness, developer] }
+        authMode: { type: string, enum: [oidc, bearer, none] }
+        applicationName: { type: string, maxLength: 120 }
+        expiresAt: { type: string, format: date-time }
+        upstreamParameters:
+          type: array
+          description: 当前连接的上游参数值；服务定义的必填字段必须在此提供。加密保存，不在连接列表回显。
+          items: { $ref: '#/components/schemas/MCPParameterValue' }
+        upstreamAuthorization: { type: string, description: 此连接专用的完整上游 Authorization 值，加密保存且不回显。 }
+        upstreamHeaderName: { type: string, description: 此连接专用上游请求头名称；须与值同时填写。 }
+        upstreamHeaderValue: { type: string, description: 此连接专用上游请求头密钥；加密保存。 }
+        upstreamQueryName: { type: string, description: 此连接专用上游 URL 参数名称；须与值同时填写。 }
+        upstreamQueryValue: { type: string, description: 此连接专用上游 URL 参数值；加密保存，可能出现在上游日志中。 }
+        requestsPerMinute: { type: integer, minimum: 1, maximum: 100000, default: 60 }
+        departmentIds: { type: array, items: { type: string, format: uuid } }
+        userIds: { type: array, items: { type: string, format: uuid } }
+    MCPUpstreamCredentials:
+      type: object
+      properties:
+        parameters:
+          type: array
+          items: { $ref: '#/components/schemas/MCPParameterValue' }
+        authorization: { type: string, description: 完整上游 Authorization 值。 }
+        headerName: { type: string, description: 上游请求头名称。 }
+        headerValue: { type: string, description: 上游请求头值。 }
+        queryName: { type: string, description: 上游 URL 参数名称。 }
+        queryValue: { type: string, description: 上游 URL 参数值。 }
+    MCPConnection:
+      type: object
+      required: [id, serviceId, serviceName, code, name, gatewayUrl, purpose, authMode, status, requestsPerMinute, departmentIds, userIds, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        serviceId: { type: string, format: uuid }
+        serviceName: { type: string }
+        code: { type: string }
+        gatewayUrl: { type: string, format: uri }
+        name: { type: string }
+        purpose: { type: string, enum: [harness, developer] }
+        authMode: { type: string, enum: [oidc, bearer, none] }
+        applicationName: { type: string }
+        status: { type: string, enum: [active, disabled] }
+        expiresAt: { type: string, format: date-time }
+        keyPrefix: { type: string }
+        upstreamAuthConfigured: { type: boolean }
+        upstreamHeaderConfigured: { type: boolean }
+        upstreamQueryConfigured: { type: boolean }
+        upstreamConfigured: { type: boolean, description: 是否配置任意上游参数。 }
+        requestsPerMinute: { type: integer }
+        departmentIds: { type: array, items: { type: string, format: uuid } }
+        userIds: { type: array, items: { type: string, format: uuid } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    MCPUsage:
+      type: object
+      required: [connectionId, toolName, calls, failures, averageMs]
+      properties:
+        connectionId: { type: string, format: uuid }
+        toolName: { type: string }
+        userId: { type: string, format: uuid, description: Harness 员工调用时存在。 }
+        userName: { type: string }
+        departmentId: { type: string, format: uuid, description: Harness 员工调用时所在部门。 }
+        departmentName: { type: string }
+        calls: { type: integer, format: int64 }
+        failures: { type: integer, format: int64 }
+        averageMs: { type: integer, format: int64 }
+    MCPUserConnection:
+      type: object
+      required: [code, name, serviceName, url, transport]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        serviceName: { type: string }
+        url: { type: string, format: uri }
+        transport: { type: string, enum: [streamable_http] }
+    MCPConnectionEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/MCPConnection' }
+    CreatedMCPConnectionEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          allOf:
+            - { $ref: '#/components/schemas/MCPConnection' }
+            - type: object
+              properties:
+                secret: { type: string }
+    MCPConnectionListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MCPConnection' }
+    MCPUsageListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MCPUsage' }
+    MCPUserConnectionListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MCPUserConnection' }
+    MCPServiceInput:
+      type: object
+      required: [name, transport, upstreamUrl]
+      properties:
+        code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,79}$', description: 可选；省略时由服务端自动生成内部编码。 }
+        name: { type: string, maxLength: 120 }
+        description: { type: string, maxLength: 10000, description: MCP 服务说明，支持 Markdown。 }
+        transport: { type: string, enum: [streamable_http, sse] }
+        upstreamUrl: { type: string, format: uri, description: 不允许 URL 用户信息、查询参数和片段。 }
+        parameters:
+          type: array
+          description: 上游实际需要的参数字段定义；不含密钥值。
+          items: { $ref: '#/components/schemas/MCPParameterDefinition' }
+        credentialValues:
+          type: array
+          writeOnly: true
+          deprecated: true
+          description: 兼容旧客户端的服务级参数值；新接入流程不填写，参数值应在创建连接时提供。
+          items: { $ref: '#/components/schemas/MCPParameterValue' }
+    MCPParameterDefinition:
+      type: object
+      required: [location, name, required]
+      properties:
+        location: { type: string, enum: [header, query, path] }
+        name: { type: string, description: 上游服务要求的实际字段名。 }
+        label: { type: string, description: 在管理页面显示的名称。 }
+        description: { type: string, maxLength: 500, description: 可选的参数说明，在生成连接时展示。 }
+        required: { type: boolean }
+    MCPParameterValue:
+      type: object
+      required: [location, name, value]
+      properties:
+        location: { type: string, enum: [header, query, path] }
+        name: { type: string }
+        value: { type: string, description: 上游参数值。 }
+    MCPService:
+      allOf:
+        - { $ref: '#/components/schemas/MCPServiceInput' }
+        - type: object
+          required: [id, status, credentialsConfigured, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [active, disabled] }
+            credentialsConfigured: { type: boolean, description: 服务级上游凭证是否已配置；不返回凭证值。 }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    MCPTool:
+      type: object
+      required: [name, description, inputSchema, discoveredAt]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        inputSchema: { type: object, additionalProperties: true }
+        discoveredAt: { type: string, format: date-time }
+    MCPUpstreamRequest:
+      type: object
+      properties:
+        connectionId: { type: string, format: uuid, description: 可选；用于发现和测试工具的有效连接，必须属于当前服务。 }
+        parameters:
+          type: array
+          description: 仅用于本次发现或测试，不会持久化。
+          items: { $ref: '#/components/schemas/MCPParameterValue' }
+        authorization: { type: string, description: 可选的完整上游 Authorization 值，仅用于本次请求。 }
+        headerName: { type: string, description: 可选的上游请求头名称；须与值同时填写。 }
+        headerValue: { type: string, description: 可选的上游请求头值，仅用于本次请求。 }
+        queryName: { type: string, description: 可选的上游 URL 参数名；须与值同时填写。 }
+        queryValue: { type: string, description: 可选的上游 URL 参数值，仅用于本次请求。 }
+    MCPToolTestRequest:
+      allOf:
+        - { $ref: '#/components/schemas/MCPUpstreamRequest' }
+        - type: object
+          required: [name, arguments]
+          properties:
+            name: { type: string }
+            arguments: { type: object, additionalProperties: true }
+    MCPServiceEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/MCPService' }
+    MCPServiceListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MCPService' }
+    MCPToolListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MCPTool' }
     PlatformLoginRequest:
       type: object
       required: [username, password]
@@ -1857,7 +2461,7 @@ components:
           maxItems: 10
           uniqueItems: true
           description: 必须包含 openid。
-          items: { type: string, enum: [openid, profile, email, model.invoke, offline_access] }
+          items: { type: string, enum: [openid, profile, email, model.invoke, mcp.invoke, offline_access] }
     OIDCClient:
       type: object
       required: [id, name, clientId, clientSecretPrefix, applicationType, tokenEndpointAuthMethod, redirectUris, allowedScopes, status, createdAt, updatedAt]
@@ -1873,7 +2477,7 @@ components:
           items: { type: string, format: uri }
         allowedScopes:
           type: array
-          items: { type: string, enum: [openid, profile, email, model.invoke, offline_access] }
+          items: { type: string, enum: [openid, profile, email, model.invoke, mcp.invoke, offline_access] }
         status: { type: string, enum: [active, disabled] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -1905,7 +2509,7 @@ components:
         redirectHost: { type: string }
         scopes:
           type: array
-          items: { type: string, enum: [openid, profile, email, model.invoke, offline_access] }
+          items: { type: string, enum: [openid, profile, email, model.invoke, mcp.invoke, offline_access] }
     OIDCConsentDecision:
       type: object
       required: [approved]
@@ -1926,7 +2530,7 @@ components:
         applicationType: { type: string, enum: [web, desktop] }
         scopes:
           type: array
-          items: { type: string, enum: [openid, profile, email, model.invoke, offline_access] }
+          items: { type: string, enum: [openid, profile, email, model.invoke, mcp.invoke, offline_access] }
         grantedAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     OIDCTokenResponse:

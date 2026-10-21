@@ -20,7 +20,7 @@ const (
 )
 
 var supportedScopes = map[string]struct{}{
-	"openid": {}, "profile": {}, "email": {}, "model.invoke": {}, "offline_access": {},
+	"openid": {}, "profile": {}, "email": {}, "model.invoke": {}, "mcp.invoke": {}, "offline_access": {},
 }
 
 type Service struct {

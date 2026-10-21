@@ -18,6 +18,9 @@ import (
 	"harness-admin/internal/departmentadmin"
 	"harness-admin/internal/httpserver"
 	"harness-admin/internal/identity"
+	"harness-admin/internal/mcpadmin"
+	"harness-admin/internal/mcpclient"
+	"harness-admin/internal/mcpconnection"
 	"harness-admin/internal/modeladmin"
 	"harness-admin/internal/modelgateway"
 	"harness-admin/internal/modelprovider"
@@ -82,6 +85,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelPolicyRepository := pgstore.NewModelPolicyRepository(db)
 	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient), modelPolicyRepository)
 	modelPolicyService := modelgateway.NewPolicyService(modelPolicyRepository)
+	mcpUpstream := mcpclient.New(cfg.MCPPrivateHosts)
+	mcpService := mcpadmin.NewService(pgstore.NewMCPRepository(db, credentialCipher), mcpUpstream)
+	mcpConnectionService := mcpconnection.NewService(pgstore.NewMCPConnectionRepository(db, credentialCipher), cache.NewGatewayRequestLimiter(redisClient))
 	oidcRepository := pgstore.NewOIDCRepository(db, credentialCipher)
 	oidcService := oidc.NewService(oidcRepository)
 	oidcSigner, err := oidc.NewRS256Signer(cfg.OIDCSigningPrivateKey)
@@ -116,6 +122,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		ModelAdmin:            modelAdminService,
 		ModelGateway:          modelGatewayService,
 		ModelPolicy:           modelPolicyService,
+		MCPAdmin:              mcpService,
+		MCPConnections:        mcpConnectionService,
+		MCPToolCaller:         mcpUpstream,
 		GatewayForwarder:      modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts),
 		OIDCAdmin:             oidcService,
 		OIDCProvider:          oidcProviderService,

@@ -19,6 +19,7 @@ const scopeContent: Record<OIDCScope, { title: string; detail: string }> = {
   profile: { title: '读取基本资料', detail: '读取姓名和登录用户名。' },
   email: { title: '读取企业邮箱', detail: '读取账号绑定的企业邮箱。' },
   'model.invoke': { title: '调用企业模型', detail: '使用分配给你的模型和额度发起调用。' },
+  'mcp.invoke': { title: '调用企业 MCP', detail: '使用分配给你的 MCP 工具连接。' },
   offline_access: { title: '保持登录状态', detail: '在当前登录过期后继续换取新的访问凭证。' },
 }
 

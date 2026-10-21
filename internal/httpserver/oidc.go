@@ -139,7 +139,7 @@ func oidcDiscoveryHandler(deps Dependencies) gin.HandlerFunc {
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 			"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post", "none"},
 			"code_challenge_methods_supported":      []string{"S256"},
-			"scopes_supported":                      []string{"openid", "profile", "email", "model.invoke", "offline_access"},
+			"scopes_supported":                      []string{"openid", "profile", "email", "model.invoke", "mcp.invoke", "offline_access"},
 		})
 	}
 }
