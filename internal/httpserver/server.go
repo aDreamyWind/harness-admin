@@ -33,6 +33,7 @@ type Dependencies struct {
 	ModelGateway          ModelGatewayService
 	ModelPolicy           ModelPolicyService
 	MCPAdmin              MCPAdminService
+	MCPDeploy             MCPDeploymentService
 	MCPConnections        MCPConnectionService
 	MCPToolCaller         MCPToolCaller
 	GatewayForwarder      ModelGatewayForwarder
@@ -105,6 +106,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.MCPAdmin != nil {
 		registerMCPRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.Access != nil && deps.MCPDeploy != nil {
+		registerMCPDeploymentRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.MCPConnections != nil && deps.MCPToolCaller != nil && deps.OIDCProvider != nil {
 		registerMCPConnectionRoutes(router, deps)

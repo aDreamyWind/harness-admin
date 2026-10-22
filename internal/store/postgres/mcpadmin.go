@@ -24,13 +24,15 @@ func NewMCPRepository(pool *pgxpool.Pool, cipher *secret.Cipher) *MCPRepository 
 	return &MCPRepository{pool: pool, cipher: cipher}
 }
 
-const mcpServiceColumns = "id, code, name, description, transport, upstream_url, parameters, credentials_enc IS NOT NULL, status, created_at, updated_at"
+const mcpServiceColumns = "id, code, name, description, transport, upstream_url, parameters, credentials_enc IS NOT NULL, status, created_at, updated_at, source_type, runtime_type, entry_file, image_ref, container_name, deployment_status, deployment_error, current_revision"
 
 func scanMCPService(row pgx.Row) (mcpadmin.ServiceRecord, error) {
 	var item mcpadmin.ServiceRecord
 	var parameters []byte
 	err := row.Scan(&item.ID, &item.Code, &item.Name, &item.Description, &item.Transport, &item.UpstreamURL,
-		&parameters, &item.CredentialsConfigured, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+		&parameters, &item.CredentialsConfigured, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+		&item.SourceType, &item.RuntimeType, &item.EntryFile, &item.ImageRef, &item.ContainerName,
+		&item.DeploymentStatus, &item.DeploymentError, &item.CurrentRevision)
 	if err != nil {
 		return item, err
 	}

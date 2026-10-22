@@ -8,8 +8,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os/exec"
+	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -88,6 +91,34 @@ func (c *Client) connect(ctx context.Context, service mcpadmin.ServiceRecord, cr
 	if !mcpadmin.ValidUpstreamCredentials(credentials) {
 		return nil, mcpadmin.ErrInvalidInput
 	}
+	if service.Transport == "stdio" {
+		if service.DeploymentStatus != "running" || service.SourceType == "remote" ||
+			service.ContainerName != "hadmin-mcp-"+service.ID || len(credentials.AllParameters()) != 0 ||
+			service.EntryFile == "" || path.Clean(service.EntryFile) != service.EntryFile || strings.HasPrefix(service.EntryFile, "/") ||
+			strings.HasPrefix(service.EntryFile, "../") {
+			return nil, mcpadmin.ErrInvalidInput
+		}
+		command := "node"
+		if service.RuntimeType == "python" {
+			command = "python"
+		} else if service.RuntimeType != "node" {
+			return nil, mcpadmin.ErrInvalidInput
+		}
+		arguments := []string{"exec", "-i", service.ContainerName, command}
+		if command == "python" {
+			arguments = append(arguments, "-u")
+		}
+		arguments = append(arguments, "/app/"+service.EntryFile)
+		commandProcess := exec.CommandContext(ctx, "docker", arguments...)
+		stderr := &limitedStderr{}
+		commandProcess.Stderr = stderr
+		transport := &mcp.CommandTransport{Command: commandProcess}
+		session, err := mcp.NewClient(&mcp.Implementation{Name: "harness-admin", Version: "0.1.0"}, nil).Connect(ctx, transport, nil)
+		if err != nil {
+			return nil, fmt.Errorf("无法连接托管的 Stdio MCP 服务: %w (%s)", err, stderr.String())
+		}
+		return session, nil
+	}
 	endpointURL := service.UpstreamURL
 	for _, item := range credentials.AllParameters() {
 		if item.Location == "path" {
@@ -122,6 +153,22 @@ func (c *Client) connect(ctx context.Context, service mcpadmin.ServiceRecord, cr
 	}
 	return session, nil
 }
+
+type limitedStderr struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (s *limitedStderr) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data = append(s.data, p...)
+	if len(s.data) > 4096 {
+		s.data = append([]byte(nil), s.data[len(s.data)-4096:]...)
+	}
+	return len(p), nil
+}
+func (s *limitedStderr) String() string { s.mu.Lock(); defer s.mu.Unlock(); return string(s.data) }
 
 type safeTransport struct {
 	base         *url.URL

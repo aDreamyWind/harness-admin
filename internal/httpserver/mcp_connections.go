@@ -28,6 +28,7 @@ type MCPConnectionService interface {
 	RotateSecret(context.Context, mcpconnection.Actor, string) (string, error)
 	UpdateUpstreamCredentials(context.Context, mcpconnection.Actor, string, mcpadmin.UpstreamCredentials) (mcpconnection.Connection, error)
 	Lookup(context.Context, string) (mcpconnection.GatewayConnection, error)
+	CheckHealth(context.Context, string, string, mcpconnection.HealthProber) (mcpconnection.Health, error)
 	AuthorizeDeveloper(context.Context, mcpconnection.GatewayConnection, string) (mcpconnection.Caller, error)
 	AuthorizeUser(context.Context, mcpconnection.GatewayConnection, string, string) (mcpconnection.Caller, error)
 	ListForUser(context.Context, string, string) ([]mcpconnection.Connection, error)
@@ -37,6 +38,7 @@ type MCPConnectionService interface {
 
 type MCPToolCaller interface {
 	CallTool(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials, string, json.RawMessage) (json.RawMessage, error)
+	ListTools(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) ([]mcpadmin.Tool, error)
 }
 
 type mcpConnectionRequest struct {
@@ -119,6 +121,19 @@ func registerMCPConnectionRoutes(router *gin.Engine, deps Dependencies) {
 		ctx.Header("Cache-Control", "no-store")
 		item.GatewayURL = mcpGatewayURL(deps, item.Code)
 		httpx.OK(ctx, http.StatusCreated, item)
+	})
+	admin.GET("/:id/health", requirePermission(deps, "mcp.connection.read"), func(ctx *gin.Context) {
+		if !validMCPID(ctx) {
+			return
+		}
+		result, err := deps.MCPConnections.CheckHealth(ctx.Request.Context(), currentSession(ctx).User.OrganizationID,
+			ctx.Param("id"), deps.MCPToolCaller)
+		if err != nil {
+			handleMCPConnectionError(ctx, deps, err)
+			return
+		}
+		ctx.Header("Cache-Control", "no-store")
+		httpx.OK(ctx, http.StatusOK, result)
 	})
 	admin.PATCH("/:id/status", requirePermission(deps, "mcp.connection.write"), requireCSRF(deps), func(ctx *gin.Context) {
 		if !validMCPID(ctx) {
@@ -326,7 +341,9 @@ func mcpGatewayHandler(deps Dependencies) gin.HandlerFunc {
 					started := time.Now()
 					upstreamCtx, stopUpstream := context.WithTimeout(callCtx, 60*time.Second)
 					defer stopUpstream()
-					service := mcpadmin.ServiceRecord{ID: route.ServiceID, UpstreamURL: route.UpstreamURL, Transport: route.Transport}
+					service := mcpadmin.ServiceRecord{ID: route.ServiceID, UpstreamURL: route.UpstreamURL, Transport: route.Transport,
+						SourceType: route.SourceType, RuntimeType: route.RuntimeType, EntryFile: route.EntryFile,
+						ContainerName: route.ContainerName, DeploymentStatus: route.DeploymentStatus}
 					credentials := mcpadmin.UpstreamCredentials{
 						Authorization: route.UpstreamAuthorization,
 						HeaderName:    route.UpstreamHeaderName, HeaderValue: route.UpstreamHeaderValue,

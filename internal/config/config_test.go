@@ -95,3 +95,40 @@ func TestLoadRequiresModelCredentialKeyInProduction(t *testing.T) {
 		t.Fatal("生产环境缺少模型凭据主密钥应返回错误")
 	}
 }
+
+func TestMCPDeploymentDisabledByDefaultAndBuildNetworkValidated(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("MCP_DEPLOY_ENABLED", "")
+	t.Setenv("MCP_BUILD_NETWORK", "")
+	cfg, err := Load()
+	if err != nil || cfg.MCPDeployEnabled || cfg.MCPBuildNetwork != "none" {
+		t.Fatalf("源码部署默认值错误: %+v %v", cfg, err)
+	}
+	t.Setenv("MCP_BUILD_NETWORK", "default")
+	if cfg, err := Load(); err != nil || cfg.MCPBuildNetwork != "default" {
+		t.Fatalf("应允许 BuildKit 默认构建网络: %+v %v", cfg, err)
+	}
+	t.Setenv("MCP_BUILD_NETWORK", "bridge")
+	if _, err := Load(); err == nil {
+		t.Fatal("BuildKit 不支持 bridge 构建网络")
+	}
+	t.Setenv("MCP_BUILD_NETWORK", "host")
+	if _, err := Load(); err == nil {
+		t.Fatal("不应允许 host 构建网络")
+	}
+}
+
+func TestProductionMCPDeploymentRequiresPinnedImages(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("MODEL_CREDENTIAL_MASTER_KEY", "key-present")
+	t.Setenv("OIDC_SIGNING_PRIVATE_KEY", "key-present")
+	t.Setenv("OIDC_SIGNING_PRIVATE_KEY_FILE", "")
+	t.Setenv("OIDC_ISSUER", "https://admin.example.com")
+	t.Setenv("CONSOLE_URL", "https://admin.example.com")
+	t.Setenv("MCP_DEPLOY_ENABLED", "true")
+	t.Setenv("MCP_NODE_IMAGE", "node:22-alpine")
+	t.Setenv("MCP_PYTHON_IMAGE", "python:3.12-slim")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "sha256") {
+		t.Fatalf("生产托管部署未要求固定镜像摘要: %v", err)
+	}
+}

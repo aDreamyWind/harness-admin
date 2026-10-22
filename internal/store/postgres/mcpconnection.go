@@ -264,7 +264,8 @@ func (r *MCPConnectionRepository) GetByCode(ctx context.Context, code string) (m
 		c.organization_id, s.status, s.upstream_url, s.transport, c.secret_hash, c.upstream_authorization_enc,
 		COALESCE(c.upstream_header_name, ''), c.upstream_header_value_enc,
 		COALESCE(c.upstream_query_name, ''), c.upstream_query_value_enc, c.upstream_parameters_enc,
-		c.inherit_service_credentials, s.credentials_enc
+		c.inherit_service_credentials, s.credentials_enc,
+		s.source_type, s.runtime_type, s.entry_file, s.container_name, s.deployment_status
 		FROM mcp_connections c JOIN mcp_services s ON s.id = c.service_id
 		JOIN organizations o ON o.id = c.organization_id
 		WHERE c.code = $1 AND o.status = 'active'`, code).
@@ -276,7 +277,8 @@ func (r *MCPConnectionRepository) GetByCode(ctx context.Context, code string) (m
 			&item.CreatedAt, &item.UpdatedAt, &item.OrganizationID, &item.ServiceStatus,
 			&item.UpstreamURL, &item.Transport, &item.SecretHash, &encryptedUpstream,
 			&item.UpstreamHeaderName, &encryptedHeader, &item.UpstreamQueryName, &encryptedQuery,
-			&encryptedParameters, &inheritServiceCredentials, &encryptedService)
+			&encryptedParameters, &inheritServiceCredentials, &encryptedService,
+			&item.SourceType, &item.RuntimeType, &item.EntryFile, &item.ContainerName, &item.DeploymentStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return mcpconnection.GatewayConnection{}, mcpconnection.ErrNotFound
 	}
@@ -322,6 +324,25 @@ func (r *MCPConnectionRepository) GetByCode(ctx context.Context, code string) (m
 		return mcpconnection.GatewayConnection{}, err
 	}
 	item.Tools = tools
+	return item, nil
+}
+
+func (r *MCPConnectionRepository) GetByID(ctx context.Context, organizationID, id string) (mcpconnection.GatewayConnection, error) {
+	var code string
+	err := r.pool.QueryRow(ctx, `SELECT code FROM mcp_connections WHERE organization_id = $1 AND id = $2`, organizationID, id).Scan(&code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return mcpconnection.GatewayConnection{}, mcpconnection.ErrNotFound
+	}
+	if err != nil {
+		return mcpconnection.GatewayConnection{}, err
+	}
+	item, err := r.GetByCode(ctx, code)
+	if err != nil {
+		return mcpconnection.GatewayConnection{}, err
+	}
+	if item.OrganizationID != organizationID || item.ID != id {
+		return mcpconnection.GatewayConnection{}, mcpconnection.ErrNotFound
+	}
 	return item, nil
 }
 

@@ -1,7 +1,7 @@
-import { ApiOutlined, CopyOutlined, ImportOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { ApiOutlined, CloudUploadOutlined, CopyOutlined, ImportOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Checkbox, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Table, Tag, Typography, message } from 'antd'
-import { useState } from 'react'
+import { Alert, Button, Card, Checkbox, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
@@ -11,7 +11,11 @@ import {
   type MCPParameterDefinition, type MCPService, type MCPTool,
 } from '../api/mcp'
 import { listMCPConnections } from '../api/mcpConnections'
+import { buildMCPDeployment, changeMCPDeployment, getMCPDeploymentCapability, listMCPDeploymentVersions,
+  updateMCPDeploymentMetadata, type MCPDeploymentInput } from '../api/mcpDeployments'
 import { useAuth } from '../auth/AuthContext'
+import { MCPDeploymentDialog } from '../components/MCPDeploymentDialog'
+import { MCPDeploymentPanel } from '../components/MCPDeploymentPanel'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { MCPToolTestPanel } from '../components/MCPToolTestPanel'
 import { MCPConnectionsPage } from './MCPConnectionsPage'
@@ -19,10 +23,23 @@ import { MCPConnectionsPage } from './MCPConnectionsPage'
 const { Text } = Typography
 
 type ServiceForm = { name: string; description?: string; transport: MCPService['transport']; upstreamUrl: string; rows: MCPParameterDefinition[] }
+type PendingDeployment = { serviceId: string; versionId: string }
+const pendingDeploymentKey = 'harness-admin:pending-mcp-deployment'
+
+function readPendingDeployment(key: string): PendingDeployment | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(key) || 'null') as Partial<PendingDeployment> | null
+    return typeof value?.serviceId === 'string' && typeof value.versionId === 'string'
+      ? { serviceId: value.serviceId, versionId: value.versionId } : null
+  } catch {
+    return null
+  }
+}
 
 export function MCPServicesPage() {
   const [searchParams] = useSearchParams()
-  const { hasPermission } = useAuth()
+  const { user, hasPermission } = useAuth()
+  const pendingStorageKey = `${pendingDeploymentKey}:${user?.id ?? ''}`
   const canWrite = hasPermission('mcp.service.write')
   const canReadConnections = hasPermission('mcp.connection.read')
   const queryClient = useQueryClient()
@@ -37,12 +54,26 @@ export function MCPServicesPage() {
   const [testing, setTesting] = useState<MCPTool | null>(null)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
   const [descriptionMode, setDescriptionMode] = useState<'编辑' | '预览'>('编辑')
+  const [deploymentOpen, setDeploymentOpen] = useState(false)
+  const [pendingDeployment, setPendingDeployment] = useState<PendingDeployment | null>(() => readPendingDeployment(pendingStorageKey))
   const descriptionPreview = Form.useWatch('description', serviceForm) ?? ''
 
-  const servicesQuery = useQuery({ queryKey: ['mcp-services'], queryFn: listMCPServices })
+	const servicesQuery = useQuery({ queryKey: ['mcp-services'], queryFn: listMCPServices,
+	  refetchInterval: (query) => query.state.data?.some((item) => item.deploymentStatus === 'building') ? 3000 : false })
+  const deploymentCapability = useQuery({ queryKey: ['mcp-deployment-capability'], queryFn: getMCPDeploymentCapability, enabled: canWrite })
+  const pendingVersions = useQuery({
+    queryKey: ['mcp-deployment-versions', pendingDeployment?.serviceId],
+    queryFn: () => listMCPDeploymentVersions(pendingDeployment!.serviceId),
+    enabled: Boolean(pendingDeployment),
+    refetchInterval: (query) => {
+      const version = query.state.data?.find((item) => item.id === pendingDeployment?.versionId)
+      return !version || version.buildStatus === 'building' ? 3000 : false
+    },
+  })
   const selected = servicesQuery.data?.find((item) => item.id === selectedId)
     ?? servicesQuery.data?.find((item) => item.id === searchParams.get('service'))
     ?? servicesQuery.data?.[0] ?? null
+  const isManagedService = selected?.sourceType === 'github' || selected?.sourceType === 'gitee' || selected?.sourceType === 'upload'
   const toolsQuery = useQuery({
     queryKey: ['mcp-tools', selected?.id], queryFn: () => listMCPTools(selected!.id), enabled: Boolean(selected),
   })
@@ -77,8 +108,55 @@ export function MCPServicesPage() {
     },
     onError: (error) => messageApi.error(errorMessage(error, '接入 MCP 服务失败')),
   })
+  async function refreshDeploymentTools(serviceId: string) {
+    const tools = await discoverMCPTools(serviceId)
+    await queryClient.invalidateQueries({ queryKey: ['mcp-tools', serviceId] })
+    return tools.length
+  }
+
+  function trackDeployment(serviceId: string, versionId: string) {
+    const pending = { serviceId, versionId }
+    try { sessionStorage.setItem(pendingStorageKey, JSON.stringify(pending)) } catch { /* 内存状态仍可跟踪 */ }
+    setPendingDeployment(pending)
+  }
+
+  const importDeployment = useMutation({
+    mutationFn: (input: MCPDeploymentInput) => buildMCPDeployment(input),
+    onSuccess: async (result) => {
+      setDeploymentOpen(false)
+      setSelectedId(result.service.id)
+      trackDeployment(result.service.id, result.version.id)
+      await queryClient.invalidateQueries({ queryKey: ['mcp-services'] })
+	  messageApi.success('已提交后台构建，可在部署与运行中查看状态和日志')
+    },
+    onError: (error) => messageApi.error(errorMessage(error, '部署 MCP 失败')),
+  })
+  useEffect(() => {
+    if (!pendingDeployment) return
+    const version = pendingVersions.data?.find((item) => item.id === pendingDeployment.versionId)
+    if (!version || version.buildStatus === 'building') return
+    setPendingDeployment(null)
+    try { sessionStorage.removeItem(pendingStorageKey) } catch { /* 内存状态已清除 */ }
+    if (version.buildStatus === 'failed') {
+      messageApi.warning('MCP 构建失败，请查看构建日志')
+      return
+    }
+    void (async () => {
+      try {
+        await changeMCPDeployment(pendingDeployment.serviceId, 'start')
+        await queryClient.invalidateQueries({ queryKey: ['mcp-services'] })
+        await queryClient.invalidateQueries({ queryKey: ['mcp-deployment-runtime', pendingDeployment.serviceId] })
+        const count = await refreshDeploymentTools(pendingDeployment.serviceId)
+        messageApi.success(`MCP 已部署，发现 ${count} 个工具`)
+      } catch (error) {
+        messageApi.warning(`构建成功，但启动或发现工具失败：${errorMessage(error, '请检查运行状态')}`)
+      }
+    })()
+  }, [pendingDeployment, pendingVersions.data, messageApi, queryClient, pendingStorageKey])
   const update = useMutation({
-    mutationFn: (values: ServiceForm) => updateMCPService(selected!.id, serviceInput(values)),
+    mutationFn: (values: ServiceForm) => isManagedService
+      ? updateMCPDeploymentMetadata(selected!.id, values.name)
+      : updateMCPService(selected!.id, serviceInput(values)),
     onSuccess: async () => {
       setEditorMode(null)
       messageApi.success('MCP 服务已修改')
@@ -165,7 +243,11 @@ export function MCPServicesPage() {
         <strong>MCP 服务</strong>
         <Space size={4}>
           <Button type="text" size="small" icon={<ReloadOutlined />} aria-label="刷新服务" onClick={() => servicesQuery.refetch()} />
-          {canWrite && <Button type="text" size="small" icon={<PlusOutlined />} aria-label="接入服务" onClick={() => openEditor('create')} />}
+          {canWrite && <Tooltip title={deploymentCapability.data?.enabled ? '从 GitHub、Gitee 或代码包部署' : '服务器未开启源码部署（MCP_DEPLOY_ENABLED）'}>
+            <Button type="text" size="small" icon={<CloudUploadOutlined />} aria-label="从代码部署 MCP"
+              disabled={!deploymentCapability.data?.enabled} onClick={() => setDeploymentOpen(true)} />
+          </Tooltip>}
+          {canWrite && <Button type="text" size="small" icon={<PlusOutlined />} aria-label="接入远程服务" onClick={() => openEditor('create')} />}
         </Space>
       </div>
       <div className="mcp-service-list">
@@ -173,7 +255,7 @@ export function MCPServicesPage() {
           className={`mcp-service-item${selected?.id === service.id ? ' is-active' : ''}`}
           onClick={() => selectService(service)}>
           <strong>{service.name}</strong>
-          <span>{service.transport === 'sse' ? 'SSE' : 'Streamable HTTP'} · {service.status === 'active' ? '已启用' : '已停用'}</span>
+          <span>{service.transport === 'sse' ? 'SSE' : service.transport === 'stdio' ? 'Stdio · 托管' : 'Streamable HTTP'} · {service.status === 'active' ? '已启用' : '已停用'}</span>
         </button>)}
         {!servicesQuery.isLoading && !servicesQuery.data?.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有 MCP 服务" />}
       </div>
@@ -198,9 +280,15 @@ export function MCPServicesPage() {
               </Button>}
             </div>
               : <p className="mcp-description">暂无服务描述</p>}
-            <div className="mcp-service-meta"><span>上游地址</span><Text copyable={{ text: selected.upstreamUrl }}>{selected.upstreamUrl}</Text></div>
-            <div className="mcp-service-meta"><span>参数配置</span><Text>{selected.parameters.length ? `${selected.parameters.length} 项，生成连接时填写参数值` : '无需额外参数'}</Text></div>
+            {!isManagedService ? <>
+              <div className="mcp-service-meta"><span>上游地址</span><Text copyable={{ text: selected.upstreamUrl }}>{selected.upstreamUrl}</Text></div>
+              <div className="mcp-service-meta"><span>参数配置</span><Text>{selected.parameters.length ? `${selected.parameters.length} 项，生成连接时填写参数值` : '无需额外参数'}</Text></div>
+            </> : <div className="mcp-service-meta"><span>服务来源</span><Text>{selected.sourceType === 'github' ? 'GitHub 仓库' : selected.sourceType === 'gitee' ? 'Gitee 仓库' : '本地代码包'} · Stdio</Text></div>}
           </Card>
+          {canWrite && isManagedService && <MCPDeploymentPanel service={selected}
+            onBuildSubmitted={(versionId) => trackDeployment(selected.id, versionId)}
+            onReady={refreshDeploymentTools}
+            onUpdated={async () => { await queryClient.invalidateQueries({ queryKey: ['mcp-services'] }) }} />}
           {canReadConnections && <MCPConnectionsPage serviceId={selected.id} />}
           {canReadConnections && <Card className="content-card" variant="borderless">
             <div className="mcp-section-head"><h2>接入示例</h2></div>
@@ -251,17 +339,19 @@ export function MCPServicesPage() {
       okText={editorMode === 'edit' ? '保存修改' : '接入服务'} confirmLoading={create.isPending || update.isPending} destroyOnHidden>
       <Form form={serviceForm} layout="vertical" onFinish={(values) => editorMode === 'edit' ? update.mutate(values) : create.mutate(values)}>
         <Form.Item name="name" label="服务名称" rules={[{ required: true, message: '请填写服务名称' }]}><Input maxLength={120} /></Form.Item>
-        <div className="mcp-description-editor-head"><strong>服务描述（Markdown）</strong>
+        {(editorMode !== 'edit' || !isManagedService) && <><div className="mcp-description-editor-head"><strong>服务描述（Markdown）</strong>
           <Segmented size="small" value={descriptionMode} onChange={(value) => setDescriptionMode(value as typeof descriptionMode)} options={['编辑', '预览']} />
         </div>
         <Form.Item name="description" hidden={descriptionMode === '预览'}><Input.TextArea maxLength={10000}
           showCount autoSize={{ minRows: 7, maxRows: 14 }} placeholder="支持标题、列表、链接和代码块" /></Form.Item>
         {descriptionMode === '预览' && <div className="mcp-description-preview">
           {descriptionPreview ? <MarkdownContent value={descriptionPreview} /> : <Text type="secondary">暂无内容，切换到编辑填写服务描述。</Text>}
-        </div>}
-        {editorMode === 'edit' && connections.length > 0 && <Alert type="info" showIcon style={{ marginBottom: 16 }}
+        </div>}</>}
+        {editorMode === 'edit' && isManagedService && <Alert type="info" showIcon style={{ marginBottom: 16 }}
+          message="托管服务的描述来自当前源码版本根目录 README.md；更新描述请构建新版本。" />}
+        {editorMode === 'edit' && !isManagedService && connections.length > 0 && <Alert type="info" showIcon style={{ marginBottom: 16 }}
           message="修改地址或传输方式后需要重新发现工具；修改参数字段后，已有连接可能需要补充参数值。" />}
-        <div className="mcp-config-block">
+        {(editorMode !== 'edit' || !isManagedService) && <div className="mcp-config-block">
           <div className="mcp-config-head"><strong>服务配置</strong><Button type="link" icon={<ImportOutlined />}
             onClick={() => setImportOpen((open) => !open)}>{importOpen ? '收起导入' : '从 MCP 配置导入'}</Button></div>
           {importOpen && <div className="mcp-config-import">
@@ -280,9 +370,11 @@ export function MCPServicesPage() {
           </Form.Item>
           <div className="mcp-config-subhead"><strong>参数配置</strong><Text type="secondary">这里说明连接需要填写什么；具体值在生成连接时填写。</Text></div>
           <ParameterRows />
-        </div>
+        </div>}
       </Form>
     </Modal>
+    <MCPDeploymentDialog open={deploymentOpen} loading={importDeployment.isPending}
+      onClose={() => setDeploymentOpen(false)} onSubmit={(input) => importDeployment.mutate(input)} />
   </div>
 }
 

@@ -54,7 +54,16 @@ export interface MCPUsage {
   averageMs: number
 }
 
+export interface MCPConnectionHealth {
+  connectionId: string
+  status: 'healthy' | 'unavailable' | 'inactive'
+  message: string
+  toolCount: number
+  checkedAt: string
+}
+
 export const listMCPConnections = () => request<MCPConnection[]>('/api/v1/mcp-connections')
+export const checkMCPConnectionHealth = (id: string) => request<MCPConnectionHealth>(`/api/v1/mcp-connections/${id}/health`)
 export const listMCPUsage = () => request<MCPUsage[]>('/api/v1/mcp-connections/usage')
 
 export function createMCPConnection(input: MCPConnectionInput) {

@@ -5,11 +5,17 @@ export interface MCPService {
   code: string
   name: string
   description: string
-  transport: 'streamable_http' | 'sse'
+  transport: 'streamable_http' | 'sse' | 'stdio'
   upstreamUrl: string
   parameters: MCPParameterDefinition[]
   credentialsConfigured: boolean
   status: 'active' | 'disabled'
+  sourceType: 'remote' | 'github' | 'gitee' | 'upload'
+  runtimeType?: 'node' | 'python'
+  entryFile?: string
+  deploymentStatus?: 'building' | 'failed' | 'stopped' | 'running'
+  deploymentError?: string
+  currentRevision?: string
   createdAt: string
   updatedAt: string
 }

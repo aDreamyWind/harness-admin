@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.24.0
+  version: 0.25.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -1791,6 +1791,253 @@ paths:
         '200': { description: MCP 工具原始调用结果。 }
         '400': { $ref: '#/components/responses/BadRequest' }
         '502': { description: 上游 MCP 工具调用失败。 }
+  /mcp-deployments/capability:
+    get:
+      summary: 查询源码部署能力开关
+      operationId: getMCPDeploymentCapability
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 返回是否启用 Docker 托管部署；要求 mcp.service.read 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPDeploymentCapabilityEnvelope' }
+  /mcp-deployments/inspect/repository:
+    post:
+      summary: 预检公开仓库的固定版本、Node.js 构建命令与运行入口；不创建服务、不执行源码
+      operationId: inspectMCPRepository
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repositoryUrl]
+              properties:
+                repositoryUrl: { type: string, description: GitHub 或 Gitee 公开仓库完整 HTTPS 地址。 }
+                ref: { type: string, description: 分支、标签或提交；留空使用默认分支。 }
+      responses:
+        '200':
+          description: 返回固定提交号、识别的运行入口和依赖锁文件状态；要求 mcp.service.write 权限。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [revision, entryFile, buildCommand, hasLockfile]
+                    properties:
+                      revision: { type: string }
+                      entryFile: { type: string }
+                      buildCommand: { type: string, description: npm run build 或空字符串。 }
+                      hasLockfile: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { description: 仓库读取或运行入口识别失败。 }
+        '503': { description: 服务器未开启源码部署。 }
+  /mcp-deployments/import/repository:
+    post:
+      summary: 从公开 GitHub 或 Gitee 仓库导入 MCP；服务描述取根目录 README.md
+      operationId: importMCPFromRepository
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPRepositoryImportInput' }
+      responses:
+        '202':
+          description: 已创建 building 构建记录；后台解析固定提交、读取 README 并构建。通过版本列表查询结果与日志。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPDeploymentResultEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { description: 服务器未开启源码部署。 }
+  /mcp-deployments/import/github:
+    post:
+      summary: 兼容旧客户端的 GitHub 导入接口；新客户端使用 import/repository
+      operationId: importMCPFromGitHub
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPGitHubImportInput' }
+      responses:
+        '202':
+          description: 服务与 building 构建记录已创建；后台执行构建。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPDeploymentResultEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { description: 服务器未开启源码部署。 }
+  /mcp-deployments/import/upload:
+    post:
+      summary: 上传代码包并构建 MCP
+      operationId: importMCPFromUpload
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/MCPUploadImportInput' }
+      responses:
+        '202':
+          description: 服务与 building 构建记录已创建；后台执行构建。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPDeploymentResultEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /mcp-deployments/{serviceId}/versions:
+    get:
+      summary: 查询 MCP 源码构建版本与日志
+      operationId: listMCPDeploymentVersions
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 要求 mcp.service.write 权限；构建日志可能包含敏感信息。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPDeploymentVersionListEnvelope' }
+  /mcp-deployments/{serviceId}/versions/repository:
+    post:
+      summary: 从 GitHub 或 Gitee 仓库为托管 MCP 构建新版本
+      operationId: buildMCPRepositoryVersion
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPRepositoryImportInput' }
+      responses:
+        '202':
+          description: 已创建 building 构建记录；后台解析固定提交并构建。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPDeploymentResultEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /mcp-deployments/{serviceId}/versions/github:
+    post:
+      summary: 为已停止的托管 MCP 构建新 GitHub 版本
+      operationId: buildMCPGitHubVersion
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MCPGitHubImportInput' }
+      responses:
+        '202':
+          description: 已创建 building 构建记录；后台执行构建。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPDeploymentResultEnvelope' }
+  /mcp-deployments/{serviceId}/versions/upload:
+    post:
+      summary: 为已停止的托管 MCP 上传并构建新版本
+      operationId: buildMCPUploadVersion
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/MCPUploadImportInput' }
+      responses:
+        '202':
+          description: 已创建 building 构建记录；后台执行构建。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPDeploymentResultEnvelope' }
+  /mcp-deployments/{serviceId}/runtime:
+    get:
+      summary: 查看托管容器状态和最近日志
+      operationId: getMCPRuntimeStatus
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 容器进程状态，不等于 MCP 协议健康检查；要求 mcp.service.write 权限。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPRuntimeStatusEnvelope' }
+  /mcp-deployments/{serviceId}/metadata:
+    put:
+      summary: 修改托管 MCP 服务名称；描述始终来自当前版本 README.md
+      operationId: updateMCPDeploymentMetadata
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 120 }
+      responses:
+        '200':
+          description: 托管服务名称已更新，README 描述保持不变。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPServiceEnvelope' }
+  /mcp-deployments/{serviceId}/start:
+    post:
+      summary: 启动托管 MCP 容器
+      operationId: startMCPDeployment
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 已启动；返回 MCPServiceEnvelope。 }
+  /mcp-deployments/{serviceId}/stop:
+    post:
+      summary: 停止托管 MCP 容器
+      operationId: stopMCPDeployment
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 已停止；返回 MCPServiceEnvelope。 }
+  /mcp-deployments/{serviceId}/restart:
+    post:
+      summary: 重启托管 MCP 容器
+      operationId: restartMCPDeployment
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 已重启；返回 MCPServiceEnvelope。 }
+  /mcp-deployments/{serviceId}/rollback:
+    post:
+      summary: 切换到已构建的历史镜像并启动
+      operationId: rollbackMCPDeployment
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: serviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [versionId]
+              properties:
+                versionId: { type: string, format: uuid }
+      responses:
+        '200': { description: 已回退；需要重新发现工具。 }
   /mcp-connections:
     get:
       summary: 查询企业 MCP 对外连接
@@ -1841,6 +2088,21 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MCPConnectionEnvelope' }
+  /mcp-connections/{connectionId}/health:
+    get:
+      summary: 按需检查 MCP 连接的上游连通状态
+      description: 要求 mcp.connection.read 权限；使用此连接专有上游参数进行 MCP 握手和工具列表读取，不执行工具，也不写入调用统计。页面打开时检查一次，不后台轮询。
+      operationId: checkMCPConnectionHealth
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: connectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 返回正常、异常或未启用状态；不返回上游密钥或原始错误。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPConnectionHealthEnvelope' }
+        '404': { description: 连接不属于当前企业或不存在。 }
   /mcp-connections/{connectionId}/grants:
     put:
       summary: 替换 Harness MCP 连接的员工授权
@@ -2114,6 +2376,20 @@ components:
         userIds: { type: array, items: { type: string, format: uuid } }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    MCPConnectionHealth:
+      type: object
+      required: [connectionId, status, message, toolCount, checkedAt]
+      properties:
+        connectionId: { type: string, format: uuid }
+        status: { type: string, enum: [healthy, unavailable, inactive] }
+        message: { type: string }
+        toolCount: { type: integer, minimum: 0 }
+        checkedAt: { type: string, format: date-time }
+    MCPConnectionHealthEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/MCPConnectionHealth' }
     MCPUsage:
       type: object
       required: [connectionId, toolName, calls, failures, averageMs]
@@ -2178,7 +2454,7 @@ components:
       properties:
         code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,79}$', description: 可选；省略时由服务端自动生成内部编码。 }
         name: { type: string, maxLength: 120 }
-        description: { type: string, maxLength: 10000, description: MCP 服务说明，支持 Markdown。 }
+        description: { type: string, maxLength: 65536, description: MCP 服务说明，支持 Markdown；托管服务直接读取当前版本根目录 README.md。 }
         transport: { type: string, enum: [streamable_http, sse] }
         upstreamUrl: { type: string, format: uri, description: 不允许 URL 用户信息、查询参数和片段。 }
         parameters:
@@ -2208,16 +2484,111 @@ components:
         name: { type: string }
         value: { type: string, description: 上游参数值。 }
     MCPService:
-      allOf:
-        - { $ref: '#/components/schemas/MCPServiceInput' }
-        - type: object
-          required: [id, status, credentialsConfigured, createdAt, updatedAt]
+      type: object
+      required: [id, code, name, description, transport, upstreamUrl, parameters, status, sourceType, credentialsConfigured, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        description: { type: string, description: Markdown 服务描述。 }
+        transport: { type: string, enum: [streamable_http, sse, stdio] }
+        upstreamUrl: { type: string, description: 远程 MCP 地址；托管 Stdio 为空。 }
+        parameters:
+          type: array
+          items: { $ref: '#/components/schemas/MCPParameterDefinition' }
+        status: { type: string, enum: [active, disabled] }
+        sourceType: { type: string, enum: [remote, github, gitee, upload] }
+        runtimeType: { type: string, enum: [node, python] }
+        entryFile: { type: string }
+        deploymentStatus: { type: string, enum: [building, failed, stopped, running] }
+        deploymentError: { type: string }
+        currentRevision: { type: string }
+        credentialsConfigured: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    MCPGitHubImportInput:
+      type: object
+      required: [name, repository, commit, runtimeType]
+      properties:
+        name: { type: string, maxLength: 120 }
+        repository: { type: string, description: 公开 GitHub owner/repo，不接受自定义下载 URL。 }
+        commit: { type: string, pattern: '^[a-fA-F0-9]{40}$', description: 完整固定提交 SHA。 }
+        runtimeType: { type: string, enum: [node, python] }
+        entryFile: { type: string, description: Node.js 可省略，系统从根目录 package.json 的 start 或 main 自动识别，并在编译后验证；Python 必填 .py 相对路径。 }
+    MCPRepositoryImportInput:
+      type: object
+      required: [repositoryUrl, runtimeType]
+      properties:
+        name: { type: string, maxLength: 120, description: 首次导入时必填；新增版本时忽略。 }
+        repositoryUrl: { type: string, description: 仅允许完整的公开 GitHub 或 Gitee 仓库 HTTPS 地址，可带 .git 后缀。 }
+        ref: { type: string, description: 分支、标签或完整提交号；省略时使用仓库默认分支。服务端解析并固定到 SHA。 }
+        runtimeType: { type: string, enum: [node, python] }
+        entryFile: { type: string, description: Node.js 可省略，系统自动识别运行入口；Python 必填。 }
+    MCPUploadImportInput:
+      type: object
+      required: [name, runtimeType, archive]
+      properties:
+        name: { type: string, maxLength: 120 }
+        runtimeType: { type: string, enum: [node, python] }
+        entryFile: { type: string, description: Node.js 可省略，Python 必填。 }
+        archive: { type: string, format: binary, description: 最大 20 MiB 的 .tar.gz，根目录需有 README.md 作为服务描述。 }
+    MCPDeploymentVersion:
+      type: object
+      required: [id, serviceId, sourceType, sourceRef, revision, runtimeType, entryFile, buildStatus, buildLog, errorMessage, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        serviceId: { type: string, format: uuid }
+        sourceType: { type: string, enum: [github, gitee, upload] }
+        sourceRef: { type: string, description: 完整仓库地址或上传包文件名。 }
+        revision: { type: string, description: 解析后的固定提交 SHA 或上传包 SHA-256。 }
+        runtimeType: { type: string, enum: [node, python] }
+        entryFile: { type: string }
+        buildStatus: { type: string, enum: [building, succeeded, failed] }
+        buildLog: { type: string, description: 最后 64 KiB 构建日志，仅管理员可查看。 }
+        errorMessage: { type: string }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+    MCPDeploymentResultEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [service, version]
           properties:
-            id: { type: string, format: uuid }
-            status: { type: string, enum: [active, disabled] }
-            credentialsConfigured: { type: boolean, description: 服务级上游凭证是否已配置；不返回凭证值。 }
-            createdAt: { type: string, format: date-time }
-            updatedAt: { type: string, format: date-time }
+            service: { $ref: '#/components/schemas/MCPService' }
+            version: { $ref: '#/components/schemas/MCPDeploymentVersion' }
+    MCPDeploymentVersionListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MCPDeploymentVersion' }
+    MCPDeploymentCapabilityEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [enabled, sourceTypes, runtimes]
+          properties:
+            enabled: { type: boolean }
+            sourceTypes: { type: array, items: { type: string } }
+            runtimes: { type: array, items: { type: string } }
+    MCPRuntimeStatusEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [running, status, logs, protocolHealthy]
+          properties:
+            running: { type: boolean }
+            status: { type: string }
+            logs: { type: string }
+            protocolHealthy: { type: boolean, description: MCP 握手及工具发现是否成功。 }
+            protocolError: { type: string }
     MCPTool:
       type: object
       required: [name, description, inputSchema, discoveredAt]

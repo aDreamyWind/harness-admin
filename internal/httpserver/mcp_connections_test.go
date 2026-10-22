@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,6 +21,7 @@ type mcpConnectionsStub struct {
 	credential    string
 	recorded      mcpconnection.CallRecord
 	userScopeUsed string
+	healthOrg     string
 }
 
 func (*mcpConnectionsStub) List(context.Context, string) ([]mcpconnection.Connection, error) {
@@ -52,6 +54,10 @@ func (*mcpConnectionsStub) UpdateUpstreamCredentials(context.Context, mcpconnect
 func (s *mcpConnectionsStub) Lookup(_ context.Context, _ string) (mcpconnection.GatewayConnection, error) {
 	return s.route, nil
 }
+func (s *mcpConnectionsStub) CheckHealth(_ context.Context, organizationID, id string, _ mcpconnection.HealthProber) (mcpconnection.Health, error) {
+	s.healthOrg = organizationID
+	return mcpconnection.Health{ConnectionID: id, Status: "healthy", Message: "MCP 握手和工具列表正常"}, nil
+}
 func (s *mcpConnectionsStub) AuthorizeDeveloper(_ context.Context, _ mcpconnection.GatewayConnection, credential string) (mcpconnection.Caller, error) {
 	s.credential = credential
 	if credential != "application-secret" {
@@ -81,6 +87,31 @@ type mcpToolCallerStub struct {
 func (s *mcpToolCallerStub) CallTool(_ context.Context, _ mcpadmin.ServiceRecord, credentials mcpadmin.UpstreamCredentials, name string, _ json.RawMessage) (json.RawMessage, error) {
 	s.credentials, s.name = credentials, name
 	return json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`), nil
+}
+func (*mcpToolCallerStub) ListTools(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) ([]mcpadmin.Tool, error) {
+	return []mcpadmin.Tool{{Name: "test_tool"}}, nil
+}
+
+func TestMCPConnectionHealthRequiresSessionAndUsesCurrentOrganization(t *testing.T) {
+	connections := &mcpConnectionsStub{}
+	router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
+		MCPConnections: connections, MCPToolCaller: &mcpToolCallerStub{}, OIDCProvider: &oidcProviderStub{},
+		SessionCookie: "test_session"})
+	id := "00000000-0000-4000-8000-000000000001"
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/mcp-connections/"+id+"/health", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录查询健康状态应被拒绝: %d", response.Code)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/mcp-connections/"+id+"/health", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || connections.healthOrg != "org-1" || !strings.Contains(response.Body.String(), `"status":"healthy"`) {
+		t.Fatalf("连接健康查询未限定当前企业: status=%d org=%s body=%s", response.Code, connections.healthOrg, response.Body.String())
+	}
 }
 
 type bearerTransport struct {

@@ -28,6 +28,12 @@ func (*repositoryStub) ReplaceGrants(context.Context, GrantsInput) (Connection, 
 func (r *repositoryStub) GetByCode(context.Context, string) (GatewayConnection, error) {
 	return r.item, nil
 }
+func (r *repositoryStub) GetByID(_ context.Context, organizationID, _ string) (GatewayConnection, error) {
+	if r.item.OrganizationID != organizationID {
+		return GatewayConnection{}, ErrNotFound
+	}
+	return r.item, nil
+}
 func (*repositoryStub) ChangeStatus(context.Context, Actor, string, string) (Connection, error) {
 	return Connection{}, nil
 }
@@ -129,5 +135,55 @@ func TestExpiredConnectionIsRejected(t *testing.T) {
 	service := NewService(repository, &limiterStub{})
 	if _, err := service.Lookup(context.Background(), "expired"); !errors.Is(err, ErrInactive) {
 		t.Fatalf("过期连接仍可查得路由: %v", err)
+	}
+}
+
+type healthProberStub struct {
+	credentials mcpadmin.UpstreamCredentials
+	tools       []mcpadmin.Tool
+	err         error
+	called      bool
+}
+
+func (p *healthProberStub) ListTools(_ context.Context, _ mcpadmin.ServiceRecord, credentials mcpadmin.UpstreamCredentials) ([]mcpadmin.Tool, error) {
+	p.called, p.credentials = true, credentials
+	return p.tools, p.err
+}
+
+func TestConnectionHealthUsesOwnCredentialsAndDoesNotCallTools(t *testing.T) {
+	id := "00000000-0000-4000-8000-000000000001"
+	repository := &repositoryStub{item: GatewayConnection{
+		Connection: Connection{ID: id, Status: "active"}, OrganizationID: "org-1", ServiceStatus: "active",
+		Transport: "streamable_http", UpstreamURL: "https://example.com/mcp",
+		ServiceParameters:  []mcpadmin.ParameterValue{{Location: "header", Name: "X-API-Key", Value: "old"}},
+		UpstreamParameters: []mcpadmin.ParameterValue{{Location: "header", Name: "X-API-Key", Value: "current"}},
+		Tools:              []mcpadmin.Tool{{Name: "search"}},
+	}}
+	prober := &healthProberStub{tools: []mcpadmin.Tool{{Name: "search"}}}
+	result, err := NewService(repository, &limiterStub{}).CheckHealth(context.Background(), "org-1", id, prober)
+	if err != nil || result.Status != "healthy" || result.ToolCount != 1 || !prober.called ||
+		len(prober.credentials.AllParameters()) != 1 || prober.credentials.AllParameters()[0].Value != "current" {
+		t.Fatalf("连接健康检查未使用此连接的参数: result=%+v credentials=%+v err=%v", result, prober.credentials, err)
+	}
+	if _, err := NewService(repository, &limiterStub{}).CheckHealth(context.Background(), "other-org", id, prober); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("其他企业不应查询此连接: %v", err)
+	}
+}
+
+func TestConnectionHealthDistinguishesInactiveAndFailedHandshake(t *testing.T) {
+	id := "00000000-0000-4000-8000-000000000001"
+	repository := &repositoryStub{item: GatewayConnection{Connection: Connection{ID: id, Status: "disabled"}, OrganizationID: "org-1"}}
+	service := NewService(repository, &limiterStub{})
+	prober := &healthProberStub{}
+	result, err := service.CheckHealth(context.Background(), "org-1", id, prober)
+	if err != nil || result.Status != "inactive" || prober.called {
+		t.Fatalf("停用连接不应探测上游: %+v %v", result, err)
+	}
+	repository.item.Status, repository.item.ServiceStatus = "active", "active"
+	repository.item.Transport = "streamable_http"
+	prober.err = errors.New("upstream secret should not be returned")
+	result, err = service.CheckHealth(context.Background(), "org-1", id, prober)
+	if err != nil || result.Status != "unavailable" || strings.Contains(result.Message, "secret") {
+		t.Fatalf("上游错误应返回安全的连接状态: %+v %v", result, err)
 	}
 }

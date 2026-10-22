@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,10 @@ type Config struct {
 	ModelCredentialKey    string
 	ModelPrivateHosts     []string
 	MCPPrivateHosts       []string
+	MCPDeployEnabled      bool
+	MCPNodeImage          string
+	MCPPythonImage        string
+	MCPBuildNetwork       string
 	OIDCIssuer            string
 	OIDCSigningPrivateKey string
 	ConsoleURL            string
@@ -42,6 +47,10 @@ func Load() (Config, error) {
 	}
 
 	autoMigrate, err := boolValue("AUTO_MIGRATE", true)
+	if err != nil {
+		return Config{}, err
+	}
+	mcpDeployEnabled, err := boolValue("MCP_DEPLOY_ENABLED", false)
 	if err != nil {
 		return Config{}, err
 	}
@@ -71,6 +80,10 @@ func Load() (Config, error) {
 		ModelCredentialKey:    value("MODEL_CREDENTIAL_MASTER_KEY", "aGFybmVzcy1hZG1pbi1kZXYtbW9kZWwta2V5LTAwMDE="),
 		ModelPrivateHosts:     csvValue("MODEL_PROVIDER_PRIVATE_HOSTS"),
 		MCPPrivateHosts:       csvValue("MCP_PRIVATE_HOSTS"),
+		MCPDeployEnabled:      mcpDeployEnabled,
+		MCPNodeImage:          value("MCP_NODE_IMAGE", "node:22-alpine"),
+		MCPPythonImage:        value("MCP_PYTHON_IMAGE", "python:3.12-slim"),
+		MCPBuildNetwork:       value("MCP_BUILD_NETWORK", "none"),
 		OIDCIssuer:            strings.TrimRight(value("OIDC_ISSUER", "http://localhost:8080"), "/"),
 		OIDCSigningPrivateKey: oidcSigningPrivateKey,
 		ConsoleURL:            strings.TrimRight(value("CONSOLE_URL", "http://localhost:5173"), "/"),
@@ -96,6 +109,17 @@ func Load() (Config, error) {
 	}
 	if cfg.Environment == "production" && strings.TrimSpace(cfg.OIDCSigningPrivateKey) == "" {
 		return Config{}, fmt.Errorf("production 环境必须配置 OIDC_SIGNING_PRIVATE_KEY 或 OIDC_SIGNING_PRIVATE_KEY_FILE")
+	}
+	if cfg.Environment == "production" && cfg.MCPDeployEnabled &&
+		(!strings.Contains(cfg.MCPNodeImage, "@sha256:") || !strings.Contains(cfg.MCPPythonImage, "@sha256:")) {
+		return Config{}, fmt.Errorf("production 启用 MCP 源码部署时必须把基础镜像固定到 sha256 摘要")
+	}
+	if cfg.MCPBuildNetwork != "none" && cfg.MCPBuildNetwork != "default" {
+		return Config{}, fmt.Errorf("MCP_BUILD_NETWORK 必须为 none 或 default")
+	}
+	imagePattern := regexp.MustCompile(`^[A-Za-z0-9./:_@-]+$`)
+	if !imagePattern.MatchString(cfg.MCPNodeImage) || !imagePattern.MatchString(cfg.MCPPythonImage) {
+		return Config{}, fmt.Errorf("MCP 容器基础镜像名称格式不正确")
 	}
 	consoleURL, consoleErr := url.Parse(cfg.ConsoleURL)
 	if consoleErr != nil || !consoleURL.IsAbs() || consoleURL.Host == "" || consoleURL.RawQuery != "" || consoleURL.Fragment != "" {

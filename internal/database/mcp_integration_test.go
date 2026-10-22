@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/url"
 	"os"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"harness-admin/internal/database"
 	"harness-admin/internal/mcpadmin"
 	"harness-admin/internal/mcpconnection"
+	"harness-admin/internal/mcpdeploy"
 	"harness-admin/internal/secret"
 	pgstore "harness-admin/internal/store/postgres"
 )
@@ -115,6 +117,66 @@ func TestMCPConnectionsAgainstPostgres(t *testing.T) {
 	repository := pgstore.NewMCPConnectionRepository(pool, cipher)
 	connections := mcpconnection.NewService(repository, mcpTestLimiter{})
 	actor := mcpconnection.Actor{OrganizationID: orgID, UserID: userID}
+	deploymentRepo := pgstore.NewMCPDeploymentRepository(pool)
+	managed, err := deploymentRepo.Create(ctx, mcpdeploy.Input{Actor: mcpadmin.Actor{OrganizationID: orgID, UserID: userID},
+		Name: "托管测试工具", SourceType: "upload", SourceRef: "echo.tar.gz", Revision: "sha256-test",
+		RuntimeType: "node", EntryFile: "echo.js"})
+	if err != nil || managed.Service.Transport != "stdio" || managed.Service.DeploymentStatus != "building" {
+		t.Fatalf("创建托管服务失败: %#v %v", managed, err)
+	}
+	release, err := deploymentRepo.AcquireLock(ctx, managed.Service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deploymentRepo.AcquireLock(ctx, managed.Service.ID); !errors.Is(err, mcpdeploy.ErrBusy) {
+		t.Fatalf("相同服务并发部署未被拒绝: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	managed, err = deploymentRepo.CompleteBuild(ctx, mcpadmin.Actor{OrganizationID: orgID, UserID: userID},
+		managed.Service.ID, managed.Version.ID, "sha256:test-image", "构建完成", "")
+	if err != nil || managed.Version.BuildStatus != "succeeded" || managed.Service.CurrentRevision != "sha256-test" {
+		t.Fatalf("保存构建版本失败: %#v %v", managed, err)
+	}
+	managedService, err := deploymentRepo.SetRuntimeStatus(ctx, mcpadmin.Actor{OrganizationID: orgID, UserID: userID}, managed.Service.ID, "running", "")
+	if err != nil || managedService.DeploymentStatus != "running" {
+		t.Fatalf("托管运行状态失败: %#v %v", managedService, err)
+	}
+	managedService, err = deploymentRepo.UpdateMetadata(ctx, mcpadmin.Actor{OrganizationID: orgID, UserID: userID},
+		managed.Service.ID, "托管测试工具（已修改）", "## 使用说明")
+	if err != nil || managedService.Name != "托管测试工具（已修改）" || managedService.Description != "## 使用说明" {
+		t.Fatalf("托管服务元信息修改失败: %#v %v", managedService, err)
+	}
+	if err := serviceRepo.ReplaceTools(ctx, mcpadmin.DiscoverInput{Actor: mcpadmin.Actor{OrganizationID: orgID, UserID: userID}, ServiceID: managed.Service.ID},
+		[]mcpadmin.Tool{{Name: "echo", InputSchema: []byte(`{"type":"object"}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	managedConnection, err := connections.Create(ctx, mcpconnection.CreateInput{Actor: actor, ServiceID: managed.Service.ID,
+		Name: "托管开发连接", Purpose: "developer", AuthMode: "bearer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedRoute, err := connections.Lookup(ctx, managedConnection.Code)
+	if err != nil || managedRoute.Transport != "stdio" || managedRoute.RuntimeType != "node" || managedRoute.ContainerName != managedService.ContainerName {
+		t.Fatalf("托管网关路由字段错误: %#v %v", managedRoute, err)
+	}
+	interrupted, err := deploymentRepo.Create(ctx, mcpdeploy.Input{Actor: mcpadmin.Actor{OrganizationID: orgID, UserID: userID},
+		Name: "中断构建测试", SourceType: "upload", SourceRef: "interrupted.tar.gz", Revision: "test",
+		RuntimeType: "node", EntryFile: "server.js"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE mcp_service_versions SET created_at=NOW()-INTERVAL '10 minutes' WHERE id=$1`, interrupted.Version.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := deploymentRepo.RecoverInterruptedBuilds(ctx); err != nil {
+		t.Fatal(err)
+	}
+	interruptedService, err := deploymentRepo.Get(ctx, orgID, interrupted.Service.ID)
+	if err != nil || interruptedService.DeploymentStatus != "failed" {
+		t.Fatalf("中断构建未恢复: %#v %v", interruptedService, err)
+	}
 	developer, err := connections.Create(ctx, mcpconnection.CreateInput{
 		Actor: actor, ServiceID: service.ID, Code: "dev_tools", Name: "开发者工具",
 		Purpose: "developer", AuthMode: "bearer", ApplicationName: "业务应用 A",

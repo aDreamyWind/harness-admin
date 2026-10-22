@@ -21,6 +21,9 @@ import (
 	"harness-admin/internal/mcpadmin"
 	"harness-admin/internal/mcpclient"
 	"harness-admin/internal/mcpconnection"
+	"harness-admin/internal/mcpdeploy"
+	"harness-admin/internal/mcpruntime"
+	"harness-admin/internal/mcpsource"
 	"harness-admin/internal/modeladmin"
 	"harness-admin/internal/modelgateway"
 	"harness-admin/internal/modelprovider"
@@ -87,6 +90,16 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelPolicyService := modelgateway.NewPolicyService(modelPolicyRepository)
 	mcpUpstream := mcpclient.New(cfg.MCPPrivateHosts)
 	mcpService := mcpadmin.NewService(pgstore.NewMCPRepository(db, credentialCipher), mcpUpstream)
+	mcpDeploymentRepository := pgstore.NewMCPDeploymentRepository(db)
+	if cfg.MCPDeployEnabled {
+		if err := mcpDeploymentRepository.RecoverInterruptedBuilds(startupCtx); err != nil {
+			redisClient.Close()
+			db.Close()
+			return nil, fmt.Errorf("恢复中断的 MCP 构建状态失败: %w", err)
+		}
+	}
+	mcpDeploymentService := mcpdeploy.NewService(mcpDeploymentRepository, mcpsource.NewGitHub(),
+		mcpruntime.NewDocker(cfg.MCPNodeImage, cfg.MCPPythonImage, cfg.MCPBuildNetwork), mcpUpstream, cfg.MCPDeployEnabled)
 	mcpConnectionService := mcpconnection.NewService(pgstore.NewMCPConnectionRepository(db, credentialCipher), cache.NewGatewayRequestLimiter(redisClient))
 	oidcRepository := pgstore.NewOIDCRepository(db, credentialCipher)
 	oidcService := oidc.NewService(oidcRepository)
@@ -123,6 +136,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		ModelGateway:          modelGatewayService,
 		ModelPolicy:           modelPolicyService,
 		MCPAdmin:              mcpService,
+		MCPDeploy:             mcpDeploymentService,
 		MCPConnections:        mcpConnectionService,
 		MCPToolCaller:         mcpUpstream,
 		GatewayForwarder:      modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts),

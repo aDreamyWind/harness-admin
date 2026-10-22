@@ -185,6 +185,14 @@ type ServiceRecord struct {
 	Parameters            []ParameterDefinition `json:"parameters"`
 	CredentialsConfigured bool                  `json:"credentialsConfigured"`
 	Status                string                `json:"status"`
+	SourceType            string                `json:"sourceType"`
+	RuntimeType           string                `json:"runtimeType,omitempty"`
+	EntryFile             string                `json:"entryFile,omitempty"`
+	ImageRef              string                `json:"-"`
+	ContainerName         string                `json:"-"`
+	DeploymentStatus      string                `json:"deploymentStatus,omitempty"`
+	DeploymentError       string                `json:"deploymentError,omitempty"`
+	CurrentRevision       string                `json:"currentRevision,omitempty"`
 	CreatedAt             time.Time             `json:"createdAt"`
 	UpdatedAt             time.Time             `json:"updatedAt"`
 }

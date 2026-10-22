@@ -1,13 +1,13 @@
 import { CopyOutlined, EyeOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd'
-import { useState } from 'react'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Alert, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
 import { listDepartments } from '../api/departments'
 import {
-  changeMCPConnectionStatus, createMCPConnection, listMCPConnections,
+  changeMCPConnectionStatus, checkMCPConnectionHealth, createMCPConnection, listMCPConnections,
   revealMCPConnectionSecret, revealMCPUpstreamCredentials, replaceMCPConnectionGrants,
   updateMCPUpstreamCredentials,
   rotateMCPConnectionSecret, type CreatedMCPConnection, type MCPConnection, type MCPConnectionInput,
@@ -50,11 +50,21 @@ export function MCPConnectionsPage({ serviceId }: { serviceId?: string } = {}) {
   const [grantTarget, setGrantTarget] = useState<MCPConnection | null>(null)
   const [grantDepartments, setGrantDepartments] = useState<string[]>([])
   const [userSearch, setUserSearch] = useState('')
+  const [page, setPage] = useState(1)
   const purpose = Form.useWatch('purpose', form)
   const authMode = Form.useWatch('authMode', form)
   const selectedServiceId = Form.useWatch('serviceId', form)
 
   const connectionsQuery = useQuery({ queryKey: ['mcp-connections'], queryFn: listMCPConnections })
+  const visibleConnections = (connectionsQuery.data ?? []).filter((item) => !serviceId || item.serviceId === serviceId)
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(visibleConnections.length / 10)))
+  const pageConnections = visibleConnections.slice((currentPage - 1) * 10, currentPage * 10)
+  const healthQueries = useQueries({ queries: pageConnections.map((item) => ({
+    queryKey: ['mcp-connection-health', item.id], queryFn: () => checkMCPConnectionHealth(item.id),
+    retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, refetchOnMount: 'always' as const,
+  })) })
+  const healthByID = new Map(pageConnections.map((item, index) => [item.id, healthQueries[index]]))
+  useEffect(() => setPage(1), [serviceId])
   const servicesQuery = useQuery({ queryKey: ['mcp-services'], queryFn: listMCPServices })
   const departmentsQuery = useQuery({ queryKey: ['departments'], queryFn: listDepartments, enabled: canWrite && hasPermission('iam.department.read') })
   const usersQuery = useQuery({
@@ -83,9 +93,11 @@ export function MCPConnectionsPage({ serviceId }: { serviceId?: string } = {}) {
       form.resetFields()
       messageApi.success('MCP 连接已生成')
       await queryClient.invalidateQueries({ queryKey: ['mcp-connections'] })
+      await queryClient.invalidateQueries({ queryKey: ['mcp-connection-health', result.id] })
       try {
         const tools = await discoverMCPTools(result.serviceId, result.id)
         await queryClient.invalidateQueries({ queryKey: ['mcp-tools', result.serviceId] })
+        await queryClient.invalidateQueries({ queryKey: ['mcp-connection-health', result.id] })
         messageApi.success(`已自动获取 ${tools.length} 个工具`)
       } catch (error) {
         messageApi.warning(`连接已生成，但自动获取工具失败：${errorMessage(error, '请检查连接参数')}`)
@@ -98,6 +110,7 @@ export function MCPConnectionsPage({ serviceId }: { serviceId?: string } = {}) {
     onSuccess: async () => {
       messageApi.success('连接状态已更新')
       await queryClient.invalidateQueries({ queryKey: ['mcp-connections'] })
+      await queryClient.invalidateQueries({ queryKey: ['mcp-connection-health'] })
     },
     onError: (error) => messageApi.error(errorMessage(error, '更新连接状态失败')),
   })
@@ -131,10 +144,12 @@ export function MCPConnectionsPage({ serviceId }: { serviceId?: string } = {}) {
         parameters: [...preservedParameters, ...parameterValues(targetService?.parameters ?? [], values.parameterValues)],
       }),
     onSuccess: async () => {
+      const connectionId = parameterTarget!.id
       setParameterTarget(null)
       setPreservedParameters([])
       messageApi.success('连接参数已更新')
       await queryClient.invalidateQueries({ queryKey: ['mcp-connections'] })
+      await queryClient.invalidateQueries({ queryKey: ['mcp-connection-health', connectionId] })
     },
     onError: (error) => messageApi.error(errorMessage(error, '更新连接参数失败')),
   })
@@ -201,18 +216,29 @@ export function MCPConnectionsPage({ serviceId }: { serviceId?: string } = {}) {
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => {
             connectionsQuery.refetch()
+            queryClient.invalidateQueries({ queryKey: ['mcp-connection-health'] })
           }}>刷新</Button>
           {canWrite && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}
             disabled={Boolean(serviceId && servicesQuery.data?.find((item) => item.id === serviceId)?.status !== 'active')}>生成连接</Button>}
         </Space>
       </div>
-      <Table<MCPConnection> rowKey="id" loading={connectionsQuery.isLoading} dataSource={(connectionsQuery.data ?? []).filter((item) => !serviceId || item.serviceId === serviceId)}
-        pagination={{ pageSize: 10 }} scroll={{ x: 940 }} columns={[
+      <Table<MCPConnection> rowKey="id" loading={connectionsQuery.isLoading} dataSource={visibleConnections}
+        pagination={{ pageSize: 10, current: currentPage, onChange: setPage }} scroll={{ x: 1080 }} columns={[
           { title: '连接', dataIndex: 'name', render: (value: string) => <strong>{value}</strong> },
           ...(!serviceId ? [{ title: 'MCP 服务', dataIndex: 'serviceName' as const }] : []),
           { title: '用途', dataIndex: 'purpose', render: (value: string) => value === 'harness' ? 'Harness 员工' : '开发者／应用' },
           { title: '入口鉴权', dataIndex: 'authMode', render: (value: string) => value === 'oidc' ? '员工登录令牌' : value === 'bearer' ? '应用 Bearer 密钥' : '无鉴权' },
           { title: '状态', dataIndex: 'status', render: (value: string) => <Tag color={value === 'active' ? 'green' : 'default'}>{value === 'active' ? '启用' : '停用'}</Tag> },
+          { title: '连通状态', width: 110, render: (_, item) => {
+            const check = healthByID.get(item.id)
+            const health = check?.data
+            const label = health?.status === 'healthy' ? '正常' : health?.status === 'inactive' ? '未启用'
+              : health?.status === 'unavailable' ? '异常' : check?.isError ? '检查失败' : '检查中'
+            const color = health?.status === 'healthy' ? 'green' : health?.status === 'unavailable' || check?.isError ? 'red' : 'default'
+            return <Tooltip title={health?.message ?? (check?.isError ? '检查请求失败，请点击刷新重试' : '正在检查 MCP 握手和工具列表')}>
+              <Tag color={color}>{label}</Tag>
+            </Tooltip>
+          } },
           { title: '地址', render: (_, item) => <Button type="link" icon={<CopyOutlined />} onClick={() => copy(item.gatewayUrl)}>复制地址</Button> },
           { title: '操作', render: (_, item) => <Space>
             <Button type="link" onClick={() => navigate(`/ai-resources/mcp-connections/${item.id}/usage`)}>调用统计</Button>

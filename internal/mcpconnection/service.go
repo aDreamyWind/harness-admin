@@ -102,6 +102,11 @@ type GatewayConnection struct {
 	ServiceStatus         string
 	UpstreamURL           string
 	Transport             string
+	SourceType            string
+	RuntimeType           string
+	EntryFile             string
+	ContainerName         string
+	DeploymentStatus      string
 	SecretHash            []byte
 	UpstreamAuthorization string
 	UpstreamHeaderName    string
@@ -140,11 +145,25 @@ type Usage struct {
 	AverageMS      int64  `json:"averageMs"`
 }
 
+// Health describes a single, on-demand upstream MCP protocol check. It does not execute a tool.
+type Health struct {
+	ConnectionID string    `json:"connectionId"`
+	Status       string    `json:"status"`
+	Message      string    `json:"message"`
+	ToolCount    int       `json:"toolCount"`
+	CheckedAt    time.Time `json:"checkedAt"`
+}
+
+type HealthProber interface {
+	ListTools(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) ([]mcpadmin.Tool, error)
+}
+
 type Repository interface {
 	List(context.Context, string) ([]Connection, error)
 	Create(context.Context, CreateInput) (Connection, error)
 	ReplaceGrants(context.Context, GrantsInput) (Connection, error)
 	GetByCode(context.Context, string) (GatewayConnection, error)
+	GetByID(context.Context, string, string) (GatewayConnection, error)
 	ChangeStatus(context.Context, Actor, string, string) (Connection, error)
 	RevealSecret(context.Context, Actor, string) (string, error)
 	RevealUpstreamAuthorization(context.Context, Actor, string) (string, error)
@@ -313,10 +332,77 @@ func (s *Service) Lookup(ctx context.Context, code string) (GatewayConnection, e
 		return GatewayConnection{}, err
 	}
 	if item.Status != "active" || item.ServiceStatus != "active" ||
+		(item.Transport == "stdio" && item.DeploymentStatus != "running") ||
 		(item.ExpiresAt != nil && !item.ExpiresAt.After(s.now())) {
 		return GatewayConnection{}, ErrInactive
 	}
 	return item, nil
+}
+
+func (s *Service) CheckHealth(ctx context.Context, organizationID, id string, prober HealthProber) (Health, error) {
+	if organizationID == "" || prober == nil {
+		return Health{}, ErrInvalidInput
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return Health{}, ErrInvalidInput
+	}
+	item, err := s.repository.GetByID(ctx, organizationID, id)
+	if err != nil {
+		return Health{}, err
+	}
+	result := Health{ConnectionID: id, CheckedAt: s.now().UTC()}
+	if item.Status != "active" {
+		result.Status, result.Message = "inactive", "连接已停用"
+		return result, nil
+	}
+	if item.ExpiresAt != nil && !item.ExpiresAt.After(s.now()) {
+		result.Status, result.Message = "inactive", "连接已过期"
+		return result, nil
+	}
+	if item.ServiceStatus != "active" {
+		result.Status, result.Message = "inactive", "MCP 服务已停用"
+		return result, nil
+	}
+	if item.Transport == "stdio" && item.DeploymentStatus != "running" {
+		result.Status, result.Message = "unavailable", "托管服务未运行"
+		return result, nil
+	}
+	service := mcpadmin.ServiceRecord{ID: item.ServiceID, UpstreamURL: item.UpstreamURL, Transport: item.Transport,
+		SourceType: item.SourceType, RuntimeType: item.RuntimeType, EntryFile: item.EntryFile,
+		ContainerName: item.ContainerName, DeploymentStatus: item.DeploymentStatus}
+	credentials := mcpadmin.MergeCredentials(mcpadmin.UpstreamCredentials{Parameters: item.ServiceParameters},
+		mcpadmin.UpstreamCredentials{Authorization: item.UpstreamAuthorization,
+			HeaderName: item.UpstreamHeaderName, HeaderValue: item.UpstreamHeaderValue,
+			QueryName: item.UpstreamQueryName, QueryValue: item.UpstreamQueryValue,
+			Parameters: item.UpstreamParameters})
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	tools, err := prober.ListTools(probeCtx, service, credentials)
+	if err != nil {
+		result.Status, result.Message = "unavailable", "上游握手或读取工具失败，请检查地址、参数和服务状态"
+		return result, nil
+	}
+	result.ToolCount = len(tools)
+	if len(tools) == 0 {
+		result.Status, result.Message = "unavailable", "上游没有可用工具"
+		return result, nil
+	}
+	if len(item.Tools) == 0 {
+		result.Status, result.Message = "unavailable", "尚未发现工具，请刷新工具列表"
+		return result, nil
+	}
+	actual := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		actual[tool.Name] = true
+	}
+	for _, tool := range item.Tools {
+		if !actual[tool.Name] {
+			result.Status, result.Message = "unavailable", "工具列表已变化，请重新发现工具"
+			return result, nil
+		}
+	}
+	result.Status, result.Message = "healthy", "MCP 握手和工具列表正常"
+	return result, nil
 }
 
 func (s *Service) AuthorizeDeveloper(ctx context.Context, item GatewayConnection, credential string) (Caller, error) {
