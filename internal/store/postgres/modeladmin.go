@@ -485,6 +485,63 @@ func (r *ModelAdminRepository) ChangeModelStatus(ctx context.Context, input mode
 	return model, nil
 }
 
+func (r *ModelAdminRepository) BatchChangeModelStatus(ctx context.Context, input modeladmin.BatchChangeModelStatusInput) (modeladmin.BatchChangeModelStatusResult, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return modeladmin.BatchChangeModelStatusResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `
+		SELECT id FROM model_catalog_entries
+		WHERE organization_id = $1
+		  AND id IN (SELECT value::UUID FROM unnest($2::TEXT[]) AS value)
+		FOR UPDATE
+	`, input.OrganizationID, input.ModelIDs)
+	if err != nil {
+		return modeladmin.BatchChangeModelStatusResult{}, err
+	}
+	found := 0
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return modeladmin.BatchChangeModelStatusResult{}, err
+		}
+		found++
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return modeladmin.BatchChangeModelStatusResult{}, err
+	}
+	if found != len(input.ModelIDs) {
+		return modeladmin.BatchChangeModelStatusResult{}, modeladmin.ErrModelNotFound
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE model_catalog_entries
+		SET status = $3, updated_at = NOW()
+		WHERE organization_id = $1
+		  AND id IN (SELECT value::UUID FROM unnest($2::TEXT[]) AS value)
+		  AND status <> $3
+	`, input.OrganizationID, input.ModelIDs, input.Status)
+	if err != nil {
+		return modeladmin.BatchChangeModelStatusResult{}, err
+	}
+	result := modeladmin.BatchChangeModelStatusResult{Changed: int(command.RowsAffected())}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
+		Action: "model.catalog.batch_status_change", ResourceType: "model_catalog", ResourceID: input.OrganizationID,
+		Result: "success", SourceIP: input.SourceIP,
+		Detail: map[string]any{"modelIds": input.ModelIDs, "status": input.Status, "selected": len(input.ModelIDs), "changed": result.Changed},
+	}); err != nil {
+		return modeladmin.BatchChangeModelStatusResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return modeladmin.BatchChangeModelStatusResult{}, err
+	}
+	return result, nil
+}
+
 func findProvider(ctx context.Context, queryer interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, organizationID, providerID string) (modeladmin.Provider, error) {

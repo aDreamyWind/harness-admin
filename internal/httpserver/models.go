@@ -25,6 +25,7 @@ type ModelAdminService interface {
 	CreateModel(context.Context, modeladmin.CreateModelInput) (modeladmin.CatalogModel, error)
 	UpdateModel(context.Context, modeladmin.UpdateModelInput) (modeladmin.CatalogModel, error)
 	ChangeModelStatus(context.Context, modeladmin.ChangeModelStatusInput) (modeladmin.CatalogModel, error)
+	BatchChangeModelStatus(context.Context, modeladmin.BatchChangeModelStatusInput) (modeladmin.BatchChangeModelStatusResult, error)
 	DiscoverModels(context.Context, modeladmin.DiscoverModelsInput) ([]modeladmin.DiscoveredModel, error)
 	ImportModels(context.Context, modeladmin.ImportModelsInput) (modeladmin.ImportModelsResult, error)
 }
@@ -42,6 +43,11 @@ type providerWriteRequest struct {
 
 type statusWriteRequest struct {
 	Status string `json:"status"`
+}
+
+type batchModelStatusRequest struct {
+	ModelIDs []string `json:"modelIds"`
+	Status   string   `json:"status"`
 }
 
 type modelWriteRequest struct {
@@ -108,6 +114,7 @@ func registerModelRoutes(router *gin.Engine, deps Dependencies) {
 	models := router.Group("/api/v1/models", requireSession(deps))
 	models.GET("", requirePermission(deps, "model.catalog.read"), listModelsHandler(deps))
 	models.POST("", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), createModelHandler(deps))
+	models.PATCH("/batch-status", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), batchChangeModelStatusHandler(deps))
 	models.PUT("/:id", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), updateModelHandler(deps))
 	models.PATCH("/:id/status", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), changeModelStatusHandler(deps))
 }
@@ -364,6 +371,26 @@ func changeModelStatusHandler(deps Dependencies) gin.HandlerFunc {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, presentModel(model))
+	}
+}
+
+func batchChangeModelStatusHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		var request batchModelStatusRequest
+		if !bindModelJSON(ctx, &request) {
+			return
+		}
+		session := currentSession(ctx)
+		result, err := deps.ModelAdmin.BatchChangeModelStatus(ctx.Request.Context(), modeladmin.BatchChangeModelStatusInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID,
+			ModelIDs: request.ModelIDs, Status: request.Status,
+			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if err != nil {
+			handleModelAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, result)
 	}
 }
 

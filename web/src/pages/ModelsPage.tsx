@@ -33,6 +33,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 
 import { ApiError } from '../api/client'
 import {
+  batchChangeModelStatus,
   changeModelProviderStatus,
   changeModelStatus,
   createModel,
@@ -95,6 +96,9 @@ export function ModelsPage() {
   const [discovered, setDiscovered] = useState<DiscoveredModel[]>([])
   const [selectedImportIds, setSelectedImportIds] = useState<string[]>([])
   const [activateImportedModels, setActivateImportedModels] = useState(false)
+  const [modelTypeFilter, setModelTypeFilter] = useState<ModelType | 'all'>('all')
+  const [modelStatusFilter, setModelStatusFilter] = useState<ModelCatalogEntry['status'] | 'all'>('all')
+  const [selectedModelIds, setSelectedModelIds] = useState<string[]>([])
   const [editingProvider, setEditingProvider] = useState<ModelProvider | null>(null)
   const [editingModel, setEditingModel] = useState<ModelCatalogEntry | null>(null)
   const [revealedProviderSecret, setRevealedProviderSecret] = useState<{ name: string; secret: string } | null>(null)
@@ -147,6 +151,15 @@ export function ModelsPage() {
     onSuccess: async () => { messageApi.success('模型状态已更新'); await queryClient.invalidateQueries({ queryKey: ['model-catalog'] }) },
     onError: (error) => messageApi.error(errorMessage(error, '模型状态更新失败')),
   })
+  const batchModelStatus = useMutation({
+    mutationFn: ({ modelIds, status }: { modelIds: string[]; status: ModelCatalogEntry['status'] }) => batchChangeModelStatus(modelIds, status),
+    onSuccess: async (result) => {
+      messageApi.success(`已修改 ${result.changed} 个模型的目录状态`)
+      setSelectedModelIds([])
+      await queryClient.invalidateQueries({ queryKey: ['model-catalog'] })
+    },
+    onError: (error) => messageApi.error(errorMessage(error, '批量修改模型状态失败')),
+  })
   const discoverModels = useMutation({
     mutationFn: discoverProviderModels,
     onSuccess: (items) => { setDiscovered(items); setSelectedImportIds([]) },
@@ -163,6 +176,10 @@ export function ModelsPage() {
   const activeProviders = providers.filter((item) => item.status === 'active').length
   const healthyProviders = providers.filter((item) => item.lastProbeStatus === 'success').length
   const activeModels = models.filter((item) => item.status === 'active').length
+  const filteredModels = models.filter((item) =>
+    (modelTypeFilter === 'all' || item.modelType === modelTypeFilter) &&
+    (modelStatusFilter === 'all' || item.status === modelStatusFilter),
+  )
 
   function openProviderCreate() {
     setEditingProvider(null)
@@ -288,7 +305,24 @@ export function ModelsPage() {
         action={canWriteModels ? <Space><Button disabled={!activeProviders} onClick={() => { setImportProviderId(providers.find((item) => item.status === 'active')?.id ?? ''); setDiscovered([]); setSelectedImportIds([]); setActivateImportedModels(false); discoverModels.reset(); importModels.reset(); setImportModalOpen(true) }}>从供应商导入</Button><Button type="primary" icon={<PlusOutlined />} disabled={!activeProviders} onClick={openModelCreate}>登记模型</Button></Space> : undefined}
         error={modelsQuery.isError ? errorMessage(modelsQuery.error, '模型目录加载失败') : ''}
         retry={() => modelsQuery.refetch()}
-      ><Table<ModelCatalogEntry> rowKey="id" columns={modelColumns} dataSource={models} loading={modelsQuery.isLoading} pagination={false} scroll={{ x: 1050 }} locale={{ emptyText: providers.length ? '尚未登记模型' : '请先接入供应商，再登记模型' }} /></ResourceTable>,
+      >
+        <Space wrap style={{ marginBottom: 16 }}>
+          <Select aria-label="按模型类型筛选" style={{ width: 150 }} value={modelTypeFilter} options={[{ value: 'all', label: '全部类型' }, ...Object.entries(modelTypeLabels).map(([value, label]) => ({ value, label }))]} onChange={(value: ModelType | 'all') => { setModelTypeFilter(value); setSelectedModelIds([]) }} />
+          <Select aria-label="按目录状态筛选" style={{ width: 150 }} value={modelStatusFilter} options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }]} onChange={(value: ModelCatalogEntry['status'] | 'all') => { setModelStatusFilter(value); setSelectedModelIds([]) }} />
+          <Text type="secondary">共 {filteredModels.length} 个，已选 {selectedModelIds.length} 个</Text>
+          {canWriteModels ? <>
+            <Button disabled={!filteredModels.length} onClick={() => setSelectedModelIds(filteredModels.slice(0, 500).map((item) => item.id))}>{filteredModels.length > 500 ? '选中前 500 个' : '选中筛选结果'}</Button>
+            <Button disabled={!selectedModelIds.length} onClick={() => setSelectedModelIds([])}>清空选择</Button>
+            <Popconfirm title={`启用选中的 ${selectedModelIds.length} 个模型？`} description="非对话模型启用后仍仅在目录中可用。" onConfirm={() => batchModelStatus.mutate({ modelIds: selectedModelIds, status: 'active' })}>
+              <Button type="primary" disabled={!selectedModelIds.length || batchModelStatus.isPending} loading={batchModelStatus.isPending && batchModelStatus.variables?.status === 'active'}>批量启用</Button>
+            </Popconfirm>
+            <Popconfirm title={`停用选中的 ${selectedModelIds.length} 个模型？`} onConfirm={() => batchModelStatus.mutate({ modelIds: selectedModelIds, status: 'disabled' })}>
+              <Button danger disabled={!selectedModelIds.length || batchModelStatus.isPending} loading={batchModelStatus.isPending && batchModelStatus.variables?.status === 'disabled'}>批量停用</Button>
+            </Popconfirm>
+          </> : null}
+        </Space>
+        <Table<ModelCatalogEntry> rowKey="id" columns={modelColumns} dataSource={filteredModels} loading={modelsQuery.isLoading} pagination={{ defaultPageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 个模型` }} rowSelection={canWriteModels ? { selectedRowKeys: selectedModelIds, preserveSelectedRowKeys: true, onChange: (keys) => { if (keys.length > 500) { messageApi.warning('每次最多选择 500 个模型'); return }; setSelectedModelIds(keys.map(String)) } } : undefined} scroll={{ x: 1050 }} locale={{ emptyText: models.length ? '没有符合条件的模型' : providers.length ? '尚未登记模型' : '请先接入供应商，再登记模型' }} />
+      </ResourceTable>,
     } : null,
   ].filter(Boolean) as Array<{ key: string; label: string; children: ReactNode }>
 

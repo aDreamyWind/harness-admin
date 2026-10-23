@@ -129,6 +129,19 @@ type ChangeModelStatusInput struct {
 	SourceIP       string
 }
 
+type BatchChangeModelStatusInput struct {
+	OrganizationID string
+	ActorID        string
+	ModelIDs       []string
+	Status         string
+	RequestID      string
+	SourceIP       string
+}
+
+type BatchChangeModelStatusResult struct {
+	Changed int `json:"changed"`
+}
+
 type ProbeInput struct {
 	OrganizationID string
 	ActorID        string
@@ -200,6 +213,7 @@ type Repository interface {
 	CreateModel(context.Context, CreateModelInput) (CatalogModel, error)
 	UpdateModel(context.Context, UpdateModelInput) (CatalogModel, error)
 	ChangeModelStatus(context.Context, ChangeModelStatusInput) (CatalogModel, error)
+	BatchChangeModelStatus(context.Context, BatchChangeModelStatusInput) (BatchChangeModelStatusResult, error)
 	ImportModels(context.Context, ImportModelsInput, []DiscoveredModel) (ImportModelsResult, error)
 }
 

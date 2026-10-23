@@ -16,6 +16,7 @@ type repositoryStub struct {
 	err             error
 	importInput     ImportModelsInput
 	importModels    []DiscoveredModel
+	batchStatus     BatchChangeModelStatusInput
 }
 
 func (r *repositoryStub) ListProviders(context.Context, string) ([]Provider, error) {
@@ -54,6 +55,10 @@ func (r *repositoryStub) UpdateModel(context.Context, UpdateModelInput) (Catalog
 }
 func (r *repositoryStub) ChangeModelStatus(context.Context, ChangeModelStatusInput) (CatalogModel, error) {
 	return CatalogModel{}, r.err
+}
+func (r *repositoryStub) BatchChangeModelStatus(_ context.Context, input BatchChangeModelStatusInput) (BatchChangeModelStatusResult, error) {
+	r.batchStatus = input
+	return BatchChangeModelStatusResult{Changed: len(input.ModelIDs)}, r.err
 }
 func (r *repositoryStub) ImportModels(_ context.Context, input ImportModelsInput, models []DiscoveredModel) (ImportModelsResult, error) {
 	r.importInput, r.importModels = input, models
@@ -187,6 +192,24 @@ func TestImportModelsUsesFreshDiscoveryAndKeepsImageType(t *testing.T) {
 		UpstreamModelIDs: []string{"client-forged-model"},
 	}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("不在上游列表中的模型应被拒绝: %v", err)
+	}
+}
+
+func TestBatchChangeModelStatusValidatesAndDelegates(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository, proberStub{})
+	id1 := "20000000-0000-4000-8000-000000000001"
+	id2 := "20000000-0000-4000-8000-000000000002"
+	input := BatchChangeModelStatusInput{OrganizationID: "org-1", ActorID: "user-1", ModelIDs: []string{id1, id2}, Status: "active"}
+	result, err := service.BatchChangeModelStatus(context.Background(), input)
+	if err != nil || result.Changed != 2 || repository.batchStatus.OrganizationID != "org-1" {
+		t.Fatalf("批量修改未传递当前企业与模型: result=%#v input=%#v err=%v", result, repository.batchStatus, err)
+	}
+	for _, ids := range [][]string{{}, {id1, id1}, {"not-a-uuid"}} {
+		input.ModelIDs = ids
+		if _, err := service.BatchChangeModelStatus(context.Background(), input); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("非法模型列表 %#v 应被拒绝: %v", ids, err)
+		}
 	}
 }
 

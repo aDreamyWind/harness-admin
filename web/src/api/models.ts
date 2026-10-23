@@ -129,3 +129,9 @@ export function changeModelStatus(id: string, status: ModelCatalogEntry['status'
     method: 'PATCH', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ status }),
   })
 }
+
+export function batchChangeModelStatus(modelIds: string[], status: ModelCatalogEntry['status']) {
+  return request<{ changed: number }>('/api/v1/models/batch-status', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ modelIds, status }),
+  })
+}

@@ -19,6 +19,7 @@ type modelAdminStub struct {
 	createModelInput    modeladmin.CreateModelInput
 	revealInput         modeladmin.RevealProviderCredentialInput
 	importInput         modeladmin.ImportModelsInput
+	batchStatusInput    modeladmin.BatchChangeModelStatusInput
 }
 
 func (*modelAdminStub) ListProviders(context.Context, string) ([]modeladmin.Provider, error) {
@@ -55,12 +56,30 @@ func (*modelAdminStub) UpdateModel(context.Context, modeladmin.UpdateModelInput)
 func (*modelAdminStub) ChangeModelStatus(context.Context, modeladmin.ChangeModelStatusInput) (modeladmin.CatalogModel, error) {
 	return modeladmin.CatalogModel{}, nil
 }
+func (s *modelAdminStub) BatchChangeModelStatus(_ context.Context, input modeladmin.BatchChangeModelStatusInput) (modeladmin.BatchChangeModelStatusResult, error) {
+	s.batchStatusInput = input
+	return modeladmin.BatchChangeModelStatusResult{Changed: len(input.ModelIDs)}, nil
+}
 func (*modelAdminStub) DiscoverModels(context.Context, modeladmin.DiscoverModelsInput) ([]modeladmin.DiscoveredModel, error) {
 	return []modeladmin.DiscoveredModel{{UpstreamModelID: "qwen-image", ModelType: "image"}}, nil
 }
 func (s *modelAdminStub) ImportModels(_ context.Context, input modeladmin.ImportModelsInput) (modeladmin.ImportModelsResult, error) {
 	s.importInput = input
 	return modeladmin.ImportModelsResult{Imported: 1}, nil
+}
+
+func TestBatchChangeModelStatusUsesSessionScope(t *testing.T) {
+	models := &modelAdminStub{}
+	router := newModelTestRouter(models)
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/models/batch-status", strings.NewReader(`{"modelIds":["20000000-0000-4000-8000-000000000001"],"status":"active"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || models.batchStatusInput.OrganizationID != "org-1" || models.batchStatusInput.ActorID != "user-1" || len(models.batchStatusInput.ModelIDs) != 1 || models.batchStatusInput.Status != "active" {
+		t.Fatalf("批量状态修改未使用当前会话作用域: status=%d input=%#v body=%s", response.Code, models.batchStatusInput, response.Body.String())
+	}
 }
 
 func TestImportProviderModelsUsesSessionScope(t *testing.T) {

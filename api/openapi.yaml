@@ -1266,6 +1266,46 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ModelCatalogEnvelope' }
         '409': { description: 模型编码或供应商侧模型标识已存在。 }
+  /models/batch-status:
+    patch:
+      summary: 批量启用或停用模型目录项
+      description: 仅处理当前企业的模型；一个或多个 ID 不存在时整批不修改。已处于目标状态的模型不计入 changed。需要 model.catalog.write 权限。
+      operationId: batchChangeModelStatus
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [modelIds, status]
+              properties:
+                modelIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        '200':
+          description: 批量修改已提交。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [changed]
+                    properties:
+                      changed: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 一个或多个模型不存在或不属于当前企业；整批不修改。 }
   /models/{modelId}:
     put:
       summary: 修改模型目录项

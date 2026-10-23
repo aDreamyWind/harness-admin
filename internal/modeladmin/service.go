@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 var codePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,79}$`)
@@ -280,6 +282,32 @@ func (s *Service) ChangeModelStatus(ctx context.Context, input ChangeModelStatus
 		return CatalogModel{}, fmt.Errorf("修改模型状态失败: %w", err)
 	}
 	return model, nil
+}
+
+func (s *Service) BatchChangeModelStatus(ctx context.Context, input BatchChangeModelStatusInput) (BatchChangeModelStatusResult, error) {
+	if input.OrganizationID == "" || input.ActorID == "" || !validStatus(input.Status) || len(input.ModelIDs) == 0 || len(input.ModelIDs) > 500 {
+		return BatchChangeModelStatusResult{}, ErrInvalidInput
+	}
+	seen := make(map[string]struct{}, len(input.ModelIDs))
+	for _, id := range input.ModelIDs {
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return BatchChangeModelStatusResult{}, ErrInvalidInput
+		}
+		normalized := parsed.String()
+		if _, exists := seen[normalized]; exists {
+			return BatchChangeModelStatusResult{}, ErrInvalidInput
+		}
+		seen[normalized] = struct{}{}
+	}
+	result, err := s.repository.BatchChangeModelStatus(ctx, input)
+	if err != nil {
+		if errors.Is(err, ErrModelNotFound) {
+			return BatchChangeModelStatusResult{}, err
+		}
+		return BatchChangeModelStatusResult{}, fmt.Errorf("批量修改模型状态失败: %w", err)
+	}
+	return result, nil
 }
 
 func normalizeProviderCreate(input *CreateProviderInput) {
