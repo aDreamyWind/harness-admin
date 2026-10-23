@@ -14,6 +14,7 @@ import (
 
 	"harness-admin/internal/mcpadmin"
 	"harness-admin/internal/mcpconnection"
+	"harness-admin/internal/oidc"
 )
 
 type mcpConnectionsStub struct {
@@ -82,10 +83,12 @@ func (*mcpConnectionsStub) ListUsage(context.Context, string) ([]mcpconnection.U
 type mcpToolCallerStub struct {
 	credentials mcpadmin.UpstreamCredentials
 	name        string
+	calls       int
 }
 
 func (s *mcpToolCallerStub) CallTool(_ context.Context, _ mcpadmin.ServiceRecord, credentials mcpadmin.UpstreamCredentials, name string, _ json.RawMessage) (json.RawMessage, error) {
 	s.credentials, s.name = credentials, name
+	s.calls++
 	return json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`), nil
 }
 func (*mcpToolCallerStub) ListTools(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) ([]mcpadmin.Tool, error) {
@@ -190,5 +193,138 @@ func TestMCPGatewayRejectsInvalidDeveloperCredential(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized || connections.recorded.ToolName != "" {
 		t.Fatalf("错误凭据未拒绝: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+type mcpEmployeeProviderStub struct{ oidcProviderStub }
+
+func (*mcpEmployeeProviderStub) AuthenticateAccessToken(_ context.Context, token, scope string) (oidc.Subject, error) {
+	if scope != "mcp.invoke" || token == "no-scope" || token == "" {
+		return oidc.Subject{}, oidc.ErrInvalidToken
+	}
+	if token == "allowed" {
+		return oidc.Subject{ID: "user-1", OrganizationID: "org-1"}, nil
+	}
+	if token == "other" {
+		return oidc.Subject{ID: "user-2", OrganizationID: "org-1"}, nil
+	}
+	return oidc.Subject{}, oidc.ErrInvalidToken
+}
+
+type mcpEmployeeConnectionsStub struct {
+	*mcpConnectionsStub
+	grantActive bool
+}
+
+func (s *mcpEmployeeConnectionsStub) AuthorizeUser(_ context.Context, _ mcpconnection.GatewayConnection, organizationID, userID string) (mcpconnection.Caller, error) {
+	if organizationID != "org-1" || userID != "user-1" || !s.grantActive {
+		return mcpconnection.Caller{}, mcpconnection.ErrForbidden
+	}
+	return mcpconnection.Caller{UserID: userID, DepartmentID: "department-1"}, nil
+}
+
+func (s *mcpEmployeeConnectionsStub) ListForUser(_ context.Context, organizationID, userID string) ([]mcpconnection.Connection, error) {
+	if organizationID != "org-1" || userID != "user-1" || !s.grantActive {
+		return nil, nil
+	}
+	return []mcpconnection.Connection{{Code: "employee_mcp", Name: "员工测试连接", ServiceName: "托管 MCP"}}, nil
+}
+
+func TestMCPEmployeeGatewayAndDirectoryEnforceScopeGrantAndRevocation(t *testing.T) {
+	connections := &mcpEmployeeConnectionsStub{
+		mcpConnectionsStub: &mcpConnectionsStub{route: mcpconnection.GatewayConnection{
+			Connection: mcpconnection.Connection{ID: "connection-1", Code: "employee_mcp", Name: "员工测试连接",
+				Purpose: "harness", AuthMode: "oidc", Status: "active"},
+			OrganizationID: "org-1", ServiceStatus: "active", Transport: "stdio", SourceType: "github",
+			DeploymentStatus: "running", Tools: []mcpadmin.Tool{{Name: "read_only_tool", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		}},
+		grantActive: true,
+	}
+	toolCaller := &mcpToolCallerStub{}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
+		MCPConnections: connections, MCPToolCaller: toolCaller, OIDCProvider: &mcpEmployeeProviderStub{},
+	})
+	server := httptest.NewServer(router)
+	defer server.Close()
+	directory := func(token string) (int, string) {
+		request, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/mcp/connections", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response.StatusCode, string(body)
+	}
+	status, body := directory("no-scope")
+	if status != http.StatusUnauthorized {
+		t.Fatalf("缺少 mcp.invoke 的目录请求未拒绝: %d %s", status, body)
+	}
+	status, body = directory("allowed")
+	if status != http.StatusOK || !strings.Contains(body, `"code":"employee_mcp"`) ||
+		!strings.Contains(body, `"url":"https://id.example.com/mcp/employee_mcp"`) {
+		t.Fatalf("获授权员工目录不正确: %d %s", status, body)
+	}
+	status, body = directory("other")
+	if status != http.StatusOK || strings.Contains(body, "employee_mcp") {
+		t.Fatalf("未授权员工看到了连接: %d %s", status, body)
+	}
+	gatewayStatus := func(token, payload string) int {
+		request, err := http.NewRequest(http.MethodPost, server.URL+"/mcp/employee_mcp", strings.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json, text/event-stream")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, response.Body)
+		return response.StatusCode
+	}
+	listPayload := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	callPayload := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_only_tool","arguments":{}}}`
+	if got := gatewayStatus("no-scope", listPayload); got != http.StatusUnauthorized {
+		t.Fatalf("缺少 mcp.invoke 的网关请求未拒绝: %d", got)
+	}
+	if got := gatewayStatus("other", callPayload); got != http.StatusForbidden || toolCaller.calls != 0 {
+		t.Fatalf("未授权员工的网关请求未拒绝: %d", got)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "employee-test", Version: "1.0"}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint: server.URL + "/mcp/employee_mcp", HTTPClient: &http.Client{Transport: bearerTransport{token: "allowed"}},
+		DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("获授权员工连接失败: %v", err)
+	}
+	defer session.Close()
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "read_only_tool" {
+		t.Fatalf("员工工具目录不正确: %#v, %v", tools, err)
+	}
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "read_only_tool", Arguments: map[string]any{}})
+	if err != nil || result.IsError || connections.recorded.UserID != "user-1" || connections.recorded.DepartmentID != "department-1" {
+		t.Fatalf("员工调用或统计身份不正确: result=%#v err=%v record=%#v", result, err, connections.recorded)
+	}
+	connections.grantActive = false
+	status, body = directory("allowed")
+	if status != http.StatusOK || strings.Contains(body, "employee_mcp") {
+		t.Fatalf("撤权后目录仍可见: %d %s", status, body)
+	}
+	if got := gatewayStatus("allowed", callPayload); got != http.StatusForbidden || toolCaller.calls != 1 {
+		t.Fatalf("撤权后网关仍可调用: %d", got)
 	}
 }

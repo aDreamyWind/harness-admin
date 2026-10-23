@@ -308,8 +308,8 @@ func mcpGatewayHandler(deps Dependencies) gin.HandlerFunc {
 		credential := bearerCredential(ctx.GetHeader("Authorization"))
 		var caller mcpconnection.Caller
 		if route.Purpose == "harness" {
-			subject, err := deps.OIDCProvider.AuthenticateAccessToken(ctx.Request.Context(), credential, "mcp.invoke")
-			if err != nil {
+			subject, tokenErr := deps.OIDCProvider.AuthenticateAccessToken(ctx.Request.Context(), credential, "mcp.invoke")
+			if tokenErr != nil {
 				ctx.Header("WWW-Authenticate", "Bearer")
 				httpx.Fail(ctx, http.StatusUnauthorized, "invalid_token", "请使用具有 MCP 调用权限的员工访问令牌")
 				return

@@ -2266,6 +2266,7 @@ paths:
         '200': { description: MCP JSON-RPC 响应，可为 text/event-stream。 }
         '401': { description: 入口密钥或员工令牌无效。 }
         '403': { description: 员工未获授权。 }
+        '409': { description: MCP 连接已停用、过期，或所属服务不可用；工具尚未发现时也返回此状态。 }
         '429': { description: 超过连接每分钟请求上限。 }
     get:
       summary: MCP 网关可选事件流入口
