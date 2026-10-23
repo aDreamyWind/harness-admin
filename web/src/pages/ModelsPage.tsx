@@ -306,21 +306,32 @@ export function ModelsPage() {
         error={modelsQuery.isError ? errorMessage(modelsQuery.error, '模型目录加载失败') : ''}
         retry={() => modelsQuery.refetch()}
       >
-        <Space wrap style={{ marginBottom: 16 }}>
-          <Select aria-label="按模型类型筛选" style={{ width: 150 }} value={modelTypeFilter} options={[{ value: 'all', label: '全部类型' }, ...Object.entries(modelTypeLabels).map(([value, label]) => ({ value, label }))]} onChange={(value: ModelType | 'all') => { setModelTypeFilter(value); setSelectedModelIds([]) }} />
-          <Select aria-label="按目录状态筛选" style={{ width: 150 }} value={modelStatusFilter} options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }]} onChange={(value: ModelCatalogEntry['status'] | 'all') => { setModelStatusFilter(value); setSelectedModelIds([]) }} />
-          <Text type="secondary">共 {filteredModels.length} 个，已选 {selectedModelIds.length} 个</Text>
-          {canWriteModels ? <>
-            <Button disabled={!filteredModels.length} onClick={() => setSelectedModelIds(filteredModels.slice(0, 500).map((item) => item.id))}>{filteredModels.length > 500 ? '选中前 500 个' : '选中筛选结果'}</Button>
-            <Button disabled={!selectedModelIds.length} onClick={() => setSelectedModelIds([])}>清空选择</Button>
+        <div className="model-catalog-controls">
+          <div className="model-catalog-filters">
+            <span className="model-catalog-filter-label">筛选模型</span>
+            <Select aria-label="按模型类型筛选" value={modelTypeFilter} options={[{ value: 'all', label: '全部类型' }, ...Object.entries(modelTypeLabels).map(([value, label]) => ({ value, label }))]} onChange={(value: ModelType | 'all') => { setModelTypeFilter(value); setSelectedModelIds([]) }} />
+            <Select aria-label="按目录状态筛选" value={modelStatusFilter} options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }]} onChange={(value: ModelCatalogEntry['status'] | 'all') => { setModelStatusFilter(value); setSelectedModelIds([]) }} />
+          </div>
+          <div className="model-catalog-results">
+            <span>显示 <strong>{filteredModels.length}</strong> 个模型</span>
+            {canWriteModels ? <Button type="link" size="small" disabled={!filteredModels.length} onClick={() => setSelectedModelIds(filteredModels.slice(0, 500).map((item) => item.id))}>{filteredModels.length > 500 ? '选中前 500 个' : '选中筛选结果'}</Button> : null}
+          </div>
+        </div>
+        {canWriteModels && selectedModelIds.length > 0 ? <div className="model-catalog-selection-bar">
+          <div className="model-catalog-selection-summary">
+            <strong>{selectedModelIds.length}</strong>
+            <span>个模型已选</span>
+            <Button type="link" size="small" onClick={() => setSelectedModelIds([])}>清空选择</Button>
+          </div>
+          <div className="model-catalog-selection-actions">
             <Popconfirm title={`启用选中的 ${selectedModelIds.length} 个模型？`} description="非对话模型启用后仍仅在目录中可用。" onConfirm={() => batchModelStatus.mutate({ modelIds: selectedModelIds, status: 'active' })}>
-              <Button type="primary" disabled={!selectedModelIds.length || batchModelStatus.isPending} loading={batchModelStatus.isPending && batchModelStatus.variables?.status === 'active'}>批量启用</Button>
+              <Button type="primary" disabled={batchModelStatus.isPending} loading={batchModelStatus.isPending && batchModelStatus.variables?.status === 'active'}>批量启用</Button>
             </Popconfirm>
             <Popconfirm title={`停用选中的 ${selectedModelIds.length} 个模型？`} onConfirm={() => batchModelStatus.mutate({ modelIds: selectedModelIds, status: 'disabled' })}>
-              <Button danger disabled={!selectedModelIds.length || batchModelStatus.isPending} loading={batchModelStatus.isPending && batchModelStatus.variables?.status === 'disabled'}>批量停用</Button>
+              <Button danger disabled={batchModelStatus.isPending} loading={batchModelStatus.isPending && batchModelStatus.variables?.status === 'disabled'}>批量停用</Button>
             </Popconfirm>
-          </> : null}
-        </Space>
+          </div>
+        </div> : null}
         <Table<ModelCatalogEntry> rowKey="id" columns={modelColumns} dataSource={filteredModels} loading={modelsQuery.isLoading} pagination={{ defaultPageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 个模型` }} rowSelection={canWriteModels ? { selectedRowKeys: selectedModelIds, preserveSelectedRowKeys: true, onChange: (keys) => { if (keys.length > 500) { messageApi.warning('每次最多选择 500 个模型'); return }; setSelectedModelIds(keys.map(String)) } } : undefined} scroll={{ x: 1050 }} locale={{ emptyText: models.length ? '没有符合条件的模型' : providers.length ? '尚未登记模型' : '请先接入供应商，再登记模型' }} />
       </ResourceTable>,
     } : null,

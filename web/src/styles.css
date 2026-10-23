@@ -2327,6 +2327,82 @@ select {
   font-size: 11px;
 }
 
+.model-catalog-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 64px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #e5ebf0;
+  background: #f8fafc;
+}
+
+.model-catalog-filters,
+.model-catalog-results,
+.model-catalog-selection-summary,
+.model-catalog-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.model-catalog-filter-label {
+  margin-right: 4px;
+  color: #62748a;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.model-catalog-filters .ant-select {
+  width: 150px;
+}
+
+.model-catalog-results {
+  color: #718197;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.model-catalog-results strong {
+  color: #26364b;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-catalog-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #dbe8fa;
+  background: #eff5ff;
+}
+
+.model-catalog-selection-summary {
+  color: #335883;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.model-catalog-selection-summary strong {
+  display: grid;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: 6px;
+  background: #dbeaff;
+  color: #2457a2;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-catalog-selection-summary .ant-btn {
+  margin-left: 4px;
+}
+
 .model-resource-name {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
@@ -3130,6 +3206,33 @@ select {
   .model-resource-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .model-catalog-controls,
+  .model-catalog-selection-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .model-catalog-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .model-catalog-filter-label {
+    grid-column: 1 / -1;
+  }
+
+  .model-catalog-filters .ant-select {
+    width: 100%;
+  }
+
+  .model-catalog-results {
+    justify-content: space-between;
+  }
+
+  .model-catalog-selection-actions > * {
+    flex: 1;
   }
 
   .model-form-grid {
