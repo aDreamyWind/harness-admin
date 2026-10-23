@@ -14,6 +14,8 @@ type repositoryStub struct {
 	credential      ProviderCredential
 	probeResult     ProbeResult
 	err             error
+	importInput     ImportModelsInput
+	importModels    []DiscoveredModel
 }
 
 func (r *repositoryStub) ListProviders(context.Context, string) ([]Provider, error) {
@@ -53,11 +55,18 @@ func (r *repositoryStub) UpdateModel(context.Context, UpdateModelInput) (Catalog
 func (r *repositoryStub) ChangeModelStatus(context.Context, ChangeModelStatusInput) (CatalogModel, error) {
 	return CatalogModel{}, r.err
 }
+func (r *repositoryStub) ImportModels(_ context.Context, input ImportModelsInput, models []DiscoveredModel) (ImportModelsResult, error) {
+	r.importInput, r.importModels = input, models
+	return ImportModelsResult{Imported: len(models)}, r.err
+}
 
 type proberStub struct{ err error }
 
 func (p proberStub) Probe(context.Context, ProviderCredential) (ProbeResult, error) {
 	return ProbeResult{Status: "success", LatencyMS: 12, CheckedAt: time.Now()}, p.err
+}
+func (p proberStub) Discover(context.Context, ProviderCredential) ([]DiscoveredModel, error) {
+	return []DiscoveredModel{{UpstreamModelID: "qwen-image", Name: "Qwen Image", ModelType: "image"}}, p.err
 }
 
 func TestCreateProviderNormalizesInput(t *testing.T) {
@@ -101,6 +110,29 @@ func TestUpdateProviderAcceptsKnownProviderKind(t *testing.T) {
 	}
 }
 
+func TestUpdateProviderModelListURL(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository, proberStub{})
+	endpoint := " https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/models "
+	_, err := service.UpdateProvider(context.Background(), UpdateProviderInput{
+		OrganizationID: "org-1", ActorID: "user-1", ProviderID: "provider-1",
+		Name: "百炼", ProviderKind: "aliyun_bailian", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		ModelListURL: &endpoint, RequestTimeoutMS: 15000,
+	})
+	if err != nil || repository.updatedProvider.ModelListURL == nil || *repository.updatedProvider.ModelListURL != "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/models" {
+		t.Fatalf("模型目录地址未正确传递: input=%#v err=%v", repository.updatedProvider, err)
+	}
+	bad := "https://user:secret@example.com/api/v1/models"
+	_, err = service.UpdateProvider(context.Background(), UpdateProviderInput{
+		OrganizationID: "org-1", ActorID: "user-1", ProviderID: "provider-1",
+		Name: "百炼", ProviderKind: "aliyun_bailian", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		ModelListURL: &bad, RequestTimeoutMS: 15000,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("含账号信息的目录地址应被拒绝: %v", err)
+	}
+}
+
 func TestCreateProviderRejectsUnknownProviderKind(t *testing.T) {
 	service := NewService(&repositoryStub{}, proberStub{})
 	_, err := service.CreateProvider(context.Background(), CreateProviderInput{
@@ -134,5 +166,36 @@ func TestProbeDisabledProvider(t *testing.T) {
 	_, err := service.ProbeProvider(context.Background(), ProbeInput{OrganizationID: "org-1", ActorID: "user-1", ProviderID: "provider-1"})
 	if !errors.Is(err, ErrProviderDisabled) {
 		t.Fatalf("错误 = %v，期望 ErrProviderDisabled", err)
+	}
+}
+
+func TestImportModelsUsesFreshDiscoveryAndKeepsImageType(t *testing.T) {
+	repository := &repositoryStub{credential: ProviderCredential{Provider: Provider{Status: "active", Code: "bailian"}}}
+	service := NewService(repository, proberStub{})
+	result, err := service.ImportModels(context.Background(), ImportModelsInput{
+		OrganizationID: "org-1", ActorID: "user-1", ProviderID: "provider-1",
+		UpstreamModelIDs: []string{"qwen-image"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 1 || len(repository.importModels) != 1 || repository.importModels[0].ModelType != "image" {
+		t.Fatalf("导入结果不正确: result=%#v models=%#v", result, repository.importModels)
+	}
+	if _, err := service.ImportModels(context.Background(), ImportModelsInput{
+		OrganizationID: "org-1", ActorID: "user-1", ProviderID: "provider-1",
+		UpstreamModelIDs: []string{"client-forged-model"},
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("不在上游列表中的模型应被拒绝: %v", err)
+	}
+}
+
+func TestImportedModelCodeStableAndDistinct(t *testing.T) {
+	first := ImportedModelCode("bailian", "qwen/image-v1")
+	if first != ImportedModelCode("bailian", "qwen/image-v1") || first == ImportedModelCode("bailian", "qwen_image-v1") || len(first) > 80 {
+		t.Fatalf("导入编码不稳定或发生碰撞: %q", first)
+	}
+	if ImportedModelCode("long-provider-code-with-shared-prefix-aaaaaaaaaaaaaaaaaaaaaa-left", "same-model") == ImportedModelCode("long-provider-code-with-shared-prefix-aaaaaaaaaaaaaaaaaaaaaa-right", "same-model") {
+		t.Fatal("不同供应商不能生成相同编码")
 	}
 }

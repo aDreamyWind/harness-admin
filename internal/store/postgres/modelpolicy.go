@@ -68,7 +68,10 @@ func (r *ModelPolicyRepository) SavePolicy(ctx context.Context, input modelgatew
 		var missing int
 		err := tx.QueryRow(ctx, `
 			SELECT COUNT(*) FROM unnest($2::TEXT[]) code
-			WHERE NOT EXISTS (SELECT 1 FROM model_catalog_entries m WHERE m.organization_id = $1 AND LOWER(m.code) = code)
+			WHERE NOT EXISTS (SELECT 1 FROM model_catalog_entries m
+				JOIN model_provider_connections p ON p.id = m.provider_connection_id
+				WHERE m.organization_id = $1 AND LOWER(m.code) = code AND m.model_type = 'chat'
+				AND p.provider_kind NOT IN ('claude', 'gemini'))
 		`, input.OrganizationID, input.AllowedModelCodes).Scan(&missing)
 		if err != nil {
 			return modelgateway.SubjectPolicy{}, err
@@ -128,7 +131,10 @@ func (r *ModelPolicyRepository) SaveDepartmentPolicies(ctx context.Context, inpu
 	if len(input.AllowedModelCodes) > 0 {
 		var missing int
 		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM unnest($2::TEXT[]) code
-			WHERE NOT EXISTS (SELECT 1 FROM model_catalog_entries m WHERE m.organization_id = $1 AND LOWER(m.code) = code)`,
+			WHERE NOT EXISTS (SELECT 1 FROM model_catalog_entries m
+				JOIN model_provider_connections p ON p.id = m.provider_connection_id
+				WHERE m.organization_id = $1 AND LOWER(m.code) = code AND m.model_type = 'chat'
+				AND p.provider_kind NOT IN ('claude', 'gemini'))`,
 			input.OrganizationID, input.AllowedModelCodes).Scan(&missing); err != nil {
 			return nil, err
 		}
@@ -254,6 +260,7 @@ func (r *ModelPolicyRepository) ListAvailableModels(ctx context.Context, organiz
 	rows, err := r.pool.Query(ctx, `SELECT m.code, m.name, m.capabilities, m.created_at FROM model_catalog_entries m
 		JOIN model_provider_connections p ON p.organization_id = m.organization_id AND p.id = m.provider_connection_id
 		WHERE m.organization_id = $1 AND m.status = 'active' AND p.status = 'active'
+		  AND m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini')
 		ORDER BY m.code`, organizationID)
 	if err != nil {
 		return nil, err

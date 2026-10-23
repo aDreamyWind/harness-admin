@@ -2,6 +2,8 @@ package modeladmin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -12,6 +14,7 @@ import (
 )
 
 var codePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,79}$`)
+var importedCodeCharacters = regexp.MustCompile(`[^a-z0-9._-]+`)
 
 var allowedCapabilities = map[string]struct{}{
 	"text": {}, "vision": {}, "tools": {}, "streaming": {}, "json": {},
@@ -23,7 +26,12 @@ var allowedProviderKinds = map[string]struct{}{
 	"aliyun_bailian":    {},
 	"kimi":              {},
 	"ollama":            {},
+	"siliconflow":       {},
+	"claude":            {},
+	"gemini":            {},
 }
+
+var allowedModelTypes = map[string]struct{}{"chat": {}, "image": {}, "video": {}, "audio": {}, "embedding": {}, "rerank": {}, "unknown": {}}
 
 type Service struct {
 	repository Repository
@@ -53,7 +61,7 @@ func (s *Service) CreateProvider(ctx context.Context, input CreateProviderInput)
 	if input.RequestTimeoutMS == 0 {
 		input.RequestTimeoutMS = 15000
 	}
-	if !validProvider(input.OrganizationID, input.ActorID, input.Code, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS) || input.APIKey == "" || utf8.RuneCountInString(input.APIKey) > 4096 {
+	if !validProvider(input.OrganizationID, input.ActorID, input.Code, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS) || !validOptionalModelListURL(input.ModelListURL) || input.APIKey == "" || utf8.RuneCountInString(input.APIKey) > 4096 {
 		return Provider{}, ErrInvalidInput
 	}
 	provider, err := s.repository.CreateProvider(ctx, input)
@@ -70,11 +78,15 @@ func (s *Service) UpdateProvider(ctx context.Context, input UpdateProviderInput)
 	input.Name = strings.TrimSpace(input.Name)
 	input.ProviderKind = strings.ToLower(strings.TrimSpace(input.ProviderKind))
 	input.BaseURL = normalizeBaseURL(input.BaseURL)
+	if input.ModelListURL != nil {
+		value := strings.TrimSpace(*input.ModelListURL)
+		input.ModelListURL = &value
+	}
 	if input.APIKey != nil {
 		value := strings.TrimSpace(*input.APIKey)
 		input.APIKey = &value
 	}
-	if !validProviderSettings(input.OrganizationID, input.ActorID, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS) || input.ProviderID == "" || (input.APIKey != nil && (*input.APIKey == "" || utf8.RuneCountInString(*input.APIKey) > 4096)) {
+	if !validProviderSettings(input.OrganizationID, input.ActorID, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS) || input.ProviderID == "" || (input.ModelListURL != nil && !validOptionalModelListURL(*input.ModelListURL)) || (input.APIKey != nil && (*input.APIKey == "" || utf8.RuneCountInString(*input.APIKey) > 4096)) {
 		return Provider{}, ErrInvalidInput
 	}
 	provider, err := s.repository.UpdateProvider(ctx, input)
@@ -155,6 +167,71 @@ func (s *Service) ListModels(ctx context.Context, organizationID string) ([]Cata
 	return items, nil
 }
 
+func (s *Service) DiscoverModels(ctx context.Context, input DiscoverModelsInput) ([]DiscoveredModel, error) {
+	if input.OrganizationID == "" || input.ActorID == "" || input.ProviderID == "" || s.prober == nil {
+		return nil, ErrInvalidInput
+	}
+	credential, err := s.repository.GetProviderCredential(ctx, input.OrganizationID, input.ProviderID)
+	if err != nil {
+		return nil, err
+	}
+	if credential.Provider.Status != "active" {
+		return nil, ErrProviderDisabled
+	}
+	models, err := s.prober.Discover(ctx, credential)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrDiscoveryFailed, err)
+	}
+	return models, nil
+}
+
+func (s *Service) ImportModels(ctx context.Context, input ImportModelsInput) (ImportModelsResult, error) {
+	if len(input.UpstreamModelIDs) == 0 || len(input.UpstreamModelIDs) > 500 {
+		return ImportModelsResult{}, ErrInvalidInput
+	}
+	selected := make(map[string]struct{}, len(input.UpstreamModelIDs))
+	for _, id := range input.UpstreamModelIDs {
+		if !validLength(id, 1, 200) {
+			return ImportModelsResult{}, ErrInvalidInput
+		}
+		selected[id] = struct{}{}
+	}
+	models, err := s.DiscoverModels(ctx, DiscoverModelsInput{input.OrganizationID, input.ActorID, input.ProviderID})
+	if err != nil {
+		return ImportModelsResult{}, err
+	}
+	chosen := make([]DiscoveredModel, 0, len(selected))
+	for _, model := range models {
+		if _, ok := selected[model.UpstreamModelID]; !ok {
+			continue
+		}
+		model.Name = strings.TrimSpace(model.Name)
+		if model.Name == "" {
+			model.Name = model.UpstreamModelID
+		}
+		if !validModelSettings(input.OrganizationID, input.ActorID, input.ProviderID, model.UpstreamModelID, model.Name, model.ModelType, model.Capabilities, model.ContextWindowTokens, model.MaxOutputTokens) {
+			return ImportModelsResult{}, ErrInvalidInput
+		}
+		chosen = append(chosen, model)
+		delete(selected, model.UpstreamModelID)
+	}
+	if len(selected) != 0 {
+		return ImportModelsResult{}, ErrInvalidInput
+	}
+	return s.repository.ImportModels(ctx, input, chosen)
+}
+
+func ImportedModelCode(providerCode, upstreamID string) string {
+	sum := sha256.Sum256([]byte(providerCode + "\x00" + upstreamID))
+	stem := strings.ToLower(providerCode + "_" + upstreamID)
+	stem = importedCodeCharacters.ReplaceAllString(stem, "_")
+	stem = strings.TrimRight(stem, "._-")
+	if len(stem) > 62 {
+		stem = strings.TrimRight(stem[:62], "._-")
+	}
+	return stem + "_" + hex.EncodeToString(sum[:])[:12]
+}
+
 func (s *Service) CreateModel(ctx context.Context, input CreateModelInput) (CatalogModel, error) {
 	normalizeModelCreate(&input)
 	if input.ModelType == "" {
@@ -210,11 +287,23 @@ func normalizeProviderCreate(input *CreateProviderInput) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.ProviderKind = strings.ToLower(strings.TrimSpace(input.ProviderKind))
 	input.BaseURL = normalizeBaseURL(input.BaseURL)
+	input.ModelListURL = strings.TrimSpace(input.ModelListURL)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 }
 
 func normalizeBaseURL(value string) string {
 	return strings.TrimRight(strings.TrimSpace(value), "/")
+}
+
+func validOptionalModelListURL(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) > 2048 {
+		return false
+	}
+	parsed, err := url.ParseRequestURI(value)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 func validProvider(organizationID, actorID, code, name, kind, baseURL string, timeoutMS int) bool {
@@ -275,7 +364,10 @@ func validModel(organizationID, actorID, providerID, code, upstreamID, name, mod
 }
 
 func validModelSettings(organizationID, actorID, providerID, upstreamID, name, modelType string, capabilities []string, contextWindow, maxOutput int) bool {
-	if organizationID == "" || actorID == "" || providerID == "" || !validLength(upstreamID, 1, 200) || !validLength(name, 1, 120) || modelType != "chat" || contextWindow < 0 || maxOutput < 0 || (contextWindow > 0 && maxOutput > contextWindow) {
+	if organizationID == "" || actorID == "" || providerID == "" || !validLength(upstreamID, 1, 200) || !validLength(name, 1, 120) || contextWindow < 0 || maxOutput < 0 || (contextWindow > 0 && maxOutput > contextWindow) {
+		return false
+	}
+	if _, ok := allowedModelTypes[modelType]; !ok {
 		return false
 	}
 	for _, capability := range capabilities {

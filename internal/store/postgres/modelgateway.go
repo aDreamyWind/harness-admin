@@ -239,6 +239,7 @@ func (r *ModelGatewayRepository) FindRoute(ctx context.Context, organizationID, 
 		  ON p.organization_id = m.organization_id AND p.id = m.provider_connection_id
 		JOIN model_provider_credentials c ON c.provider_connection_id = p.id
 		WHERE m.organization_id = $1 AND LOWER(m.code) = LOWER($2)
+		  AND m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini')
 	`, organizationID, modelCode).Scan(
 		&route.ModelID, &route.ModelCode, &route.ModelStatus, &route.UpstreamModelID,
 		&route.ProviderID, &route.ProviderStatus, &route.ProviderBaseURL, &route.ProviderTimeoutMS, &route.ProviderStreamUsageEnabled, &encryptedSecret,

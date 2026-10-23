@@ -1161,6 +1161,81 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/SecretEnvelope' }
         '404': { description: 供应商连接不存在或不属于当前企业。 }
+  /model-providers/{providerId}/discover-models:
+    post:
+      summary: 从供应商读取可用模型列表
+      description: 需要 `model.catalog.write` 权限；使用已保存的凭据，最多返回 500 项，不写入目录。
+      operationId: discoverProviderModels
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 上游模型列表。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveredModelListEnvelope' }
+        '409': { description: 供应商连接已停用。 }
+        '502': { description: 上游列表请求失败。 }
+  /model-providers/{providerId}/import-models:
+    post:
+      summary: 将选中的上游模型批量导入目录
+      description: 重新读取上游列表并核对所选标识；事务内导入，重复项跳过，新模型默认为停用。可选同时启用所有新导入模型；非对话模型仍不会进入当前对话网关。
+      operationId: importProviderModels
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: providerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [upstreamModelIds]
+              properties:
+                upstreamModelIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  uniqueItems: true
+                  items: { type: string, minLength: 1, maxLength: 200 }
+                activateSupportedChat:
+                  type: boolean
+                  default: false
+                  deprecated: true
+                  description: 旧版兼容字段；仅启用对话类型且当前网关支持的协议。新客户端请使用 activateImportedModels。
+                activateImportedModels:
+                  type: boolean
+                  default: false
+                  description: 同时启用所有新导入模型；非对话模型和未接入网关的协议仅在目录中启用，不会进入当前对话路由。
+      responses:
+        '200':
+          description: 批量导入结果。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [imported, skipped, activated]
+                    properties:
+                      imported: { type: integer, minimum: 0 }
+                      skipped: { type: integer, minimum: 0 }
+                      activated: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '502': { description: 上游列表请求失败。 }
   /models:
     get:
       summary: 查询当前企业的模型目录
@@ -2774,10 +2849,11 @@ components:
         name: { type: string, minLength: 1, maxLength: 120 }
         providerKind:
           type: string
-          enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama]
+          enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama, siliconflow, claude, gemini]
           default: openai_compatible
-          description: 供应商协议预设；当前均通过 OpenAI 兼容接口接入。
+          description: 供应商协议预设；Claude 和 Gemini 当前仅支持模型发现与目录收录。
         baseUrl: { type: string, format: uri }
+        modelListUrl: { type: string, description: 独立的模型目录接口完整地址；为空时按供应商协议推导。百炼可填写对应地域业务空间的 /api/v1/models 地址。 }
         apiKey: { type: string, format: password, minLength: 1, maxLength: 4096, writeOnly: true }
         requestTimeoutMs: { type: integer, minimum: 1000, maximum: 120000, default: 15000 }
         streamUsageEnabled:
@@ -2791,9 +2867,10 @@ components:
         name: { type: string, minLength: 1, maxLength: 120 }
         providerKind:
           type: string
-          enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama]
-          description: 供应商协议预设；当前均通过 OpenAI 兼容接口接入。
+          enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama, siliconflow, claude, gemini]
+          description: 供应商协议预设；Claude 和 Gemini 当前仅支持模型发现与目录收录。
         baseUrl: { type: string, format: uri }
+        modelListUrl: { type: string, description: 省略时保留当前目录地址；传空字符串时恢复按供应商协议推导。 }
         apiKey:
           type: string
           format: password
@@ -2939,7 +3016,7 @@ components:
         code: { type: string, pattern: '^[a-z][a-z0-9._-]{1,79}$' }
         upstreamModelId: { type: string, minLength: 1, maxLength: 200 }
         name: { type: string, minLength: 1, maxLength: 120, description: 省略或留空时使用上游模型标识。 }
-        modelType: { type: string, enum: [chat], default: chat }
+        modelType: { type: string, enum: [chat, image, video, audio, embedding, rerank, unknown], default: chat }
         capabilities:
           type: array
           uniqueItems: true
@@ -2954,7 +3031,7 @@ components:
         providerConnectionId: { type: string, format: uuid }
         upstreamModelId: { type: string, minLength: 1, maxLength: 200 }
         name: { type: string, minLength: 1, maxLength: 120, description: 省略或留空时使用上游模型标识。 }
-        modelType: { type: string, enum: [chat], default: chat }
+        modelType: { type: string, enum: [chat, image, video, audio, embedding, rerank, unknown], default: chat }
         capabilities:
           type: array
           uniqueItems: true
@@ -2963,13 +3040,14 @@ components:
         maxOutputTokens: { type: integer, minimum: 0, default: 0 }
     ModelProvider:
       type: object
-      required: [id, code, name, providerKind, baseUrl, status, requestTimeoutMs, streamUsageEnabled, credentialConfigured, lastProbeStatus, createdAt, updatedAt]
+      required: [id, code, name, providerKind, baseUrl, modelListUrl, status, requestTimeoutMs, streamUsageEnabled, credentialConfigured, lastProbeStatus, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         code: { type: string }
         name: { type: string }
-        providerKind: { type: string, enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama] }
+        providerKind: { type: string, enum: [openai_compatible, deepseek, aliyun_bailian, kimi, ollama, siliconflow, claude, gemini] }
         baseUrl: { type: string, format: uri }
+        modelListUrl: { type: string, description: 模型目录接口完整地址；空字符串表示按供应商协议推导。 }
         status: { type: string, enum: [active, disabled] }
         requestTimeoutMs: { type: integer }
         streamUsageEnabled: { type: boolean, description: 是否向上游请求流式 Token 用量。 }
@@ -2988,7 +3066,7 @@ components:
         code: { type: string }
         upstreamModelId: { type: string }
         name: { type: string }
-        modelType: { type: string, enum: [chat] }
+        modelType: { type: string, enum: [chat, image, video, audio, embedding, rerank, unknown] }
         capabilities:
           type: array
           items: { type: string, enum: [text, vision, tools, streaming, json] }
@@ -2997,6 +3075,18 @@ components:
         status: { type: string, enum: [active, disabled] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    DiscoveredModel:
+      type: object
+      required: [upstreamModelId, name, modelType, capabilities, contextWindowTokens, maxOutputTokens]
+      properties:
+        upstreamModelId: { type: string }
+        name: { type: string }
+        modelType: { type: string, enum: [chat, image, video, audio, embedding, rerank, unknown] }
+        capabilities:
+          type: array
+          items: { type: string, enum: [text, vision, tools, streaming, json] }
+        contextWindowTokens: { type: integer, minimum: 0 }
+        maxOutputTokens: { type: integer, minimum: 0 }
     SaveModelPolicyRequest:
       type: object
       required: [scopeMode, requestsPerMinute, monthlyTokenLimit]
@@ -3545,6 +3635,13 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/ModelCatalogEntry' }
+    DiscoveredModelListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/DiscoveredModel' }
     ModelPolicyEnvelope:
       type: object
       required: [data]

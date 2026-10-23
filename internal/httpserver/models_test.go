@@ -18,6 +18,7 @@ type modelAdminStub struct {
 	updateProviderInput modeladmin.UpdateProviderInput
 	createModelInput    modeladmin.CreateModelInput
 	revealInput         modeladmin.RevealProviderCredentialInput
+	importInput         modeladmin.ImportModelsInput
 }
 
 func (*modelAdminStub) ListProviders(context.Context, string) ([]modeladmin.Provider, error) {
@@ -53,6 +54,41 @@ func (*modelAdminStub) UpdateModel(context.Context, modeladmin.UpdateModelInput)
 }
 func (*modelAdminStub) ChangeModelStatus(context.Context, modeladmin.ChangeModelStatusInput) (modeladmin.CatalogModel, error) {
 	return modeladmin.CatalogModel{}, nil
+}
+func (*modelAdminStub) DiscoverModels(context.Context, modeladmin.DiscoverModelsInput) ([]modeladmin.DiscoveredModel, error) {
+	return []modeladmin.DiscoveredModel{{UpstreamModelID: "qwen-image", ModelType: "image"}}, nil
+}
+func (s *modelAdminStub) ImportModels(_ context.Context, input modeladmin.ImportModelsInput) (modeladmin.ImportModelsResult, error) {
+	s.importInput = input
+	return modeladmin.ImportModelsResult{Imported: 1}, nil
+}
+
+func TestImportProviderModelsUsesSessionScope(t *testing.T) {
+	models := &modelAdminStub{}
+	router := newModelTestRouter(models)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/model-providers/10000000-0000-4000-8000-000000000001/import-models", strings.NewReader(`{"upstreamModelIds":["qwen-image"],"activateSupportedChat":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || models.importInput.OrganizationID != "org-1" || models.importInput.ActorID != "user-1" || len(models.importInput.UpstreamModelIDs) != 1 || !models.importInput.ActivateSupportedChat {
+		t.Fatalf("批量导入未使用当前会话作用域: status=%d input=%#v body=%s", response.Code, models.importInput, response.Body.String())
+	}
+}
+
+func TestImportProviderModelsCanActivateAllTypes(t *testing.T) {
+	models := &modelAdminStub{}
+	router := newModelTestRouter(models)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/model-providers/10000000-0000-4000-8000-000000000001/import-models", strings.NewReader(`{"upstreamModelIds":["qwen-image"],"activateImportedModels":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !models.importInput.ActivateImportedModels || models.importInput.ActivateSupportedChat {
+		t.Fatalf("启用所有导入类型的选项未传递: status=%d input=%#v", response.Code, models.importInput)
+	}
 }
 
 func TestCreateModelProviderUsesCurrentOrganizationAndHidesCredential(t *testing.T) {
@@ -95,6 +131,23 @@ func TestUpdateModelProviderKeepsStreamUsageSettingWhenOmitted(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || models.updateProviderInput.StreamUsageEnabled != nil {
 		t.Fatalf("省略设置时不应更改现有值: status=%d input=%#v", response.Code, models.updateProviderInput)
+	}
+}
+
+func TestUpdateModelProviderAcceptsModelListURL(t *testing.T) {
+	models := &modelAdminStub{}
+	router := newModelTestRouter(models)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/model-providers/10000000-0000-4000-8000-000000000001", strings.NewReader(`{
+		"name":"百炼","providerKind":"aliyun_bailian","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1",
+		"modelListUrl":"https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/models","requestTimeoutMs":15000
+	}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || models.updateProviderInput.ModelListURL == nil || *models.updateProviderInput.ModelListURL != "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/models" {
+		t.Fatalf("目录地址未传递: status=%d input=%#v", response.Code, models.updateProviderInput)
 	}
 }
 

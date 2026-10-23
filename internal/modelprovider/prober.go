@@ -2,13 +2,9 @@ package modelprovider
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -34,51 +30,12 @@ func NewProber(allowPrivateHosts []string) *Prober {
 
 func (p *Prober) Probe(ctx context.Context, credential modeladmin.ProviderCredential) (modeladmin.ProbeResult, error) {
 	checkedAt := time.Now().UTC()
-	baseURL, err := url.Parse(credential.Provider.BaseURL)
-	if err != nil {
-		return failedResult(checkedAt), errors.New("供应商地址无效")
-	}
-	if baseURL.Scheme != "https" && baseURL.Scheme != "http" {
-		return failedResult(checkedAt), errors.New("供应商地址协议不受支持")
-	}
-	if baseURL.Scheme == "http" {
-		if _, allowed := p.allowPrivateHosts[strings.ToLower(baseURL.Hostname())]; !allowed {
-			return failedResult(checkedAt), errors.New("HTTP 供应商地址必须加入私有主机白名单")
-		}
-	}
-
-	client, err := p.clientFor(ctx, baseURL.Hostname(), time.Duration(credential.Provider.RequestTimeoutMS)*time.Millisecond)
-	if err != nil {
-		return failedResult(checkedAt), err
-	}
-	endpoint := strings.TrimRight(baseURL.String(), "/") + "/models"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return failedResult(checkedAt), errors.New("无法创建供应商检测请求")
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+credential.APIKey)
-
 	startedAt := time.Now()
-	response, err := client.Do(request)
+	_, err := p.discover(ctx, credential, true)
 	latency := time.Since(startedAt).Milliseconds()
 	result := modeladmin.ProbeResult{Status: "failed", LatencyMS: latency, CheckedAt: checkedAt}
 	if err != nil {
-		return result, errors.New("无法连接模型供应商")
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
-	if err != nil {
-		return result, errors.New("读取供应商响应失败")
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return result, fmt.Errorf("供应商返回 HTTP %d", response.StatusCode)
-	}
-	var envelope struct {
-		Data []json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return result, errors.New("供应商返回的模型列表格式不正确")
+		return result, err
 	}
 	result.Status = "success"
 	return result, nil

@@ -7,13 +7,15 @@ import (
 )
 
 var (
-	ErrInvalidInput     = errors.New("模型接入参数不正确")
-	ErrProviderNotFound = errors.New("模型供应商连接不存在")
-	ErrProviderConflict = errors.New("模型供应商连接编码已存在")
-	ErrModelNotFound    = errors.New("模型不存在")
-	ErrModelConflict    = errors.New("模型编码或上游模型标识已存在")
-	ErrProviderDisabled = errors.New("模型供应商连接已停用")
-	ErrProbeFailed      = errors.New("模型供应商连接检测失败")
+	ErrInvalidInput         = errors.New("模型接入参数不正确")
+	ErrProviderNotFound     = errors.New("模型供应商连接不存在")
+	ErrProviderConflict     = errors.New("模型供应商连接编码已存在")
+	ErrModelNotFound        = errors.New("模型不存在")
+	ErrModelConflict        = errors.New("模型编码或上游模型标识已存在")
+	ErrProviderDisabled     = errors.New("模型供应商连接已停用")
+	ErrProbeFailed          = errors.New("模型供应商连接检测失败")
+	ErrDiscoveryFailed      = errors.New("获取供应商模型列表失败")
+	ErrModelListURLRequired = errors.New("百炼模型目录地址未配置")
 )
 
 type Provider struct {
@@ -22,6 +24,7 @@ type Provider struct {
 	Name                 string
 	ProviderKind         string
 	BaseURL              string
+	ModelListURL         string
 	Status               string
 	RequestTimeoutMS     int
 	StreamUsageEnabled   bool
@@ -55,6 +58,7 @@ type CreateProviderInput struct {
 	Name               string
 	ProviderKind       string
 	BaseURL            string
+	ModelListURL       string
 	APIKey             string
 	RequestTimeoutMS   int
 	StreamUsageEnabled bool
@@ -69,6 +73,7 @@ type UpdateProviderInput struct {
 	Name               string
 	ProviderKind       string
 	BaseURL            string
+	ModelListURL       *string
 	APIKey             *string
 	RequestTimeoutMS   int
 	StreamUsageEnabled *bool
@@ -146,6 +151,38 @@ type ProbeResult struct {
 	CheckedAt time.Time
 }
 
+type DiscoveredModel struct {
+	UpstreamModelID     string   `json:"upstreamModelId"`
+	Name                string   `json:"name"`
+	ModelType           string   `json:"modelType"`
+	Capabilities        []string `json:"capabilities"`
+	ContextWindowTokens int      `json:"contextWindowTokens"`
+	MaxOutputTokens     int      `json:"maxOutputTokens"`
+}
+
+type DiscoverModelsInput struct {
+	OrganizationID string
+	ActorID        string
+	ProviderID     string
+}
+
+type ImportModelsInput struct {
+	OrganizationID         string
+	ActorID                string
+	ProviderID             string
+	UpstreamModelIDs       []string
+	ActivateSupportedChat  bool
+	ActivateImportedModels bool
+	RequestID              string
+	SourceIP               string
+}
+
+type ImportModelsResult struct {
+	Imported  int `json:"imported"`
+	Skipped   int `json:"skipped"`
+	Activated int `json:"activated"`
+}
+
 type ProviderCredential struct {
 	Provider Provider
 	APIKey   string
@@ -163,8 +200,10 @@ type Repository interface {
 	CreateModel(context.Context, CreateModelInput) (CatalogModel, error)
 	UpdateModel(context.Context, UpdateModelInput) (CatalogModel, error)
 	ChangeModelStatus(context.Context, ChangeModelStatusInput) (CatalogModel, error)
+	ImportModels(context.Context, ImportModelsInput, []DiscoveredModel) (ImportModelsResult, error)
 }
 
 type ProviderProber interface {
 	Probe(context.Context, ProviderCredential) (ProbeResult, error)
+	Discover(context.Context, ProviderCredential) ([]DiscoveredModel, error)
 }

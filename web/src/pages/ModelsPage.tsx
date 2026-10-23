@@ -37,6 +37,8 @@ import {
   changeModelStatus,
   createModel,
   createModelProvider,
+  discoverProviderModels,
+  importProviderModels,
   listModelProviders,
   listModels,
   probeModelProvider,
@@ -44,8 +46,10 @@ import {
   updateModel,
   updateModelProvider,
   type ModelCatalogEntry,
+  type DiscoveredModel,
   type ModelInput,
   type ModelProvider,
+  type ModelType,
   type ProviderKind,
   type ProviderInput,
 } from '../api/models'
@@ -59,7 +63,11 @@ const providerPresets: Array<{ value: ProviderKind; label: string; baseUrl: stri
   { value: 'aliyun_bailian', label: '阿里云百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
   { value: 'kimi', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1' },
   { value: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1' },
+  { value: 'siliconflow', label: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1' },
+  { value: 'claude', label: 'Claude（目录收录）', baseUrl: 'https://api.anthropic.com/v1' },
+  { value: 'gemini', label: 'Gemini（目录收录）', baseUrl: 'https://generativelanguage.googleapis.com/v1beta' },
 ]
+const modelTypeLabels: Record<ModelType, string> = { chat: '对话', image: '图片', video: '视频', audio: '音频', embedding: '向量', rerank: '重排', unknown: '待确认' }
 const providerPresetByKind = new Map(providerPresets.map((item) => [item.value, item]))
 const capabilityOptions = [
   { label: '文本', value: 'text' },
@@ -82,6 +90,11 @@ export function ModelsPage() {
   const [modelForm] = Form.useForm<ModelInput>()
   const [providerModalOpen, setProviderModalOpen] = useState(false)
   const [modelModalOpen, setModelModalOpen] = useState(false)
+  const [importModalOpen, setImportModalOpen] = useState(false)
+  const [importProviderId, setImportProviderId] = useState('')
+  const [discovered, setDiscovered] = useState<DiscoveredModel[]>([])
+  const [selectedImportIds, setSelectedImportIds] = useState<string[]>([])
+  const [activateImportedModels, setActivateImportedModels] = useState(false)
   const [editingProvider, setEditingProvider] = useState<ModelProvider | null>(null)
   const [editingModel, setEditingModel] = useState<ModelCatalogEntry | null>(null)
   const [revealedProviderSecret, setRevealedProviderSecret] = useState<{ name: string; secret: string } | null>(null)
@@ -134,6 +147,18 @@ export function ModelsPage() {
     onSuccess: async () => { messageApi.success('模型状态已更新'); await queryClient.invalidateQueries({ queryKey: ['model-catalog'] }) },
     onError: (error) => messageApi.error(errorMessage(error, '模型状态更新失败')),
   })
+  const discoverModels = useMutation({
+    mutationFn: discoverProviderModels,
+    onSuccess: (items) => { setDiscovered(items); setSelectedImportIds([]) },
+  })
+  const importModels = useMutation({
+    mutationFn: () => importProviderModels(importProviderId, selectedImportIds, activateImportedModels),
+    onSuccess: async (result) => {
+      messageApi.success(`已导入 ${result.imported} 个模型，启用 ${result.activated} 个模型，跳过 ${result.skipped} 个已有模型`)
+      setImportModalOpen(false)
+      await queryClient.invalidateQueries({ queryKey: ['model-catalog'] })
+    },
+  })
 
   const activeProviders = providers.filter((item) => item.status === 'active').length
   const healthyProviders = providers.filter((item) => item.lastProbeStatus === 'success').length
@@ -141,14 +166,14 @@ export function ModelsPage() {
 
   function openProviderCreate() {
     setEditingProvider(null)
-    providerForm.setFieldsValue({ code: '', name: '', providerKind: 'openai_compatible', baseUrl: providerPresetByKind.get('openai_compatible')?.baseUrl, apiKey: '', requestTimeoutMs: 15000, streamUsageEnabled: false })
+    providerForm.setFieldsValue({ code: '', name: '', providerKind: 'openai_compatible', baseUrl: providerPresetByKind.get('openai_compatible')?.baseUrl, modelListUrl: '', apiKey: '', requestTimeoutMs: 15000, streamUsageEnabled: false })
     saveProvider.reset()
     setProviderModalOpen(true)
   }
 
   function openProviderEdit(provider: ModelProvider) {
     setEditingProvider(provider)
-    providerForm.setFieldsValue({ code: provider.code, name: provider.name, providerKind: provider.providerKind, baseUrl: provider.baseUrl, apiKey: '', requestTimeoutMs: provider.requestTimeoutMs, streamUsageEnabled: provider.streamUsageEnabled })
+    providerForm.setFieldsValue({ code: provider.code, name: provider.name, providerKind: provider.providerKind, baseUrl: provider.baseUrl, modelListUrl: provider.modelListUrl, apiKey: '', requestTimeoutMs: provider.requestTimeoutMs, streamUsageEnabled: provider.streamUsageEnabled })
     saveProvider.reset()
     setProviderModalOpen(true)
   }
@@ -223,12 +248,18 @@ export function ModelsPage() {
       render: (_, model) => <div className="model-resource-name model-entry-name"><ApiOutlined /><span><strong>{model.name}</strong><small>{model.code}</small></span></div>,
     },
     { title: '供应商', dataIndex: 'providerName', key: 'providerName', width: 160 },
+    { title: '类型', dataIndex: 'modelType', key: 'modelType', width: 95, render: (value: ModelType) => <Tag>{modelTypeLabels[value]}</Tag> },
+    { title: '对话网关', key: 'gateway', width: 100, render: (_, model) => {
+      const provider = providers.find((item) => item.id === model.providerConnectionId)
+      if (model.modelType !== 'chat' || !provider || ['claude', 'gemini'].includes(provider.providerKind)) return '仅目录'
+      return model.status === 'active' && provider.status === 'active' ? '可调用' : '未启用'
+    } },
     { title: '上游模型标识', dataIndex: 'upstreamModelId', key: 'upstreamModelId', render: (value: string) => <Text code>{value}</Text> },
     {
       title: '能力', dataIndex: 'capabilities', key: 'capabilities', width: 250,
       render: (values: string[]) => <div className="model-capabilities">{values.map((value) => <Tag key={value}>{capabilityLabels.get(value) ?? value}</Tag>)}</div>,
     },
-    { title: '状态', key: 'status', width: 100, render: (_, model) => <StatusIndicator label={model.status === 'active' ? '已启用' : '已停用'} tone={model.status === 'active' ? 'success' : 'muted'} /> },
+    { title: '目录状态', key: 'status', width: 110, render: (_, model) => <StatusIndicator label={model.status === 'active' ? '已启用' : '已停用'} tone={model.status === 'active' ? 'success' : 'muted'} /> },
     ...(canWriteModels ? [{
       title: '操作', key: 'actions', width: 150,
       render: (_: unknown, model: ModelCatalogEntry) => <Space size={4}>
@@ -238,7 +269,7 @@ export function ModelsPage() {
         </Popconfirm>
       </Space>,
     }] : []),
-  ], [canWriteModels])
+  ], [canWriteModels, providers])
 
   const tabs = [
     canReadProviders ? {
@@ -254,7 +285,7 @@ export function ModelsPage() {
       key: 'models', label: `模型 ${models.length}`,
       children: <ResourceTable
         title="企业模型目录" description="稳定模型编码供后续网关和策略引用，上游模型标识可随连接调整。"
-        action={canWriteModels ? <Button type="primary" icon={<PlusOutlined />} disabled={!activeProviders} onClick={openModelCreate}>登记模型</Button> : undefined}
+        action={canWriteModels ? <Space><Button disabled={!activeProviders} onClick={() => { setImportProviderId(providers.find((item) => item.status === 'active')?.id ?? ''); setDiscovered([]); setSelectedImportIds([]); setActivateImportedModels(false); discoverModels.reset(); importModels.reset(); setImportModalOpen(true) }}>从供应商导入</Button><Button type="primary" icon={<PlusOutlined />} disabled={!activeProviders} onClick={openModelCreate}>登记模型</Button></Space> : undefined}
         error={modelsQuery.isError ? errorMessage(modelsQuery.error, '模型目录加载失败') : ''}
         retry={() => modelsQuery.refetch()}
       ><Table<ModelCatalogEntry> rowKey="id" columns={modelColumns} dataSource={models} loading={modelsQuery.isLoading} pagination={false} scroll={{ x: 1050 }} locale={{ emptyText: providers.length ? '尚未登记模型' : '请先接入供应商，再登记模型' }} /></ResourceTable>,
@@ -279,6 +310,24 @@ export function ModelsPage() {
 
       <Tabs className="model-resource-tabs" items={tabs} />
 
+      <Modal title="从供应商批量导入模型" open={importModalOpen} width={850} okText={`导入选中模型（${selectedImportIds.length}）`} okButtonProps={{ disabled: !selectedImportIds.length || discoverModels.isPending }} confirmLoading={importModels.isPending} onOk={() => importModels.mutate()} onCancel={() => setImportModalOpen(false)} destroyOnHidden>
+        <Alert type="info" showIcon message="导入后模型默认停用。可同时启用所有选中的模型；图片、视频等非对话模型目前仅在目录中可用。" />
+        <Space style={{ margin: '16px 0' }}>
+          <Select style={{ width: 260 }} value={importProviderId || undefined} options={providers.filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: item.name }))} onChange={(value) => { setImportProviderId(value); setDiscovered([]); setSelectedImportIds([]); discoverModels.reset() }} />
+          <Button loading={discoverModels.isPending} disabled={!importProviderId} onClick={() => discoverModels.mutate(importProviderId)}>读取模型列表</Button>
+          <Button disabled={!discovered.length} onClick={() => setSelectedImportIds(discovered.filter((item) => !models.some((model) => model.providerConnectionId === importProviderId && model.upstreamModelId === item.upstreamModelId)).map((item) => item.upstreamModelId))}>选中全部未登记</Button>
+        </Space>
+        {discoverModels.isError ? <Alert type="error" showIcon message={errorMessage(discoverModels.error, '读取模型列表失败')} /> : null}
+        {importModels.isError ? <Alert type="error" showIcon message={errorMessage(importModels.error, '导入模型失败')} /> : null}
+        <Table<DiscoveredModel> size="small" rowKey="upstreamModelId" dataSource={discovered} pagination={{ defaultPageSize: 10 }} rowSelection={{ selectedRowKeys: selectedImportIds, onChange: (keys) => setSelectedImportIds(keys.map(String)), getCheckboxProps: (item) => ({ disabled: models.some((model) => model.providerConnectionId === importProviderId && model.upstreamModelId === item.upstreamModelId) }) }} columns={[
+          { title: '模型', dataIndex: 'name', key: 'name' },
+          { title: '上游标识', dataIndex: 'upstreamModelId', key: 'upstreamModelId', render: (value: string) => <Text code>{value}</Text> },
+          { title: '类型', dataIndex: 'modelType', key: 'modelType', width: 90, render: (value: ModelType) => modelTypeLabels[value] },
+          { title: '目录', key: 'existing', width: 95, render: (_: unknown, item: DiscoveredModel) => models.some((model) => model.providerConnectionId === importProviderId && model.upstreamModelId === item.upstreamModelId) ? '已登记' : '未登记' },
+        ]} locale={{ emptyText: discoverModels.isSuccess ? '供应商未返回模型' : '选择供应商后读取模型列表' }} />
+        <Checkbox checked={activateImportedModels} onChange={(event) => setActivateImportedModels(event.target.checked)}>导入时启用所有选中的模型（非对话模型仅目录可用）</Checkbox>
+      </Modal>
+
       <Modal title={`${revealedProviderSecret?.name ?? ''} · API Key`} open={Boolean(revealedProviderSecret)} footer={null} onCancel={() => { setRevealedProviderSecret(null); revealProviderSecret.reset() }} destroyOnHidden>
         <Alert type="info" showIcon message="本次查看已记录到审计日志" />
         <div className="gateway-secret-box">
@@ -294,13 +343,14 @@ export function ModelsPage() {
             <Form.Item label="连接名称" name="name" rules={[{ required: true, whitespace: true, message: '请输入连接名称' }, { max: 120 }]}><Input placeholder="例如：生产模型服务" /></Form.Item>
             <Form.Item label="连接编码" name="code" extra="企业内唯一，创建后不可修改。" rules={editingProvider ? [] : [{ required: true, message: '请输入连接编码' }, { pattern: /^[a-z][a-z0-9._-]{1,79}$/, message: '请输入至少 2 位的小写编码' }]}><Input disabled={Boolean(editingProvider)} placeholder="例如：production_ai" /></Form.Item>
           </div>
-          <Form.Item label="供应商协议" name="providerKind" extra="选择后自动填入推荐地址，API 基础地址仍可修改。">
+          <Form.Item label="供应商协议" name="providerKind" extra="选择后自动填入推荐地址。Claude、Gemini 目前支持目录导入，尚未接入对话网关。">
             <Select
               options={providerPresets.map(({ value, label }) => ({ value, label }))}
               onChange={(value: ProviderKind) => providerForm.setFieldValue('baseUrl', providerPresetByKind.get(value)?.baseUrl ?? '')}
             />
           </Form.Item>
           <Form.Item label="API 基础地址" name="baseUrl" extra="填写到版本路径，例如 https://models.example.com/v1。" rules={[{ required: true, type: 'url', message: '请输入完整的 HTTP(S) 地址' }]}><Input placeholder="https://models.example.com/v1" /></Form.Item>
+          <Form.Item label="模型目录地址（选填）" name="modelListUrl" extra="默认地址可以读取时请留空。若默认列表接口不可用，可填写独立的完整接口地址；百炼可使用与 API Key 同地域的业务空间地址。" rules={[{ type: 'url', message: '请输入完整的 HTTP(S) 地址' }, { max: 2048 }]}><Input placeholder="https://{业务空间ID}.cn-beijing.maas.aliyuncs.com/api/v1/models" /></Form.Item>
           <div className="model-form-grid">
             <Form.Item label={editingProvider ? '替换 API Key' : 'API Key'} name="apiKey" extra={editingProvider ? '留空表示继续使用当前凭据。' : '密钥将加密保存。'} rules={editingProvider ? [] : [{ required: true, message: '请输入 API Key' }]}><Input.Password autoComplete="new-password" placeholder={editingProvider ? '不修改请留空' : '输入供应商访问密钥'} /></Form.Item>
             <Form.Item label="请求超时（毫秒）" name="requestTimeoutMs" rules={[{ required: true }]}><InputNumber min={1000} max={120000} step={1000} style={{ width: '100%' }} /></Form.Item>
@@ -317,7 +367,7 @@ export function ModelsPage() {
             <Form.Item label="上游模型标识" name="upstreamModelId" extra="供应商实际使用的模型 ID。" rules={[{ required: true, whitespace: true, message: '请输入上游模型标识' }, { max: 200 }]}><Input placeholder="例如：deepseek-chat" /></Form.Item>
           </div>
           <Form.Item label="模型名称（选填）" name="name" extra="留空时使用上游模型标识。" rules={[{ max: 120 }]}><Input placeholder="例如：DeepSeek 通用对话模型" /></Form.Item>
-          <Form.Item name="modelType" hidden><Input /></Form.Item>
+          <Form.Item label="模型类型" name="modelType" rules={[{ required: true }]}><Select options={Object.entries(modelTypeLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>
           <Form.Item label="模型能力" name="capabilities"><Checkbox.Group options={capabilityOptions} /></Form.Item>
           <Collapse
             className="model-advanced-settings"

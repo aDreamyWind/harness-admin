@@ -1,6 +1,7 @@
 import { csrfHeaders, request } from './client'
 
-export type ProviderKind = 'openai_compatible' | 'deepseek' | 'aliyun_bailian' | 'kimi' | 'ollama'
+export type ProviderKind = 'openai_compatible' | 'deepseek' | 'aliyun_bailian' | 'kimi' | 'ollama' | 'siliconflow' | 'claude' | 'gemini'
+export type ModelType = 'chat' | 'image' | 'video' | 'audio' | 'embedding' | 'rerank' | 'unknown'
 
 export interface ModelProvider {
   id: string
@@ -8,6 +9,7 @@ export interface ModelProvider {
   name: string
   providerKind: ProviderKind
   baseUrl: string
+  modelListUrl: string
   status: 'active' | 'disabled'
   requestTimeoutMs: number
   streamUsageEnabled: boolean
@@ -25,7 +27,7 @@ export interface ModelCatalogEntry {
   code: string
   upstreamModelId: string
   name: string
-  modelType: 'chat'
+  modelType: ModelType
   capabilities: string[]
   contextWindowTokens: number
   maxOutputTokens: number
@@ -39,6 +41,7 @@ export interface ProviderInput {
   name: string
   providerKind?: ProviderKind
   baseUrl: string
+  modelListUrl?: string
   apiKey?: string
   requestTimeoutMs: number
   streamUsageEnabled: boolean
@@ -49,7 +52,7 @@ export interface ModelInput {
   providerConnectionId: string
   upstreamModelId: string
   name: string
-  modelType: 'chat'
+  modelType: ModelType
   capabilities: string[]
   contextWindowTokens: number
   maxOutputTokens: number
@@ -59,6 +62,15 @@ export interface ProbeResult {
   status: 'success'
   latencyMs: number
   checkedAt: string
+}
+
+export interface DiscoveredModel {
+  upstreamModelId: string
+  name: string
+  modelType: ModelType
+  capabilities: string[]
+  contextWindowTokens: number
+  maxOutputTokens: number
 }
 
 export const listModelProviders = () => request<ModelProvider[]>('/api/v1/model-providers')
@@ -84,6 +96,16 @@ export function changeModelProviderStatus(id: string, status: ModelProvider['sta
 
 export function probeModelProvider(id: string) {
   return request<ProbeResult>(`/api/v1/model-providers/${id}/probe`, { method: 'POST', headers: csrfHeaders() })
+}
+
+export function discoverProviderModels(id: string) {
+  return request<DiscoveredModel[]>(`/api/v1/model-providers/${id}/discover-models`, { method: 'POST', headers: csrfHeaders() })
+}
+
+export function importProviderModels(id: string, upstreamModelIds: string[], activateImportedModels: boolean) {
+  return request<{ imported: number; skipped: number; activated: number }>(`/api/v1/model-providers/${id}/import-models`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ upstreamModelIds, activateImportedModels }),
+  })
 }
 
 export function revealModelProviderCredential(id: string) {

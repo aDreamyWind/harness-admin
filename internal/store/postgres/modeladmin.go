@@ -25,7 +25,7 @@ func NewModelAdminRepository(pool *pgxpool.Pool, cipher *secret.Cipher) *ModelAd
 }
 
 const providerColumns = `
-	p.id, p.code, p.name, p.provider_kind, p.base_url, p.status, p.request_timeout_ms, p.stream_usage_enabled,
+	p.id, p.code, p.name, p.provider_kind, p.base_url, p.model_list_url, p.status, p.request_timeout_ms, p.stream_usage_enabled,
 	EXISTS (SELECT 1 FROM model_provider_credentials c WHERE c.provider_connection_id = p.id),
 	p.last_probe_status, p.last_probe_at, p.created_at, p.updated_at
 `
@@ -65,9 +65,9 @@ func (r *ModelAdminRepository) CreateProvider(ctx context.Context, input modelad
 	providerID := uuid.NewString()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO model_provider_connections (
-			id, organization_id, code, name, provider_kind, base_url, request_timeout_ms, stream_usage_enabled
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, providerID, input.OrganizationID, input.Code, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS, input.StreamUsageEnabled)
+			id, organization_id, code, name, provider_kind, base_url, model_list_url, request_timeout_ms, stream_usage_enabled
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, providerID, input.OrganizationID, input.Code, input.Name, input.ProviderKind, input.BaseURL, input.ModelListURL, input.RequestTimeoutMS, input.StreamUsageEnabled)
 	if err != nil {
 		return modeladmin.Provider{}, translateProviderWriteError(err)
 	}
@@ -81,7 +81,7 @@ func (r *ModelAdminRepository) CreateProvider(ctx context.Context, input modelad
 		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
 		Action: "model.provider.create", ResourceType: "model_provider", ResourceID: providerID,
 		Result: "success", SourceIP: input.SourceIP,
-		Detail: map[string]any{"code": input.Code, "name": input.Name, "providerKind": input.ProviderKind, "baseUrl": input.BaseURL, "streamUsageEnabled": input.StreamUsageEnabled},
+		Detail: map[string]any{"code": input.Code, "name": input.Name, "providerKind": input.ProviderKind, "baseUrl": input.BaseURL, "modelListUrl": input.ModelListURL, "streamUsageEnabled": input.StreamUsageEnabled},
 	}); err != nil {
 		return modeladmin.Provider{}, err
 	}
@@ -103,10 +103,10 @@ func (r *ModelAdminRepository) UpdateProvider(ctx context.Context, input modelad
 	defer tx.Rollback(ctx)
 	command, err := tx.Exec(ctx, `
 		UPDATE model_provider_connections
-		SET name = $1, provider_kind = $2, base_url = $3, request_timeout_ms = $4,
-		    stream_usage_enabled = COALESCE($5, stream_usage_enabled), updated_at = NOW()
-		WHERE id = $6 AND organization_id = $7
-	`, input.Name, input.ProviderKind, input.BaseURL, input.RequestTimeoutMS, input.StreamUsageEnabled, input.ProviderID, input.OrganizationID)
+		SET name = $1, provider_kind = $2, base_url = $3, model_list_url = COALESCE($4, model_list_url), request_timeout_ms = $5,
+		    stream_usage_enabled = COALESCE($6, stream_usage_enabled), updated_at = NOW()
+		WHERE id = $7 AND organization_id = $8
+	`, input.Name, input.ProviderKind, input.BaseURL, input.ModelListURL, input.RequestTimeoutMS, input.StreamUsageEnabled, input.ProviderID, input.OrganizationID)
 	if err != nil {
 		return modeladmin.Provider{}, err
 	}
@@ -132,7 +132,7 @@ func (r *ModelAdminRepository) UpdateProvider(ctx context.Context, input modelad
 		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
 		Action: "model.provider.update", ResourceType: "model_provider", ResourceID: input.ProviderID,
 		Result: "success", SourceIP: input.SourceIP,
-		Detail: map[string]any{"name": input.Name, "providerKind": input.ProviderKind, "baseUrl": input.BaseURL, "streamUsageEnabled": input.StreamUsageEnabled, "credentialRotated": credentialRotated},
+		Detail: map[string]any{"name": input.Name, "providerKind": input.ProviderKind, "baseUrl": input.BaseURL, "modelListUrl": input.ModelListURL, "streamUsageEnabled": input.StreamUsageEnabled, "credentialRotated": credentialRotated},
 	}); err != nil {
 		return modeladmin.Provider{}, err
 	}
@@ -190,7 +190,7 @@ func (r *ModelAdminRepository) GetProviderCredential(ctx context.Context, organi
 	var ciphertext []byte
 	err := row.Scan(
 		&credential.Provider.ID, &credential.Provider.Code, &credential.Provider.Name, &credential.Provider.ProviderKind,
-		&credential.Provider.BaseURL, &credential.Provider.Status, &credential.Provider.RequestTimeoutMS, &credential.Provider.StreamUsageEnabled,
+		&credential.Provider.BaseURL, &credential.Provider.ModelListURL, &credential.Provider.Status, &credential.Provider.RequestTimeoutMS, &credential.Provider.StreamUsageEnabled,
 		&credential.Provider.CredentialConfigured, &credential.Provider.LastProbeStatus, &credential.Provider.LastProbeAt,
 		&credential.Provider.CreatedAt, &credential.Provider.UpdatedAt, &ciphertext,
 	)
@@ -348,6 +348,70 @@ func (r *ModelAdminRepository) CreateModel(ctx context.Context, input modeladmin
 	return model, nil
 }
 
+func (r *ModelAdminRepository) ImportModels(ctx context.Context, input modeladmin.ImportModelsInput, models []modeladmin.DiscoveredModel) (modeladmin.ImportModelsResult, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return modeladmin.ImportModelsResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	var providerCode string
+	var status string
+	var providerKind string
+	err = tx.QueryRow(ctx, `SELECT code, status, provider_kind FROM model_provider_connections WHERE organization_id = $1 AND id = $2 FOR UPDATE`, input.OrganizationID, input.ProviderID).Scan(&providerCode, &status, &providerKind)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return modeladmin.ImportModelsResult{}, modeladmin.ErrProviderNotFound
+	}
+	if err != nil {
+		return modeladmin.ImportModelsResult{}, err
+	}
+	if status != "active" {
+		return modeladmin.ImportModelsResult{}, modeladmin.ErrProviderDisabled
+	}
+	result := modeladmin.ImportModelsResult{}
+	for _, model := range models {
+		id := uuid.NewString()
+		var inserted string
+		modelStatus := importedModelStatus(input, model.ModelType, providerKind)
+		err := tx.QueryRow(ctx, `INSERT INTO model_catalog_entries (
+			id, organization_id, provider_connection_id, code, upstream_model_id, name,
+			model_type, capabilities, context_window_tokens, max_output_tokens, status
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		ON CONFLICT (provider_connection_id, upstream_model_id) DO NOTHING RETURNING id`, id, input.OrganizationID, input.ProviderID,
+			modeladmin.ImportedModelCode(providerCode, model.UpstreamModelID), model.UpstreamModelID,
+			model.Name, model.ModelType, model.Capabilities, model.ContextWindowTokens, model.MaxOutputTokens, modelStatus).Scan(&inserted)
+		if errors.Is(err, pgx.ErrNoRows) {
+			result.Skipped++
+			continue
+		}
+		if err != nil {
+			return modeladmin.ImportModelsResult{}, translateModelWriteError(err)
+		}
+		result.Imported++
+		if modelStatus == "active" {
+			result.Activated++
+		}
+	}
+	if err := insertAudit(ctx, tx, identity.AuditEvent{
+		OrganizationID: input.OrganizationID, ActorID: input.ActorID, RequestID: input.RequestID,
+		Action: "model.catalog.import", ResourceType: "model_provider", ResourceID: input.ProviderID,
+		Result: "success", SourceIP: input.SourceIP,
+		Detail: map[string]any{"selected": len(models), "imported": result.Imported, "skipped": result.Skipped, "activated": result.Activated, "activateImportedModels": input.ActivateImportedModels, "activateSupportedChat": input.ActivateSupportedChat},
+	}); err != nil {
+		return modeladmin.ImportModelsResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return modeladmin.ImportModelsResult{}, err
+	}
+	return result, nil
+}
+
+func importedModelStatus(input modeladmin.ImportModelsInput, modelType, providerKind string) string {
+	if input.ActivateImportedModels || (input.ActivateSupportedChat && modelType == "chat" && providerKind != "claude" && providerKind != "gemini") {
+		return "active"
+	}
+	return "disabled"
+}
+
 func (r *ModelAdminRepository) UpdateModel(ctx context.Context, input modeladmin.UpdateModelInput) (modeladmin.CatalogModel, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -462,7 +526,7 @@ func ensureProviderOwnership(ctx context.Context, queryer interface {
 
 func scanProvider(row rowScanner) (modeladmin.Provider, error) {
 	var provider modeladmin.Provider
-	err := row.Scan(&provider.ID, &provider.Code, &provider.Name, &provider.ProviderKind, &provider.BaseURL,
+	err := row.Scan(&provider.ID, &provider.Code, &provider.Name, &provider.ProviderKind, &provider.BaseURL, &provider.ModelListURL,
 		&provider.Status, &provider.RequestTimeoutMS, &provider.StreamUsageEnabled, &provider.CredentialConfigured, &provider.LastProbeStatus,
 		&provider.LastProbeAt, &provider.CreatedAt, &provider.UpdatedAt)
 	return provider, err

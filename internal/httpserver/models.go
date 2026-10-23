@@ -25,6 +25,8 @@ type ModelAdminService interface {
 	CreateModel(context.Context, modeladmin.CreateModelInput) (modeladmin.CatalogModel, error)
 	UpdateModel(context.Context, modeladmin.UpdateModelInput) (modeladmin.CatalogModel, error)
 	ChangeModelStatus(context.Context, modeladmin.ChangeModelStatusInput) (modeladmin.CatalogModel, error)
+	DiscoverModels(context.Context, modeladmin.DiscoverModelsInput) ([]modeladmin.DiscoveredModel, error)
+	ImportModels(context.Context, modeladmin.ImportModelsInput) (modeladmin.ImportModelsResult, error)
 }
 
 type providerWriteRequest struct {
@@ -32,6 +34,7 @@ type providerWriteRequest struct {
 	Name               string  `json:"name"`
 	ProviderKind       string  `json:"providerKind"`
 	BaseURL            string  `json:"baseUrl"`
+	ModelListURL       *string `json:"modelListUrl"`
 	APIKey             *string `json:"apiKey"`
 	RequestTimeoutMS   int     `json:"requestTimeoutMs"`
 	StreamUsageEnabled *bool   `json:"streamUsageEnabled"`
@@ -52,12 +55,19 @@ type modelWriteRequest struct {
 	MaxOutputTokens      int      `json:"maxOutputTokens"`
 }
 
+type importModelsRequest struct {
+	UpstreamModelIDs       []string `json:"upstreamModelIds"`
+	ActivateSupportedChat  bool     `json:"activateSupportedChat"`
+	ActivateImportedModels bool     `json:"activateImportedModels"`
+}
+
 type providerResponse struct {
 	ID                   string     `json:"id"`
 	Code                 string     `json:"code"`
 	Name                 string     `json:"name"`
 	ProviderKind         string     `json:"providerKind"`
 	BaseURL              string     `json:"baseUrl"`
+	ModelListURL         string     `json:"modelListUrl"`
 	Status               string     `json:"status"`
 	RequestTimeoutMS     int        `json:"requestTimeoutMs"`
 	StreamUsageEnabled   bool       `json:"streamUsageEnabled"`
@@ -92,12 +102,55 @@ func registerModelRoutes(router *gin.Engine, deps Dependencies) {
 	providers.PATCH("/:id/status", requirePermission(deps, "model.provider.write"), requireCSRF(deps), changeProviderStatusHandler(deps))
 	providers.POST("/:id/probe", requirePermission(deps, "model.provider.write"), requireCSRF(deps), probeProviderHandler(deps))
 	providers.GET("/:id/credential", requirePermission(deps, "model.provider.write"), revealProviderCredentialHandler(deps))
+	providers.POST("/:id/discover-models", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), discoverProviderModelsHandler(deps))
+	providers.POST("/:id/import-models", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), importProviderModelsHandler(deps))
 
 	models := router.Group("/api/v1/models", requireSession(deps))
 	models.GET("", requirePermission(deps, "model.catalog.read"), listModelsHandler(deps))
 	models.POST("", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), createModelHandler(deps))
 	models.PUT("/:id", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), updateModelHandler(deps))
 	models.PATCH("/:id/status", requirePermission(deps, "model.catalog.write"), requireCSRF(deps), changeModelStatusHandler(deps))
+}
+
+func discoverProviderModelsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !validUUIDParam(ctx, "供应商连接") {
+			return
+		}
+		session := currentSession(ctx)
+		items, err := deps.ModelAdmin.DiscoverModels(ctx.Request.Context(), modeladmin.DiscoverModelsInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, ProviderID: ctx.Param("id"),
+		})
+		if err != nil {
+			handleModelAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, items)
+	}
+}
+
+func importProviderModelsHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		if !validUUIDParam(ctx, "供应商连接") {
+			return
+		}
+		var request importModelsRequest
+		if !bindModelJSON(ctx, &request) {
+			return
+		}
+		session := currentSession(ctx)
+		result, err := deps.ModelAdmin.ImportModels(ctx.Request.Context(), modeladmin.ImportModelsInput{
+			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, ProviderID: ctx.Param("id"),
+			UpstreamModelIDs: request.UpstreamModelIDs, ActivateSupportedChat: request.ActivateSupportedChat,
+			ActivateImportedModels: request.ActivateImportedModels,
+			RequestID:              contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+		})
+		if err != nil {
+			handleModelAdminError(ctx, deps.Logger, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, result)
+	}
 }
 
 func listProvidersHandler(deps Dependencies) gin.HandlerFunc {
@@ -128,7 +181,7 @@ func createProviderHandler(deps Dependencies) gin.HandlerFunc {
 		session := currentSession(ctx)
 		provider, err := deps.ModelAdmin.CreateProvider(ctx.Request.Context(), modeladmin.CreateProviderInput{
 			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, Code: request.Code,
-			Name: request.Name, ProviderKind: request.ProviderKind, BaseURL: request.BaseURL, APIKey: *request.APIKey,
+			Name: request.Name, ProviderKind: request.ProviderKind, BaseURL: request.BaseURL, ModelListURL: dereferenceString(request.ModelListURL), APIKey: *request.APIKey,
 			RequestTimeoutMS: request.RequestTimeoutMS, StreamUsageEnabled: request.StreamUsageEnabled != nil && *request.StreamUsageEnabled,
 			RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
 		})
@@ -152,7 +205,7 @@ func updateProviderHandler(deps Dependencies) gin.HandlerFunc {
 		session := currentSession(ctx)
 		provider, err := deps.ModelAdmin.UpdateProvider(ctx.Request.Context(), modeladmin.UpdateProviderInput{
 			OrganizationID: session.User.OrganizationID, ActorID: session.User.ID, ProviderID: ctx.Param("id"),
-			Name: request.Name, ProviderKind: request.ProviderKind, BaseURL: request.BaseURL, APIKey: request.APIKey, RequestTimeoutMS: request.RequestTimeoutMS,
+			Name: request.Name, ProviderKind: request.ProviderKind, BaseURL: request.BaseURL, ModelListURL: request.ModelListURL, APIKey: request.APIKey, RequestTimeoutMS: request.RequestTimeoutMS,
 			StreamUsageEnabled: request.StreamUsageEnabled,
 			RequestID:          contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
 		})
@@ -332,9 +385,16 @@ func validUUIDParam(ctx *gin.Context, resource string) bool {
 }
 
 func presentProvider(item modeladmin.Provider) providerResponse {
-	return providerResponse{ID: item.ID, Code: item.Code, Name: item.Name, ProviderKind: item.ProviderKind, BaseURL: item.BaseURL,
+	return providerResponse{ID: item.ID, Code: item.Code, Name: item.Name, ProviderKind: item.ProviderKind, BaseURL: item.BaseURL, ModelListURL: item.ModelListURL,
 		Status: item.Status, RequestTimeoutMS: item.RequestTimeoutMS, StreamUsageEnabled: item.StreamUsageEnabled, CredentialConfigured: item.CredentialConfigured,
 		LastProbeStatus: item.LastProbeStatus, LastProbeAt: item.LastProbeAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+}
+
+func dereferenceString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func presentModel(item modeladmin.CatalogModel) modelResponse {
@@ -360,6 +420,10 @@ func handleModelAdminError(ctx *gin.Context, logger *slog.Logger, err error) {
 		httpx.Fail(ctx, http.StatusConflict, "model_provider_disabled", "模型供应商连接已停用")
 	case errors.Is(err, modeladmin.ErrProbeFailed):
 		httpx.Fail(ctx, http.StatusBadGateway, "model_provider_unreachable", "无法连接模型供应商，请检查地址、网络和凭据")
+	case errors.Is(err, modeladmin.ErrModelListURLRequired):
+		httpx.Fail(ctx, http.StatusUnprocessableEntity, "model_list_url_required", "百炼当前地址未提供模型列表。请编辑供应商连接，填写对应地域业务空间的模型目录地址")
+	case errors.Is(err, modeladmin.ErrDiscoveryFailed):
+		httpx.Fail(ctx, http.StatusBadGateway, "model_discovery_failed", "获取供应商模型列表失败，请检查地址、网络和凭据")
 	default:
 		logger.Error("模型接入接口处理失败", "error", err, "request_id", contextString(ctx, "request_id"))
 		httpx.Fail(ctx, http.StatusInternalServerError, "internal_error", "服务暂时不可用")
