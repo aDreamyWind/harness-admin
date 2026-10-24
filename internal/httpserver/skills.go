@@ -55,7 +55,7 @@ func registerSkillRoutes(router *gin.Engine, deps Dependencies) {
 		ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 18*1024*1024)
 		header, err := ctx.FormFile("file")
 		if err != nil || header.Size > 16*1024*1024 {
-			httpx.Fail(ctx, http.StatusBadRequest, "invalid_skill_package", "请选择不超过 16 MiB 的 .tar.gz Skill 包")
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_skill_package", "请选择不超过 16 MiB 的 .zip 或 .tar.gz Skill 包")
 			return
 		}
 		file, err := header.Open()

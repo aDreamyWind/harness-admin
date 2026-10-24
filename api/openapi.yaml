@@ -2455,7 +2455,7 @@ paths:
   /skills/import:
     post:
       summary: 导入不可变企业 Skill 版本
-      description: 接受不超过 16 MiB 的 .tar.gz；拒绝越界路径、符号链接、无效 frontmatter 与超限文件。相同名称导入新版本，相同内容摘要返回 409。导入后不会自动发布或执行脚本。
+      description: 接受不超过 16 MiB 的 .zip 或 .tar.gz；拒绝越界路径、符号链接、无效 frontmatter 与超限文件。相同名称导入新版本，相同内容摘要返回 409。导入后不会自动发布或执行脚本。
       operationId: importEnterpriseSkill
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:

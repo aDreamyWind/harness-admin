@@ -2,6 +2,7 @@ package skilladmin
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -49,50 +51,18 @@ func ParsePackage(input []byte) (Package, error) {
 	if len(input) == 0 || len(input) > maxPackageBytes {
 		return Package{}, ErrInvalidPackage
 	}
-	gz, err := gzip.NewReader(bytes.NewReader(input))
-	if err != nil {
+	var files map[string][]byte
+	var err error
+	switch {
+	case len(input) >= 2 && input[0] == 'P' && input[1] == 'K':
+		files, err = parseZIPFiles(input)
+	case len(input) >= 2 && input[0] == 0x1f && input[1] == 0x8b:
+		files, err = parseTarGzipFiles(input)
+	default:
 		return Package{}, ErrInvalidPackage
 	}
-	defer gz.Close()
-	archive := tar.NewReader(gz)
-	files := make(map[string][]byte)
-	total := 0
-	entries := 0
-	for {
-		header, err := archive.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil || header == nil {
-			return Package{}, ErrInvalidPackage
-		}
-		entries++
-		if entries > 2048 {
-			return Package{}, ErrInvalidPackage
-		}
-		name := strings.TrimPrefix(header.Name, "./")
-		if name == "" || strings.HasPrefix(name, "/") || strings.ContainsAny(name, "\\\x00") ||
-			path.Clean(name) != strings.TrimSuffix(name, "/") || name == ".." || strings.HasPrefix(name, "../") {
-			return Package{}, ErrInvalidPackage
-		}
-		if header.Typeflag == tar.TypeDir {
-			continue
-		}
-		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
-			return Package{}, ErrInvalidPackage
-		}
-		if header.Size < 0 || header.Size > maxPackageBytes-int64(total) || len(files) >= maxPackageFiles {
-			return Package{}, ErrInvalidPackage
-		}
-		if _, exists := files[name]; exists {
-			return Package{}, ErrInvalidPackage
-		}
-		data, err := io.ReadAll(io.LimitReader(archive, header.Size+1))
-		if err != nil || int64(len(data)) != header.Size {
-			return Package{}, ErrInvalidPackage
-		}
-		total += len(data)
-		files[name] = data
+	if err != nil {
+		return Package{}, err
 	}
 	root := ""
 	for file := range files {
@@ -108,6 +78,102 @@ func ParsePackage(input []byte) (Package, error) {
 		}
 	}
 	return packageFromFiles(files, root)
+}
+
+func parseTarGzipFiles(input []byte) (map[string][]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(input))
+	if err != nil {
+		return nil, ErrInvalidPackage
+	}
+	defer gz.Close()
+	archive := tar.NewReader(gz)
+	files := make(map[string][]byte)
+	total := 0
+	entries := 0
+	for {
+		header, err := archive.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil || header == nil {
+			return nil, ErrInvalidPackage
+		}
+		entries++
+		if entries > 2048 {
+			return nil, ErrInvalidPackage
+		}
+		name := strings.TrimPrefix(header.Name, "./")
+		if name == "" || strings.HasPrefix(name, "/") || strings.ContainsAny(name, "\\\x00") ||
+			path.Clean(name) != strings.TrimSuffix(name, "/") || name == ".." || strings.HasPrefix(name, "../") {
+			return nil, ErrInvalidPackage
+		}
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			return nil, ErrInvalidPackage
+		}
+		if header.Size < 0 || header.Size > maxPackageBytes-int64(total) || len(files) >= maxPackageFiles {
+			return nil, ErrInvalidPackage
+		}
+		if _, exists := files[name]; exists {
+			return nil, ErrInvalidPackage
+		}
+		data, err := io.ReadAll(io.LimitReader(archive, header.Size+1))
+		if err != nil || int64(len(data)) != header.Size {
+			return nil, ErrInvalidPackage
+		}
+		total += len(data)
+		files[name] = data
+	}
+	return files, nil
+}
+
+func parseZIPFiles(input []byte) (map[string][]byte, error) {
+	archive, err := zip.NewReader(bytes.NewReader(input), int64(len(input)))
+	if err != nil || len(archive.File) > 2048 {
+		return nil, ErrInvalidPackage
+	}
+	files := make(map[string][]byte)
+	total := 0
+	for _, entry := range archive.File {
+		name := strings.TrimPrefix(entry.Name, "./")
+		if name == "" || strings.HasPrefix(name, "/") || strings.ContainsAny(name, "\\\x00") ||
+			path.Clean(name) != strings.TrimSuffix(name, "/") || name == ".." || strings.HasPrefix(name, "../") {
+			return nil, ErrInvalidPackage
+		}
+		mode := entry.Mode()
+		if mode.IsDir() {
+			continue
+		}
+		if !mode.IsRegular() || mode&os.ModeSymlink != 0 ||
+			entry.UncompressedSize64 > uint64(maxPackageBytes-total) {
+			return nil, ErrInvalidPackage
+		}
+		// Finder 创建的 ZIP 可能附带资源分叉及目录元数据；它们不是 Skill 文件。
+		if strings.HasPrefix(name, "__MACOSX/") || path.Base(name) == ".DS_Store" {
+			continue
+		}
+		if len(files) >= maxPackageFiles {
+			return nil, ErrInvalidPackage
+		}
+		if _, exists := files[name]; exists {
+			return nil, ErrInvalidPackage
+		}
+		reader, err := entry.Open()
+		if err != nil {
+			return nil, ErrInvalidPackage
+		}
+		data, readErr := io.ReadAll(io.LimitReader(reader, int64(maxPackageBytes-total)+1))
+		closeErr := reader.Close()
+		if readErr != nil || closeErr != nil || len(data) > maxPackageBytes-total ||
+			uint64(len(data)) != entry.UncompressedSize64 {
+			return nil, ErrInvalidPackage
+		}
+		total += len(data)
+		files[name] = data
+	}
+	return files, nil
 }
 
 func packageFromFiles(files map[string][]byte, root string) (Package, error) {

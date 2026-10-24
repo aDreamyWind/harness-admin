@@ -129,10 +129,10 @@ export function SkillsPage() {
         options={[{ value: 'upload', label: '本地文件上传', icon: <UploadOutlined /> },
           { value: 'github', label: '从 GitHub 导入', icon: <GithubOutlined /> }]} style={{ marginBottom: 20 }} />
       {importMode === 'upload' ? <>
-        <Upload.Dragger accept=".tar.gz,.tgz" maxCount={1} showUploadList={false}
+        <Upload.Dragger accept=".zip,.tar.gz,.tgz" maxCount={1} showUploadList={false}
           beforeUpload={(file: File) => { setSelectedFile(file); return false }}>
           <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-          <p className="ant-upload-text">{selectedFile ? selectedFile.name : '点击或拖入 .tar.gz Skill 包'}</p>
+          <p className="ant-upload-text">{selectedFile ? selectedFile.name : '点击或拖入 .zip、.tar.gz Skill 包'}</p>
           <p className="ant-upload-hint">单个文件不超过 16 MiB；导入后可检查文件与版本</p>
         </Upload.Dragger>
       </> : <Form form={githubForm} layout="vertical" initialValues={{ ref: '', skillPath: '' }}>
