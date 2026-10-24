@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,10 +18,12 @@ import (
 
 	"harness-admin/internal/httpx"
 	"harness-admin/internal/modelgateway"
+	"harness-admin/internal/modelprovider"
 	oidcmodule "harness-admin/internal/oidc"
 )
 
 const maxGatewayRequestBody = 4 * 1024 * 1024
+const maxMediaGatewayRequestBody = 20 * 1024 * 1024
 const maxGatewayResponseBody = 32 * 1024 * 1024
 
 type ModelGatewayService interface {
@@ -31,6 +34,11 @@ type ModelGatewayService interface {
 	RevealAPIKeySecret(context.Context, modelgateway.RevealAPIKeySecretInput) (string, error)
 	Prepare(context.Context, string, []byte) (modelgateway.PreparedRequest, error)
 	PrepareForUser(context.Context, string, string, []byte) (modelgateway.PreparedRequest, error)
+	PrepareOperation(context.Context, string, []byte, string) (modelgateway.PreparedRequest, error)
+	PrepareForUserOperation(context.Context, string, string, []byte, string) (modelgateway.PreparedRequest, error)
+	SaveVideoTask(context.Context, modelgateway.SaveVideoTaskInput) (modelgateway.VideoTask, error)
+	FindVideoTaskForAPIKey(context.Context, string, string) (modelgateway.VideoTask, error)
+	FindVideoTaskForUser(context.Context, string, string, string) (modelgateway.VideoTask, error)
 	RecordCall(context.Context, modelgateway.RecordCallInput) error
 	ListCalls(context.Context, modelgateway.CallQuery) (modelgateway.CallPage, error)
 	ListUsage(context.Context, modelgateway.UsageQuery) (modelgateway.UsagePage, error)
@@ -44,6 +52,7 @@ type ModelGatewayService interface {
 
 type ModelGatewayForwarder interface {
 	Forward(context.Context, modelgateway.Route, []byte, bool) (*http.Response, error)
+	QueryVideoTask(context.Context, modelgateway.Route, string) (*http.Response, error)
 }
 
 type createGatewayAPIKeyRequest struct {
@@ -59,19 +68,20 @@ type updateGatewayAlertSettingsRequest struct {
 }
 
 type gatewayAPIKeyResponse struct {
-	ID                string     `json:"id"`
-	Name              string     `json:"name"`
-	KeyPrefix         string     `json:"keyPrefix"`
-	Status            string     `json:"status"`
-	ExpiresAt         *time.Time `json:"expiresAt,omitempty"`
-	LastUsedAt        *time.Time `json:"lastUsedAt,omitempty"`
-	RequestsPerMinute int        `json:"requestsPerMinute"`
-	MonthlyTokenLimit int64      `json:"monthlyTokenLimit"`
-	MonthlyTokenUsed  int64      `json:"monthlyTokenUsed"`
-	AllowedModelCodes []string   `json:"allowedModelCodes"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	RevokedAt         *time.Time `json:"revokedAt,omitempty"`
-	Secret            string     `json:"secret,omitempty"`
+	ID                string                      `json:"id"`
+	Name              string                      `json:"name"`
+	KeyPrefix         string                      `json:"keyPrefix"`
+	Status            string                      `json:"status"`
+	ExpiresAt         *time.Time                  `json:"expiresAt,omitempty"`
+	LastUsedAt        *time.Time                  `json:"lastUsedAt,omitempty"`
+	RequestsPerMinute int                         `json:"requestsPerMinute"`
+	MonthlyTokenLimit int64                       `json:"monthlyTokenLimit"`
+	MonthlyTokenUsed  int64                       `json:"monthlyTokenUsed"`
+	AllowedModelCodes []string                    `json:"allowedModelCodes"`
+	AllowedModels     []modelgateway.AllowedModel `json:"allowedModels"`
+	CreatedAt         time.Time                   `json:"createdAt"`
+	RevokedAt         *time.Time                  `json:"revokedAt,omitempty"`
+	Secret            string                      `json:"secret,omitempty"`
 }
 
 type gatewayCallPageResponse struct {
@@ -91,7 +101,10 @@ type gatewayCallResponse struct {
 	DepartmentID     string    `json:"departmentId,omitempty"`
 	RequestID        string    `json:"requestId"`
 	ModelCode        string    `json:"modelCode"`
+	ModelName        string    `json:"modelName"`
+	ModelType        string    `json:"modelType"`
 	UpstreamModelID  string    `json:"upstreamModelId"`
+	ProviderName     string    `json:"providerName"`
 	Streaming        bool      `json:"streaming"`
 	Result           string    `json:"result"`
 	HTTPStatus       int       `json:"httpStatus"`
@@ -121,6 +134,9 @@ func registerModelGatewayRoutes(router *gin.Engine, deps Dependencies) {
 	admin.POST("/alerts/:id/acknowledge", requirePermission(deps, "model.gateway.write"), requireCSRF(deps), acknowledgeGatewayAlertHandler(deps))
 
 	router.POST("/v1/chat/completions", chatCompletionsGatewayHandler(deps))
+	router.POST("/v1/images/generations", mediaGenerationGatewayHandler(deps, "image"))
+	router.POST("/v1/videos/generations", mediaGenerationGatewayHandler(deps, "video"))
+	router.GET("/v1/videos/tasks/:id", videoTaskGatewayHandler(deps))
 	router.GET("/v1/models", listGatewayModelsHandler(deps))
 }
 
@@ -150,7 +166,7 @@ func listGatewayModelsHandler(deps Dependencies) gin.HandlerFunc {
 		for _, item := range items {
 			data = append(data, gin.H{
 				"id": item.Code, "object": "model", "created": item.CreatedAt.Unix(), "owned_by": "harness-admin",
-				"name": item.Name, "capabilities": item.Capabilities,
+				"name": item.Name, "model_type": item.ModelType, "capabilities": item.Capabilities,
 			})
 		}
 		ctx.Header("Cache-Control", "no-store")
@@ -307,7 +323,8 @@ func listGatewayCallsHandler(deps Dependencies) gin.HandlerFunc {
 			response = append(response, gatewayCallResponse{
 				ID: item.ID, APIKeyID: item.APIKeyID, APIKeyName: item.APIKeyName,
 				AuthType: item.AuthType, UserID: item.UserID, UserName: item.UserName, DepartmentID: item.DepartmentID, RequestID: item.RequestID,
-				ModelCode: item.ModelCode, UpstreamModelID: item.UpstreamModelID, Streaming: item.Streaming,
+				ModelCode: item.ModelCode, ModelName: item.ModelName, ModelType: item.ModelType,
+				UpstreamModelID: item.UpstreamModelID, ProviderName: item.ProviderName, Streaming: item.Streaming,
 				Result: item.Result, HTTPStatus: item.HTTPStatus, LatencyMS: item.LatencyMS,
 				PromptTokens: item.PromptTokens, CompletionTokens: item.CompletionTokens, TotalTokens: item.TotalTokens,
 				UsageReported: item.UsageReported, QuotaExceeded: item.QuotaExceeded,
@@ -417,22 +434,38 @@ func updateGatewayAlertSettingsHandler(deps Dependencies) gin.HandlerFunc {
 }
 
 func chatCompletionsGatewayHandler(deps Dependencies) gin.HandlerFunc {
+	return mediaGenerationGatewayHandler(deps, "chat")
+}
+
+func mediaGenerationGatewayHandler(deps Dependencies, operation string) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		startedAt := time.Now()
-		body, err := io.ReadAll(io.LimitReader(ctx.Request.Body, maxGatewayRequestBody+1))
-		if err != nil || len(body) > maxGatewayRequestBody {
-			writeGatewayError(ctx, http.StatusBadRequest, "invalid_request", "请求体无效或超过 4 MiB")
+		limit := maxGatewayRequestBody
+		if operation != "chat" {
+			limit = maxMediaGatewayRequestBody
+		}
+		body, err := io.ReadAll(io.LimitReader(ctx.Request.Body, int64(limit+1)))
+		if err != nil || len(body) > limit {
+			writeGatewayError(ctx, http.StatusBadRequest, "invalid_request", "请求体无效或超过大小限制")
 			return
 		}
 		credential := bearerCredential(ctx.GetHeader("Authorization"))
 		var prepared modelgateway.PreparedRequest
 		if strings.HasPrefix(credential, "harness_sk_") {
-			prepared, err = deps.ModelGateway.Prepare(ctx.Request.Context(), credential, body)
+			if operation == "chat" {
+				prepared, err = deps.ModelGateway.Prepare(ctx.Request.Context(), credential, body)
+			} else {
+				prepared, err = deps.ModelGateway.PrepareOperation(ctx.Request.Context(), credential, body, operation)
+			}
 		} else if deps.OIDCProvider != nil {
 			var subject oidcmodule.Subject
 			subject, err = deps.OIDCProvider.AuthenticateAccessToken(ctx.Request.Context(), credential, "model.invoke")
 			if err == nil {
-				prepared, err = deps.ModelGateway.PrepareForUser(ctx.Request.Context(), subject.OrganizationID, subject.ID, body)
+				if operation == "chat" {
+					prepared, err = deps.ModelGateway.PrepareForUser(ctx.Request.Context(), subject.OrganizationID, subject.ID, body)
+				} else {
+					prepared, err = deps.ModelGateway.PrepareForUserOperation(ctx.Request.Context(), subject.OrganizationID, subject.ID, body, operation)
+				}
 			} else {
 				err = modelgateway.ErrInvalidCredential
 			}
@@ -446,8 +479,19 @@ func chatCompletionsGatewayHandler(deps Dependencies) gin.HandlerFunc {
 		upstream, err := deps.GatewayForwarder.Forward(ctx.Request.Context(), prepared.Route, prepared.Body, prepared.Streaming)
 		if err != nil {
 			status := http.StatusBadGateway
-			writeGatewayError(ctx, status, "provider_unreachable", "无法连接模型供应商")
-			recordGatewayCall(deps, ctx, prepared, status, time.Since(startedAt), tokenUsage{}, "provider_unreachable")
+			code, message := "provider_unreachable", "无法连接模型供应商"
+			switch {
+			case errors.Is(err, modelprovider.ErrInvalidImageRequest):
+				status, code, message = http.StatusBadRequest, "invalid_request", "图片请求参数无效"
+			case errors.Is(err, modelprovider.ErrInvalidProviderRoute):
+				code, message = "invalid_provider_route", "模型供应商路由配置无效"
+			case errors.Is(err, modelprovider.ErrInvalidImageResponse):
+				code, message = "invalid_provider_response", "模型供应商图片响应无效"
+			}
+			deps.Logger.Error("模型供应商调用失败", "error", err, "request_id", contextString(ctx, "request_id"),
+				"provider_id", prepared.Route.ProviderID, "model_id", prepared.Route.ModelID)
+			writeGatewayError(ctx, status, code, message)
+			recordGatewayCall(deps, ctx, prepared, status, time.Since(startedAt), tokenUsage{}, code)
 			return
 		}
 		defer upstream.Body.Close()
@@ -471,9 +515,125 @@ func chatCompletionsGatewayHandler(deps Dependencies) gin.HandlerFunc {
 			recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "invalid_provider_response")
 			return
 		}
-		ctx.Data(upstream.StatusCode, upstream.Header.Get("Content-Type"), responseBody)
+		contentType := upstream.Header.Get("Content-Type")
+		if operation != "chat" && upstream.StatusCode >= 400 {
+			if providerError, ok := dashScopeEventError(responseBody); ok {
+				responseBody = providerError
+				contentType = "application/json"
+			}
+		}
+		if operation == "video" && upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+			upstreamTaskID := videoTaskID(responseBody)
+			if upstreamTaskID == "" {
+				writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商未返回任务标识")
+				recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "invalid_provider_response")
+				return
+			}
+			task, saveErr := deps.ModelGateway.SaveVideoTask(ctx.Request.Context(), modelgateway.SaveVideoTaskInput{
+				Caller: prepared.Caller, Route: prepared.Route, UpstreamTaskID: upstreamTaskID,
+				RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+			})
+			if saveErr != nil {
+				deps.Logger.Error("保存视频任务失败", "error", saveErr, "request_id", contextString(ctx, "request_id"))
+				writeGatewayError(ctx, http.StatusBadGateway, "video_task_unavailable", "视频任务已提交，但无法保存查询标识")
+				recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "video_task_unavailable")
+				return
+			}
+			responseBody, err = replaceVideoTaskID(responseBody, task.ID)
+			if err != nil {
+				writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效")
+				return
+			}
+		}
+		ctx.Header("Content-Type", contentType)
+		ctx.Data(upstream.StatusCode, contentType, responseBody)
 		recordGatewayCall(deps, ctx, prepared, upstream.StatusCode, time.Since(startedAt), parseTokenUsage(responseBody), upstreamErrorCode(upstream.StatusCode, responseBody))
 	}
+}
+
+func videoTaskGatewayHandler(deps Dependencies) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		credential := bearerCredential(ctx.GetHeader("Authorization"))
+		var task modelgateway.VideoTask
+		var err error
+		if strings.HasPrefix(credential, "harness_sk_") {
+			task, err = deps.ModelGateway.FindVideoTaskForAPIKey(ctx.Request.Context(), credential, ctx.Param("id"))
+		} else if deps.OIDCProvider != nil {
+			var subject oidcmodule.Subject
+			subject, err = deps.OIDCProvider.AuthenticateAccessToken(ctx.Request.Context(), credential, "model.invoke")
+			if err == nil {
+				task, err = deps.ModelGateway.FindVideoTaskForUser(ctx.Request.Context(), subject.OrganizationID, subject.ID, ctx.Param("id"))
+			} else {
+				err = modelgateway.ErrInvalidCredential
+			}
+		} else {
+			err = modelgateway.ErrInvalidCredential
+		}
+		if err != nil {
+			handleGatewayRequestError(ctx, deps.Logger, err)
+			return
+		}
+		upstream, err := deps.GatewayForwarder.QueryVideoTask(ctx.Request.Context(), task.Route, task.UpstreamTaskID)
+		if err != nil {
+			writeGatewayError(ctx, http.StatusBadGateway, "provider_unreachable", "无法查询视频供应商任务")
+			return
+		}
+		defer upstream.Body.Close()
+		responseBody, readErr := io.ReadAll(io.LimitReader(upstream.Body, maxGatewayResponseBody+1))
+		if readErr != nil || len(responseBody) > maxGatewayResponseBody {
+			writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效或过大")
+			return
+		}
+		contentType := upstream.Header.Get("Content-Type")
+		if upstream.StatusCode >= 400 {
+			if providerError, ok := dashScopeEventError(responseBody); ok {
+				responseBody = providerError
+				contentType = "application/json"
+			}
+		}
+		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+			responseBody, err = replaceVideoTaskID(responseBody, task.ID)
+			if err != nil {
+				writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效")
+				return
+			}
+		}
+		copyGatewayHeaders(ctx.Writer.Header(), upstream.Header)
+		ctx.Header("X-Request-ID", contextString(ctx, "request_id"))
+		ctx.Header("Content-Type", contentType)
+		ctx.Data(upstream.StatusCode, contentType, responseBody)
+	}
+}
+
+func videoTaskID(body []byte) string {
+	var response struct {
+		Output struct {
+			TaskID string `json:"task_id"`
+		} `json:"output"`
+	}
+	if json.Unmarshal(body, &response) != nil {
+		return ""
+	}
+	return strings.TrimSpace(response.Output.TaskID)
+}
+
+func replaceVideoTaskID(body []byte, taskID string) ([]byte, error) {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(body, &response); err != nil || response == nil {
+		return nil, errors.New("视频任务响应不是对象")
+	}
+	var output map[string]json.RawMessage
+	if err := json.Unmarshal(response["output"], &output); err != nil || output == nil {
+		return nil, errors.New("视频任务输出不是对象")
+	}
+	encodedID, _ := json.Marshal(taskID)
+	output["task_id"] = encodedID
+	encodedOutput, err := json.Marshal(output)
+	if err != nil {
+		return nil, err
+	}
+	response["output"] = encodedOutput
+	return json.Marshal(response)
 }
 
 func streamGatewayResponse(ctx *gin.Context, source io.Reader) (tokenUsage, error) {
@@ -553,12 +713,16 @@ func upstreamErrorCode(status int, body []byte) string {
 		return ""
 	}
 	var envelope struct {
+		Code  string `json:"code"`
 		Error struct {
 			Code string `json:"code"`
 			Type string `json:"type"`
 		} `json:"error"`
 	}
 	if len(body) > 0 && json.Unmarshal(body, &envelope) == nil {
+		if envelope.Code != "" {
+			return truncateGatewayCode(envelope.Code)
+		}
 		if envelope.Error.Code != "" {
 			return truncateGatewayCode(envelope.Error.Code)
 		}
@@ -567,6 +731,26 @@ func upstreamErrorCode(status int, body []byte) string {
 		}
 	}
 	return "provider_http_" + strconv.Itoa(status)
+}
+
+func dashScopeEventError(body []byte) ([]byte, bool) {
+	if !bytes.Contains(body, []byte("event:error")) {
+		return nil, false
+	}
+	for _, line := range bytes.Split(body, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		var providerError struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(payload, &providerError) == nil && providerError.Code != "" {
+			return append([]byte(nil), payload...), true
+		}
+	}
+	return nil, false
 }
 
 func recordGatewayCall(deps Dependencies, ctx *gin.Context, prepared modelgateway.PreparedRequest, status int, latency time.Duration, usage tokenUsage, errorCode string) {
@@ -581,7 +765,7 @@ func recordGatewayCall(deps Dependencies, ctx *gin.Context, prepared modelgatewa
 		UserID: prepared.Caller.UserID, AuthType: prepared.Caller.AuthType,
 		DepartmentID: prepared.Caller.DepartmentID,
 		ModelID:      prepared.Route.ModelID, ProviderID: prepared.Route.ProviderID,
-		RequestID: contextString(ctx, "request_id"), ModelCode: prepared.Route.ModelCode,
+		RequestID: contextString(ctx, "request_id"), ModelCode: prepared.Route.ModelCode, ModelType: prepared.Route.ModelType,
 		UpstreamModelID: prepared.Route.UpstreamModelID, Streaming: prepared.Streaming,
 		Result: result, HTTPStatus: status, LatencyMS: latency.Milliseconds(),
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
@@ -615,8 +799,9 @@ func presentGatewayAPIKey(item modelgateway.APIKey, secret string) gatewayAPIKey
 		ExpiresAt: item.ExpiresAt, LastUsedAt: item.LastUsedAt,
 		RequestsPerMinute: item.RequestsPerMinute, MonthlyTokenLimit: item.MonthlyTokenLimit,
 		MonthlyTokenUsed: item.MonthlyTokenUsed, AllowedModelCodes: item.AllowedModelCodes,
-		CreatedAt: item.CreatedAt,
-		RevokedAt: item.RevokedAt, Secret: secret,
+		AllowedModels: item.AllowedModels,
+		CreatedAt:     item.CreatedAt,
+		RevokedAt:     item.RevokedAt, Secret: secret,
 	}
 }
 
@@ -674,6 +859,10 @@ func handleGatewayRequestError(ctx *gin.Context, logger *slog.Logger, err error)
 		writeGatewayError(ctx, http.StatusConflict, "model_unavailable", err.Error())
 	case errors.Is(err, modelgateway.ErrModelNotAllowed):
 		writeGatewayError(ctx, http.StatusForbidden, "model_not_allowed", err.Error())
+	case errors.Is(err, modelgateway.ErrModelTypeMismatch):
+		writeGatewayError(ctx, http.StatusBadRequest, "model_type_mismatch", err.Error())
+	case errors.Is(err, modelgateway.ErrVideoTaskNotFound):
+		writeGatewayError(ctx, http.StatusNotFound, "video_task_not_found", err.Error())
 	case errors.Is(err, modelgateway.ErrRateLimited):
 		ctx.Header("Retry-After", "60")
 		writeGatewayError(ctx, http.StatusTooManyRequests, "rate_limit_exceeded", err.Error())

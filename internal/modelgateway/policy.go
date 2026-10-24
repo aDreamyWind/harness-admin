@@ -71,6 +71,7 @@ type SaveDepartmentPoliciesInput struct {
 type AvailableModel struct {
 	Code         string
 	Name         string
+	ModelType    string
 	Capabilities []string
 	CreatedAt    time.Time
 }

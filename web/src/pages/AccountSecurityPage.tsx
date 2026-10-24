@@ -349,7 +349,7 @@ function SessionRow({ session, revoking, onRevoke }: { session: UserSession; rev
           <strong>{client}</strong>
           {session.current ? <StatusIndicator label="当前设备" tone="info" /> : null}
         </div>
-        <Text ellipsis={{ tooltip: session.userAgent || '未记录客户端信息' }}>{session.userAgent || '未记录客户端信息'}</Text>
+        <Text className="session-user-agent">{session.userAgent || '未记录客户端信息'}</Text>
         <Space size={16} wrap className="session-meta">
           <span>{session.sourceIp || '未知 IP'}</span>
           <span><ClockCircleOutlined /> 最近活动 {formatDateTime(session.lastSeenAt)}</span>

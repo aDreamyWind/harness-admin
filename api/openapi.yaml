@@ -1185,7 +1185,7 @@ paths:
   /model-providers/{providerId}/import-models:
     post:
       summary: 将选中的上游模型批量导入目录
-      description: 重新读取上游列表并核对所选标识；事务内导入，重复项跳过，新模型默认为停用。可选同时启用所有新导入模型；非对话模型仍不会进入当前对话网关。
+      description: 重新读取上游列表并核对所选标识；事务内导入，重复项跳过，新模型默认为停用。可选同时启用所有新导入模型；图片和视频模型在供应商协议受支持时可使用各自的网关入口。
       operationId: importProviderModels
       security:
         - sessionCookie: []
@@ -1217,7 +1217,7 @@ paths:
                 activateImportedModels:
                   type: boolean
                   default: false
-                  description: 同时启用所有新导入模型；非对话模型和未接入网关的协议仅在目录中启用，不会进入当前对话路由。
+                  description: 同时启用所有新导入模型；已接入的对话、图片、视频协议分别使用各自的网关入口，其余类型仅在目录中启用。
       responses:
         '200':
           description: 批量导入结果。
@@ -1733,6 +1733,85 @@ paths:
         '409': { description: 模型或供应商连接已停用。 }
         '429': { description: 超过调用身份、部门或用户的每分钟请求限制，或当月 Token 额度已用尽。 }
         '502': { description: 无法连接模型供应商。 }
+  /v1/images/generations:
+    servers:
+      - url: /
+    post:
+      summary: 生成图片
+      description: 使用企业模型编码调用已启用的图片模型。百炼旧公共域名由网关转换为 DashScope 原生同步图片协议，业务空间专属域名及其他兼容供应商使用 OpenAI 图片协议；响应统一含 data[].url。调用身份、模型范围、请求限流与审计沿用模型网关。图片链接可能限时有效，实际调用还取决于供应商授权及地域。
+      operationId: gatewayImageGenerations
+      security:
+        - gatewayBearer: []
+        - oidcBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt]
+              properties:
+                model: { type: string, description: 企业图片模型编码。 }
+                prompt: { type: string, minLength: 1 }
+              additionalProperties: true
+      responses:
+        '200': { description: 上游图片生成响应。 }
+        '400': { description: 请求格式错误或模型类型不匹配。 }
+        '401': { description: 调用身份无效。 }
+        '403': { description: 网关或上游拒绝调用；百炼上游错误会返回含 code、message、request_id 的 JSON。 }
+        '404': { description: 模型编码不存在。 }
+        '409': { description: 模型或供应商已停用。 }
+        '429': { description: 请求频率或 Token 额度限制。 }
+        '502': { description: 无法连接模型供应商。 }
+  /v1/videos/generations:
+    servers:
+      - url: /
+    post:
+      summary: 提交百炼视频生成任务
+      description: 使用企业视频模型编码提交百炼异步视频任务。请求体采用百炼 video-synthesis 的 input 与 parameters 结构，网关会将 output.task_id 替换为网关任务 ID；用该 ID 查询结果。任务只允许原调用密钥或原用户查询。
+      operationId: gatewayVideoGenerations
+      security:
+        - gatewayBearer: []
+        - oidcBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input]
+              properties:
+                model: { type: string, description: 企业视频模型编码。 }
+                input: { type: object, additionalProperties: true, description: 百炼视频生成输入，例如 prompt。 }
+                parameters: { type: object, additionalProperties: true, description: 供应商视频生成参数。 }
+              additionalProperties: true
+      responses:
+        '200': { description: 视频任务已提交，output.task_id 为网关任务 ID。 }
+        '400': { description: 请求格式错误或模型类型不匹配。 }
+        '401': { description: 调用身份无效。 }
+        '403': { description: 网关或上游拒绝调用；百炼上游错误会返回含 code、message、request_id 的 JSON。 }
+        '404': { description: 模型编码不存在。 }
+        '409': { description: 模型或供应商已停用。 }
+        '429': { description: 请求频率或 Token 额度限制。 }
+        '502': { description: 上游请求或任务保存失败。 }
+  /v1/videos/tasks/{taskId}:
+    servers:
+      - url: /
+    get:
+      summary: 查询视频生成任务
+      description: 查询由当前调用密钥或当前 OIDC 用户创建的网关任务；返回中的 output.task_id 保持为网关任务 ID。上游视频结果链接可能限时有效。
+      operationId: gatewayGetVideoTask
+      security:
+        - gatewayBearer: []
+        - oidcBearer: []
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 上游任务状态及完成后的结果。 }
+        '400': { description: 任务标识格式错误。 }
+        '401': { description: 调用身份无效。 }
+        '404': { description: 任务不存在或不属于当前调用身份。 }
+        '502': { description: 无法查询视频供应商任务。 }
   /mcp-services:
     get:
       summary: 查询企业 MCP 服务
@@ -3177,12 +3256,13 @@ components:
           type: array
           items:
             type: object
-            required: [id, object, created, owned_by]
+            required: [id, object, created, owned_by, model_type]
             properties:
               id: { type: string, description: 企业模型编码。 }
               object: { type: string, enum: [model] }
               created: { type: integer, format: int64, description: Unix 秒时间戳。 }
               owned_by: { type: string, enum: [harness-admin] }
+              model_type: { type: string, enum: [chat, image, video], description: 当前可调用模型对应的网关入口类型。 }
               name: { type: string, description: Harness Admin 中配置的模型显示名称。 }
               capabilities:
                 type: array
@@ -3207,7 +3287,7 @@ components:
           required: [name, requestsPerMinute, monthlyTokenLimit, allowedModelCodes]
     GatewayAPIKey:
       type: object
-      required: [id, name, keyPrefix, status, requestsPerMinute, monthlyTokenLimit, monthlyTokenUsed, allowedModelCodes, createdAt]
+      required: [id, name, keyPrefix, status, requestsPerMinute, monthlyTokenLimit, monthlyTokenUsed, allowedModelCodes, allowedModels, createdAt]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -3221,6 +3301,16 @@ components:
         allowedModelCodes:
           type: array
           items: { type: string }
+        allowedModels:
+          type: array
+          description: 按允许的模型编码顺序返回当前供应商和模型显示名称；编码继续用于路由和权限判断。
+          items:
+            type: object
+            required: [code, providerName, modelName]
+            properties:
+              code: { type: string, description: 不可修改的模型编码。 }
+              providerName: { type: string, description: 当前供应商连接名称；连接已删除时为空。 }
+              modelName: { type: string, description: 当前模型名称；模型已删除时为空。 }
         createdAt: { type: string, format: date-time }
         revokedAt: { type: string, format: date-time }
     CreatedGatewayAPIKey:
@@ -3232,7 +3322,7 @@ components:
             secret: { type: string, readOnly: true, description: 创建成功时返回的完整调用密钥；后续可通过密钥查看接口再次读取。 }
     GatewayCall:
       type: object
-      required: [id, authType, requestId, modelCode, upstreamModelId, streaming, result, httpStatus, latencyMs, promptTokens, completionTokens, totalTokens, usageReported, quotaExceeded, errorCode, sourceIp, createdAt]
+      required: [id, authType, requestId, modelCode, modelName, modelType, upstreamModelId, providerName, streaming, result, httpStatus, latencyMs, promptTokens, completionTokens, totalTokens, usageReported, quotaExceeded, errorCode, sourceIp, createdAt]
       properties:
         id: { type: string, format: uuid }
         authType: { type: string, enum: [api_key, user] }
@@ -3243,7 +3333,10 @@ components:
         departmentId: { type: string, format: uuid, description: 调用发生时的部门标识；历史数据可能没有。 }
         requestId: { type: string }
         modelCode: { type: string }
+        modelName: { type: string, description: 当前模型目录名称；修改名称后，历史调用记录会显示新名称。 }
+        modelType: { type: string, enum: [chat, image, video] }
         upstreamModelId: { type: string }
+        providerName: { type: string, description: 当前供应商连接名称；修改名称后，历史调用记录会显示新名称。 }
         streaming: { type: boolean }
         result: { type: string, enum: [success, failed] }
         httpStatus: { type: integer }

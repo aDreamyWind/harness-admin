@@ -263,9 +263,8 @@ body {
 .consent-party strong,
 .consent-party small {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .consent-party strong {
@@ -721,12 +720,10 @@ select {
 .audit-action-cell small,
 .audit-actor-cell small,
 .audit-resource-cell small {
-  overflow: hidden;
   margin-top: 3px;
   color: #8793a2;
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .audit-actor-cell span,
@@ -950,6 +947,10 @@ select {
   font: 10px/1.45 "SFMono-Regular", Menlo, monospace;
 }
 
+.session-user-agent {
+  overflow-wrap: anywhere;
+}
+
 .session-meta {
   margin-top: 9px;
   color: #617086;
@@ -1079,6 +1080,7 @@ select {
 
 .directory-card .ant-table-tbody > tr > td {
   text-align: center !important;
+  overflow-wrap: anywhere;
 }
 
 .status-indicator {
@@ -1112,16 +1114,16 @@ select {
 }
 
 .department-option > span {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   color: #26364b;
+  overflow-wrap: anywhere;
 }
 
 .department-option small {
-  overflow: hidden;
   color: #8793a2;
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .policy-department-picker {
@@ -1447,9 +1449,7 @@ select {
 
 .mcp-service-item strong {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 13px;
 }
 
@@ -1760,7 +1760,7 @@ select {
 
 .mcp-deployment-strip > div:last-child { border-right: 0; }
 .mcp-deployment-strip span { color: #78869b; font-size: 12px; }
-.mcp-deployment-strip strong, .mcp-deployment-strip code { overflow: hidden; color: #203149; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-deployment-strip strong, .mcp-deployment-strip code { color: #203149; font-size: 13px; overflow-wrap: anywhere; }
 .mcp-deployment-actions { margin: 16px 0 20px; }
 .mcp-deployment-subhead { display: flex; justify-content: space-between; gap: 12px; margin: 2px 0 12px; color: #203149; font-size: 13px; }
 .mcp-deployment-logs { margin: 12px 0; color: #415370; font-size: 13px; }
@@ -2430,24 +2430,26 @@ select {
 }
 
 .model-resource-name strong,
-.model-resource-name small,
 .probe-state small {
   display: block;
 }
 
 .model-resource-name strong {
-  overflow: hidden;
   color: #26364b;
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
-.model-resource-name small,
 .probe-state small {
   margin-top: 3px;
   color: #8793a2;
   font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.model-resource-code {
+  font: 11px/1.5 "SFMono-Regular", Menlo, monospace;
+  overflow-wrap: anywhere;
 }
 
 .model-capabilities {
@@ -2533,10 +2535,12 @@ select {
 }
 
 .gateway-key-name {
-  display: grid;
+  display: inline-grid;
   grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
+  max-width: 100%;
+  text-align: left;
 }
 
 .gateway-key-name > .anticon {
@@ -2558,6 +2562,7 @@ select {
 .gateway-key-name strong {
   color: #26364b;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .gateway-key-name small {
@@ -2585,16 +2590,59 @@ select {
 
 .gateway-model-scope {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
-.gateway-model-scope .ant-tag {
-  overflow: hidden;
-  max-width: 82px;
-  margin: 0;
-  text-overflow: ellipsis;
+.gateway-model-scope-item {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid #e3e9ef;
+  border-radius: 6px;
+  background: #f8fafc;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.gateway-model-scope-item span {
+  color: #697b90;
+  font-size: 11px;
+}
+
+.gateway-model-scope-item strong {
+  color: #26364b;
+  font-size: 12px;
+}
+
+.gateway-model-scope details {
+  width: 100%;
+}
+
+.gateway-model-scope summary {
+  text-align: center;
+  color: #2457d6;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.gateway-model-scope-extra {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.gateway-resource-card .ant-table-thead > tr > th,
+.gateway-resource-card .ant-table-tbody > tr > td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.gateway-resource-card .gateway-call-model > div {
+  justify-content: center;
 }
 
 .gateway-call-filters {
@@ -2645,32 +2693,25 @@ select {
   width: 100%;
 }
 
-.gateway-call-flow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: #7b8999;
-}
-
-.gateway-call-flow strong,
-.gateway-call-flow span {
-  overflow: hidden;
-  max-width: 112px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gateway-call-flow strong {
+.gateway-call-provider,
+.gateway-call-model strong {
   color: #26364b;
-  font: 600 11px/1.4 "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
-.gateway-call-flow span {
-  font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
+.gateway-call-model strong {
+  display: block;
 }
 
-.gateway-call-flow .ant-tag {
+.gateway-call-model > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.gateway-call-model .ant-tag {
   margin: 0;
 }
 
@@ -2781,18 +2822,13 @@ select {
 }
 
 .application-access-name small {
-  overflow: hidden;
-  max-width: 128px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .application-access-name strong {
-  overflow: hidden;
   color: #26364b;
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .application-access-name small,
@@ -2806,10 +2842,14 @@ select {
   min-width: 0;
 }
 
-.application-access-callback .ant-typography {
-  max-width: 208px;
-  margin: 0;
+.application-access-callback code {
+  display: block;
+  overflow-wrap: anywhere;
   font-size: 11px;
+}
+
+.application-access-callback code + code {
+  margin-top: 4px;
 }
 
 .application-access-scopes {

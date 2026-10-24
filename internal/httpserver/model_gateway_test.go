@@ -16,20 +16,24 @@ import (
 )
 
 type modelGatewayStub struct {
+	listKeys           []modelgateway.APIKey
 	createInput        modelgateway.CreateAPIKeyInput
 	credential         string
 	requestBody        string
 	recorded           modelgateway.RecordCallInput
 	listQuery          modelgateway.CallQuery
+	listItems          []modelgateway.Call
 	usageQuery         modelgateway.UsageQuery
 	alertQuery         modelgateway.AlertQuery
 	acknowledgeInput   modelgateway.AcknowledgeAlertInput
 	alertSettingsInput modelgateway.UpdateAlertSettingsInput
 	revealInput        modelgateway.RevealAPIKeySecretInput
+	videoTaskInput     modelgateway.SaveVideoTaskInput
+	videoTask          modelgateway.VideoTask
 }
 
-func (*modelGatewayStub) ListAPIKeys(context.Context, string) ([]modelgateway.APIKey, error) {
-	return []modelgateway.APIKey{}, nil
+func (s *modelGatewayStub) ListAPIKeys(context.Context, string) ([]modelgateway.APIKey, error) {
+	return s.listKeys, nil
 }
 func (s *modelGatewayStub) CreateAPIKey(_ context.Context, input modelgateway.CreateAPIKeyInput) (modelgateway.CreatedAPIKey, error) {
 	s.createInput = input
@@ -65,13 +69,43 @@ func (s *modelGatewayStub) PrepareForUser(_ context.Context, organizationID, use
 		Body:   body,
 	}, nil
 }
+func (s *modelGatewayStub) PrepareOperation(ctx context.Context, credential string, body []byte, operation string) (modelgateway.PreparedRequest, error) {
+	prepared, err := s.Prepare(ctx, credential, body)
+	prepared.Route.ModelType = operation
+	prepared.Route.ProviderKind = "aliyun_bailian"
+	return prepared, err
+}
+func (s *modelGatewayStub) PrepareForUserOperation(ctx context.Context, organizationID, userID string, body []byte, operation string) (modelgateway.PreparedRequest, error) {
+	prepared, err := s.PrepareForUser(ctx, organizationID, userID, body)
+	prepared.Route.ModelType = operation
+	prepared.Route.ProviderKind = "aliyun_bailian"
+	return prepared, err
+}
+func (s *modelGatewayStub) SaveVideoTask(_ context.Context, input modelgateway.SaveVideoTaskInput) (modelgateway.VideoTask, error) {
+	s.videoTaskInput = input
+	s.videoTask = modelgateway.VideoTask{ID: "30000000-0000-4000-8000-000000000001", Caller: input.Caller, Route: input.Route, UpstreamTaskID: input.UpstreamTaskID}
+	return s.videoTask, nil
+}
+func (s *modelGatewayStub) FindVideoTaskForAPIKey(_ context.Context, credential, taskID string) (modelgateway.VideoTask, error) {
+	s.credential = credential
+	if s.videoTask.ID != taskID {
+		return modelgateway.VideoTask{}, modelgateway.ErrVideoTaskNotFound
+	}
+	return s.videoTask, nil
+}
+func (s *modelGatewayStub) FindVideoTaskForUser(_ context.Context, organizationID, userID, taskID string) (modelgateway.VideoTask, error) {
+	if s.videoTask.ID != taskID || s.videoTask.Caller.OrganizationID != organizationID || s.videoTask.Caller.UserID != userID {
+		return modelgateway.VideoTask{}, modelgateway.ErrVideoTaskNotFound
+	}
+	return s.videoTask, nil
+}
 func (s *modelGatewayStub) RecordCall(_ context.Context, input modelgateway.RecordCallInput) error {
 	s.recorded = input
 	return nil
 }
 func (s *modelGatewayStub) ListCalls(_ context.Context, query modelgateway.CallQuery) (modelgateway.CallPage, error) {
 	s.listQuery = query
-	return modelgateway.CallPage{Items: []modelgateway.Call{}, Total: 21, Page: query.Page, PageSize: query.PageSize}, nil
+	return modelgateway.CallPage{Items: s.listItems, Total: 21, Page: query.Page, PageSize: query.PageSize}, nil
 }
 func (s *modelGatewayStub) ListUsage(_ context.Context, query modelgateway.UsageQuery) (modelgateway.UsagePage, error) {
 	s.usageQuery = query
@@ -196,6 +230,10 @@ func (gatewayForwarderStub) Forward(context.Context, modelgateway.Route, []byte,
 		Body:       io.NopCloser(strings.NewReader(`{"id":"chat-1","usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`)),
 	}, nil
 }
+func (gatewayForwarderStub) QueryVideoTask(context.Context, modelgateway.Route, string) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{"output":{"task_id":"upstream-task","task_status":"SUCCEEDED"}}`))}, nil
+}
 
 type streamingForwarderStub struct{}
 
@@ -210,6 +248,9 @@ func (streamingForwarderStub) Forward(_ context.Context, _ modelgateway.Route, _
 			"data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":5,\"total_tokens\":8}}\n\n" +
 			"data: [DONE]\n\n")),
 	}, nil
+}
+func (streamingForwarderStub) QueryVideoTask(context.Context, modelgateway.Route, string) (*http.Response, error) {
+	return nil, errors.New("流式测试不查询视频任务")
 }
 
 func TestCreateGatewayAPIKeyReturnsSecretAndUsesCurrentOrganization(t *testing.T) {
@@ -235,8 +276,28 @@ func TestCreateGatewayAPIKeyReturnsSecretAndUsesCurrentOrganization(t *testing.T
 	}
 }
 
+func TestListGatewayAPIKeysIncludesCurrentModelNames(t *testing.T) {
+	gateway := &modelGatewayStub{listKeys: []modelgateway.APIKey{{
+		ID: "30000000-0000-4000-8000-000000000001", Name: "生产调用", Status: "active",
+		AllowedModelCodes: []string{"stable-code"}, AllowedModels: []modelgateway.AllowedModel{{
+			Code: "stable-code", ProviderName: "当前供应商名", ModelName: "当前模型名",
+		}},
+	}}}
+	router := newGatewayTestRouter(gateway)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/model-gateway/api-keys", nil)
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"allowedModels":[{"code":"stable-code","providerName":"当前供应商名","modelName":"当前模型名"}]`) {
+		t.Fatalf("调用密钥应返回当前供应商和模型名称，状态=%d 响应=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestListGatewayCallsParsesFiltersAndPagination(t *testing.T) {
-	gateway := &modelGatewayStub{}
+	gateway := &modelGatewayStub{listItems: []modelgateway.Call{{
+		ID: "30000000-0000-4000-8000-000000000002", ModelCode: "stable-code", ModelName: "当前模型名",
+		ProviderName: "当前供应商名", UpstreamModelID: "upstream-model", ModelType: "image",
+	}}}
 	router := newGatewayTestRouter(gateway)
 	startedAt := "2026-10-01T00:00:00+08:00"
 	endedAt := "2026-10-13T12:00:00+08:00"
@@ -253,6 +314,11 @@ func TestListGatewayCallsParsesFiltersAndPagination(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"total":21`) || !strings.Contains(response.Body.String(), `"page":2`) {
 		t.Fatalf("分页响应不正确: %s", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"modelName":"当前模型名"`) ||
+		!strings.Contains(response.Body.String(), `"providerName":"当前供应商名"`) ||
+		!strings.Contains(response.Body.String(), `"modelCode":"stable-code"`) {
+		t.Fatalf("调用记录应同时返回当前展示名称与稳定编码: %s", response.Body.String())
 	}
 }
 
@@ -293,6 +359,15 @@ func TestParseSSETokenUsage(t *testing.T) {
 	}
 	if usage := parseTokenUsage([]byte(`{"usage":{"prompt_tokens":2,"completion_tokens":3}}`)); !usage.Reported || usage.TotalTokens != 5 {
 		t.Fatalf("分项用量应合计为总量: %#v", usage)
+	}
+}
+
+func TestUpstreamErrorCodeReadsDashScopeError(t *testing.T) {
+	if code := upstreamErrorCode(http.StatusForbidden, []byte(`{"code":"AccessDenied","message":"denied"}`)); code != "AccessDenied" {
+		t.Fatalf("百炼顶层错误码未记录: %q", code)
+	}
+	if code := upstreamErrorCode(http.StatusBadRequest, []byte(`{"error":{"code":"invalid_request"}}`)); code != "invalid_request" {
+		t.Fatalf("兼容协议错误码未记录: %q", code)
 	}
 }
 
@@ -365,4 +440,90 @@ func newGatewayTestRouter(gateway ModelGatewayService) http.Handler {
 		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
 		ModelGateway: gateway, GatewayForwarder: gatewayForwarderStub{}, SessionCookie: "test_session",
 	})
+}
+
+type mediaForwarderStub struct{ queriedTaskID string }
+
+type mediaErrorForwarderStub struct{}
+
+func (mediaErrorForwarderStub) Forward(context.Context, modelgateway.Route, []byte, bool) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("id:1\nevent:error\n:HTTP_STATUS/403\ndata:{\"request_id\":\"upstream-1\",\"code\":\"AccessDenied\",\"message\":\"Access denied by API-Key restrictions.\"}\n"))}, nil
+}
+
+func (mediaErrorForwarderStub) QueryVideoTask(context.Context, modelgateway.Route, string) (*http.Response, error) {
+	return nil, errors.New("不应查询视频任务")
+}
+
+func (*mediaForwarderStub) Forward(_ context.Context, route modelgateway.Route, _ []byte, _ bool) (*http.Response, error) {
+	body := `{"data":[{"url":"https://example.com/image.png"}]}`
+	if route.ModelType == "video" {
+		body = `{"output":{"task_id":"upstream-task","task_status":"PENDING"}}`
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+func (f *mediaForwarderStub) QueryVideoTask(_ context.Context, _ modelgateway.Route, upstreamTaskID string) (*http.Response, error) {
+	f.queriedTaskID = upstreamTaskID
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{"output":{"task_id":"upstream-task","task_status":"SUCCEEDED","video_url":"https://example.com/video.mp4"}}`))}, nil
+}
+
+func TestMediaGatewayCreatesAndQueriesScopedVideoTask(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	forwarder := &mediaForwarderStub{}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
+		ModelGateway: gateway, GatewayForwarder: forwarder, SessionCookie: "test_session",
+	})
+	for _, test := range []struct{ path, body, operation string }{
+		{"/v1/images/generations", `{"model":"image-model","prompt":"山"}`, "image"},
+		{"/v1/videos/generations", `{"model":"video-model","input":{"prompt":"海浪"}}`, "video"},
+	} {
+		request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+		request.Header.Set("Authorization", "Bearer harness_sk_abcdefghijklmnopqrstuvwxyz0123456789")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || gateway.recorded.ModelType != test.operation {
+			t.Fatalf("%s 调用失败: status=%d type=%s body=%s", test.path, response.Code, gateway.recorded.ModelType, response.Body.String())
+		}
+		if test.operation == "video" {
+			if gateway.videoTaskInput.UpstreamTaskID != "upstream-task" || strings.Contains(response.Body.String(), "upstream-task") ||
+				!strings.Contains(response.Body.String(), gateway.videoTask.ID) {
+				t.Fatalf("视频任务映射不正确: input=%#v body=%s", gateway.videoTaskInput, response.Body.String())
+			}
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/videos/tasks/"+gateway.videoTask.ID, nil)
+	request.Header.Set("Authorization", "Bearer harness_sk_abcdefghijklmnopqrstuvwxyz0123456789")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || forwarder.queriedTaskID != "upstream-task" ||
+		strings.Contains(response.Body.String(), "upstream-task") || !strings.Contains(response.Body.String(), gateway.videoTask.ID) {
+		t.Fatalf("视频任务查询失败: status=%d upstream=%s body=%s", response.Code, forwarder.queriedTaskID, response.Body.String())
+	}
+}
+
+func TestMediaGatewayNormalizesDashScopeEventError(t *testing.T) {
+	gateway := &modelGatewayStub{}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
+		ModelGateway: gateway, GatewayForwarder: mediaErrorForwarderStub{}, SessionCookie: "test_session",
+	})
+	for _, test := range []struct{ path, body string }{
+		{"/v1/images/generations", `{"model":"image-model","prompt":"纸鹤"}`},
+		{"/v1/videos/generations", `{"model":"video-model","input":{"prompt":"纸鹤"}}`},
+	} {
+		request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+		request.Header.Set("Authorization", "Bearer harness_sk_abcdefghijklmnopqrstuvwxyz0123456789")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden || !strings.HasPrefix(response.Header().Get("Content-Type"), "application/json") ||
+			!strings.Contains(response.Body.String(), `"code":"AccessDenied"`) || gateway.recorded.ErrorCode != "AccessDenied" {
+			t.Fatalf("%s 错误未正确转换: status=%d contentType=%s body=%s record=%#v",
+				test.path, response.Code, response.Header().Get("Content-Type"), response.Body.String(), gateway.recorded)
+		}
+	}
 }

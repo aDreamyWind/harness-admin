@@ -54,7 +54,7 @@ func (r *ModelGatewayRepository) ListAlertCandidates(ctx context.Context, organi
 			0::BIGINT, 0::BIGINT, COUNT(*)::BIGINT,
 			COUNT(*) FILTER (WHERE NOT c.usage_reported)::BIGINT
 		FROM model_gateway_calls c
-		WHERE c.organization_id = $1 AND c.result = 'success'
+		WHERE c.organization_id = $1 AND c.result = 'success' AND c.model_type = 'chat'
 			AND c.created_at >= $2::DATE AND c.created_at < $2::DATE + INTERVAL '1 month'
 		GROUP BY c.model_code
 		ORDER BY 1

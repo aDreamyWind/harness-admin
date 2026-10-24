@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -31,7 +32,19 @@ const gatewayAPIKeyColumns = `
 		SELECT u.total_tokens FROM model_gateway_monthly_usage u
 		WHERE u.organization_id = k.organization_id AND u.api_key_id = k.id
 		  AND u.usage_month = DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::DATE
-	), 0), k.allowed_model_codes, k.created_at, k.revoked_at
+	), 0), k.allowed_model_codes,
+	COALESCE((
+		SELECT jsonb_agg(jsonb_build_object(
+			'code', scope.code,
+			'providerName', COALESCE(p.name, ''),
+			'modelName', COALESCE(m.name, '')
+		) ORDER BY scope.ordinality)
+		FROM unnest(k.allowed_model_codes) WITH ORDINALITY AS scope(code, ordinality)
+		LEFT JOIN model_catalog_entries m
+		  ON m.organization_id = k.organization_id AND m.code = scope.code
+		LEFT JOIN model_provider_connections p
+		  ON p.organization_id = k.organization_id AND p.id = m.provider_connection_id
+	), '[]'::jsonb), k.created_at, k.revoked_at
 `
 
 func (r *ModelGatewayRepository) ListAPIKeys(ctx context.Context, organizationID string) ([]modelgateway.APIKey, error) {
@@ -232,17 +245,19 @@ func (r *ModelGatewayRepository) FindRoute(ctx context.Context, organizationID, 
 	var route modelgateway.Route
 	var encryptedSecret []byte
 	err := r.pool.QueryRow(ctx, `
-		SELECT m.id, m.code, m.status, m.upstream_model_id,
-		       p.id, p.status, p.base_url, p.request_timeout_ms, p.stream_usage_enabled, c.encrypted_secret
+		SELECT m.id, m.code, m.model_type, m.status, m.upstream_model_id,
+		       p.id, p.provider_kind, p.status, p.base_url, p.request_timeout_ms, p.stream_usage_enabled, c.encrypted_secret
 		FROM model_catalog_entries m
 		JOIN model_provider_connections p
 		  ON p.organization_id = m.organization_id AND p.id = m.provider_connection_id
 		JOIN model_provider_credentials c ON c.provider_connection_id = p.id
 		WHERE m.organization_id = $1 AND LOWER(m.code) = LOWER($2)
-		  AND m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini')
+		  AND ((m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini'))
+		    OR (m.model_type = 'image' AND p.provider_kind IN ('openai_compatible', 'aliyun_bailian'))
+		    OR (m.model_type = 'video' AND p.provider_kind = 'aliyun_bailian'))
 	`, organizationID, modelCode).Scan(
-		&route.ModelID, &route.ModelCode, &route.ModelStatus, &route.UpstreamModelID,
-		&route.ProviderID, &route.ProviderStatus, &route.ProviderBaseURL, &route.ProviderTimeoutMS, &route.ProviderStreamUsageEnabled, &encryptedSecret,
+		&route.ModelID, &route.ModelCode, &route.ModelType, &route.ModelStatus, &route.UpstreamModelID,
+		&route.ProviderID, &route.ProviderKind, &route.ProviderStatus, &route.ProviderBaseURL, &route.ProviderTimeoutMS, &route.ProviderStreamUsageEnabled, &encryptedSecret,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return modelgateway.Route{}, modelgateway.ErrModelNotFound
@@ -267,11 +282,11 @@ func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgate
 	_, err = tx.Exec(ctx, `
 		INSERT INTO model_gateway_calls (
 			id, organization_id, api_key_id, auth_type, user_id, model_catalog_entry_id, provider_connection_id,
-			request_id, model_code, upstream_model_id, streaming, result, http_status, latency_ms,
+			request_id, model_code, model_type, upstream_model_id, streaming, result, http_status, latency_ms,
 			prompt_tokens, completion_tokens, total_tokens, error_code, source_ip, department_id, usage_reported
-		) VALUES ($1, $2, NULLIF($3, '')::UUID, $4, NULLIF($5, '')::UUID, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NULLIF($20, '')::UUID, $21)
+		) VALUES ($1, $2, NULLIF($3, '')::UUID, $4, NULLIF($5, '')::UUID, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NULLIF($21, '')::UUID, $22)
 	`, callID, input.OrganizationID, input.APIKeyID, input.AuthType, input.UserID, input.ModelID, input.ProviderID,
-		input.RequestID, input.ModelCode, input.UpstreamModelID, input.Streaming, input.Result,
+		input.RequestID, input.ModelCode, input.ModelType, input.UpstreamModelID, input.Streaming, input.Result,
 		input.HTTPStatus, input.LatencyMS, input.PromptTokens, input.CompletionTokens,
 		input.TotalTokens, input.ErrorCode, input.SourceIP, input.DepartmentID, input.UsageReported)
 	if err != nil {
@@ -393,7 +408,8 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 	rows, err := r.pool.Query(ctx, `
 		SELECT c.id, COALESCE(c.api_key_id::TEXT, ''), COALESCE(k.name, ''),
 		       c.auth_type, COALESCE(c.user_id::TEXT, ''), COALESCE(u.display_name, ''), COALESCE(c.department_id::TEXT, ''),
-		       c.request_id, c.model_code, c.upstream_model_id,
+		       c.request_id, c.model_code, COALESCE(m.name, c.model_code), c.model_type, c.upstream_model_id,
+		       COALESCE(p.name, ''),
 		       c.streaming, c.result, c.http_status, c.latency_ms, c.prompt_tokens,
 		       c.completion_tokens, c.total_tokens, c.usage_reported, c.quota_exceeded,
 		       c.error_code, c.source_ip, c.created_at
@@ -402,6 +418,10 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 		  ON k.organization_id = c.organization_id AND k.id = c.api_key_id
 		LEFT JOIN users u
 		  ON u.organization_id = c.organization_id AND u.id = c.user_id
+		LEFT JOIN model_catalog_entries m
+		  ON m.organization_id = c.organization_id AND m.id = c.model_catalog_entry_id
+		LEFT JOIN model_provider_connections p
+		  ON p.organization_id = c.organization_id AND p.id = c.provider_connection_id
 		`+filters+`
 		ORDER BY c.created_at DESC, c.id DESC
 		LIMIT $7 OFFSET $8
@@ -415,8 +435,8 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 		var item modelgateway.Call
 		if err := rows.Scan(
 			&item.ID, &item.APIKeyID, &item.APIKeyName, &item.AuthType, &item.UserID, &item.UserName, &item.DepartmentID,
-			&item.RequestID, &item.ModelCode,
-			&item.UpstreamModelID, &item.Streaming, &item.Result, &item.HTTPStatus, &item.LatencyMS,
+			&item.RequestID, &item.ModelCode, &item.ModelName, &item.ModelType,
+			&item.UpstreamModelID, &item.ProviderName, &item.Streaming, &item.Result, &item.HTTPStatus, &item.LatencyMS,
 			&item.PromptTokens, &item.CompletionTokens, &item.TotalTokens, &item.UsageReported, &item.QuotaExceeded, &item.ErrorCode,
 			&item.SourceIP, &item.CreatedAt,
 		); err != nil {
@@ -509,10 +529,17 @@ func findGatewayAPIKey(ctx context.Context, queryer interface {
 
 func scanGatewayAPIKey(row interface{ Scan(...any) error }) (modelgateway.APIKey, error) {
 	var item modelgateway.APIKey
+	var allowedModelsJSON []byte
 	err := row.Scan(
 		&item.ID, &item.OrganizationID, &item.Name, &item.KeyPrefix, &item.Status,
 		&item.ExpiresAt, &item.LastUsedAt, &item.RequestsPerMinute, &item.MonthlyTokenLimit,
-		&item.MonthlyTokenUsed, &item.AllowedModelCodes, &item.CreatedAt, &item.RevokedAt,
+		&item.MonthlyTokenUsed, &item.AllowedModelCodes, &allowedModelsJSON, &item.CreatedAt, &item.RevokedAt,
 	)
-	return item, err
+	if err != nil {
+		return modelgateway.APIKey{}, err
+	}
+	if err := json.Unmarshal(allowedModelsJSON, &item.AllowedModels); err != nil {
+		return modelgateway.APIKey{}, fmt.Errorf("解析调用密钥可用模型名称失败: %w", err)
+	}
+	return item, nil
 }

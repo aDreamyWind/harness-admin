@@ -322,7 +322,7 @@ export function MCPServicesPage() {
           <Table<MCPTool> rowKey="name" size="small" loading={toolsQuery.isLoading} dataSource={toolsQuery.data ?? []}
             pagination={{ pageSize: 10 }} columns={[
               { title: '工具', dataIndex: 'name' },
-              { title: '说明', dataIndex: 'description', ellipsis: true },
+              { title: '说明', dataIndex: 'description' },
               { title: '操作', render: (_, tool) => canWrite && <Button type="link" icon={<ApiOutlined />}
                 disabled={toolsNeedConnection && !toolConnection} onClick={() => {
                 setTesting(tool)

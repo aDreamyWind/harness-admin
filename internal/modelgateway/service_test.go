@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,6 +24,8 @@ type repositoryStub struct {
 	alertSettings        AlertSettings
 	alertSettingInput    UpdateAlertSettingsInput
 	refreshOrganizations []string
+	videoTask            VideoTask
+	videoTaskInput       SaveVideoTaskInput
 	alertCandidateOrg    string
 	alertSyncOrg         string
 }
@@ -69,6 +72,17 @@ func (r *repositoryStub) FindRoute(context.Context, string, string) (Route, erro
 	}
 	return r.route, nil
 }
+func (r *repositoryStub) SaveVideoTask(_ context.Context, input SaveVideoTaskInput) (VideoTask, error) {
+	r.videoTaskInput = input
+	r.videoTask = VideoTask{ID: "30000000-0000-4000-8000-000000000001", Caller: input.Caller, Route: input.Route, UpstreamTaskID: input.UpstreamTaskID}
+	return r.videoTask, nil
+}
+func (r *repositoryStub) FindVideoTask(_ context.Context, caller Caller, taskID string) (VideoTask, error) {
+	if r.videoTask.ID != taskID || r.videoTask.Caller != caller {
+		return VideoTask{}, ErrVideoTaskNotFound
+	}
+	return r.videoTask, nil
+}
 func (r *repositoryStub) RecordCall(_ context.Context, input RecordCallInput) error {
 	r.recorded = input
 	return nil
@@ -107,6 +121,92 @@ func (r *repositoryStub) UpdateAlertSettings(_ context.Context, input UpdateAler
 }
 func (r *repositoryStub) ListAutoRefreshOrganizations(context.Context) ([]string, error) {
 	return r.refreshOrganizations, nil
+}
+
+func TestPrepareMediaChecksModelTypeAndRequestShape(t *testing.T) {
+	repository := &repositoryStub{route: Route{
+		ModelID: "model-1", ModelCode: "image-model", ModelType: "image", ModelStatus: "active",
+		UpstreamModelID: "qwen-image-3.0", ProviderID: "provider-1", ProviderStatus: "active", ProviderKind: "aliyun_bailian",
+	}}
+	service := NewService(repository, nil, nil)
+	caller := Caller{OrganizationID: "org-1", APIKeyID: "key-1", AuthType: "api_key"}
+	prepared, err := service.prepareForCaller(context.Background(), caller, []byte(`{"model":"image-model","prompt":"山景"}`), nil, "image")
+	if err != nil || !strings.Contains(string(prepared.Body), `"qwen-image-3.0"`) {
+		t.Fatalf("图片模型未正确准备请求: %v %s", err, prepared.Body)
+	}
+	for _, test := range []struct {
+		operation, body string
+		want            error
+	}{
+		{"chat", `{"model":"image-model","messages":[]}`, ErrModelTypeMismatch},
+		{"image", `{"model":"image-model"}`, ErrInvalidInput},
+		{"image", `{"model":"image-model","prompt":"山景","stream":true}`, ErrInvalidInput},
+	} {
+		_, err := service.prepareForCaller(context.Background(), caller, []byte(test.body), nil, test.operation)
+		if !errors.Is(err, test.want) {
+			t.Fatalf("%s 应返回 %v，实际 %v", test.operation, test.want, err)
+		}
+	}
+	repository.route.ModelType = "video"
+	repository.route.ProviderKind = "aliyun_bailian"
+	if _, err := service.prepareForCaller(context.Background(), caller, []byte(`{"model":"image-model","input":{"prompt":"海浪"}}`), nil, "video"); err != nil {
+		t.Fatalf("视频请求应允许: %v", err)
+	}
+}
+
+func TestVideoTaskLookupIsScopedToCreatingKey(t *testing.T) {
+	repository := &repositoryStub{apiKey: APIKey{ID: "key-1", OrganizationID: "org-1", Status: "active"}}
+	service := NewService(repository, nil, nil)
+	caller := Caller{OrganizationID: "org-1", APIKeyID: "key-1", AuthType: "api_key"}
+	task, err := service.SaveVideoTask(context.Background(), SaveVideoTaskInput{
+		Caller: caller, Route: Route{ModelID: "model-1", ModelType: "video", ProviderID: "provider-1"},
+		UpstreamTaskID: "upstream-task", RequestID: "request-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := "harness_sk_abcdefghijklmnopqrstuvwxyz0123456789"
+	if _, err := service.FindVideoTaskForAPIKey(context.Background(), credential, task.ID); err != nil {
+		t.Fatalf("创建者应可查询任务: %v", err)
+	}
+	repository.apiKey.ID = "key-2"
+	if _, err := service.FindVideoTaskForAPIKey(context.Background(), credential, task.ID); !errors.Is(err, ErrVideoTaskNotFound) {
+		t.Fatalf("其他调用密钥不应查询任务: %v", err)
+	}
+}
+
+func TestSaveVideoTaskRejectsMissingOrMixedCaller(t *testing.T) {
+	service := NewService(&repositoryStub{}, nil, nil)
+	input := SaveVideoTaskInput{
+		Caller:         Caller{OrganizationID: "org-1", AuthType: "api_key"},
+		Route:          Route{ModelID: "model-1", ModelType: "video", ProviderID: "provider-1"},
+		UpstreamTaskID: "upstream-task", RequestID: "request-1",
+	}
+	if _, err := service.SaveVideoTask(context.Background(), input); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("没有密钥 ID 的任务应被拒绝: %v", err)
+	}
+	input.Caller.APIKeyID = "key-1"
+	input.Caller.UserID = "user-1"
+	if _, err := service.SaveVideoTask(context.Background(), input); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("混合身份任务应被拒绝: %v", err)
+	}
+}
+
+func TestMediaCallsDoNotUseChatTokenQuota(t *testing.T) {
+	repository := &repositoryStub{
+		apiKey: APIKey{ID: "key-1", OrganizationID: "org-1", Status: "active", MonthlyTokenLimit: 100, MonthlyTokenUsed: 100},
+		route:  Route{ModelID: "model-1", ModelCode: "image-model", ModelType: "image", ModelStatus: "active", UpstreamModelID: "qwen-image-3.0", ProviderID: "provider-1", ProviderStatus: "active", ProviderKind: "aliyun_bailian"},
+	}
+	service := NewService(repository, nil, nil)
+	credential := "harness_sk_abcdefghijklmnopqrstuvwxyz0123456789"
+	if _, err := service.PrepareOperation(context.Background(), credential, []byte(`{"model":"image-model","prompt":"山景"}`), "image"); err != nil {
+		t.Fatalf("图片调用不应被聊天 Token 额度阻止: %v", err)
+	}
+	policy := &policyRepositoryStub{snapshot: UserPolicySnapshot{UserPolicy: &SubjectPolicy{SubjectType: "user", SubjectID: "user-1", ScopeMode: "all", MonthlyTokenLimit: 100, MonthlyTokenUsed: 100}}}
+	service = NewService(repository, nil, policy)
+	if _, err := service.PrepareForUserOperation(context.Background(), "org-1", "user-1", []byte(`{"model":"image-model","prompt":"山景"}`), "image"); err != nil {
+		t.Fatalf("用户图片调用不应被聊天 Token 额度阻止: %v", err)
+	}
 }
 
 func TestUsageQueryUsesUTCMonthAndValidatesDimensions(t *testing.T) {
@@ -221,7 +321,7 @@ func TestPrepareRequestsStreamUsageOnlyForEnabledProvider(t *testing.T) {
 				ProviderID: "provider-1", ProviderStatus: "active", ProviderStreamUsageEnabled: test.enabled,
 			}}
 			prepared, err := NewService(repository, nil, nil).prepareForCaller(context.Background(),
-				Caller{OrganizationID: "org-1", UserID: "user-1", AuthType: "user"}, []byte(test.body), nil)
+				Caller{OrganizationID: "org-1", UserID: "user-1", AuthType: "user"}, []byte(test.body), nil, "chat")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,7 +366,7 @@ func TestPrepareRejectsMalformedStreamOptionsWhenProviderRequestsUsage(t *testin
 	for _, options := range []string{`null`, `[]`, `"invalid"`} {
 		body := []byte(`{"model":"main","stream":true,"stream_options":` + options + `}`)
 		_, err := NewService(repository, nil, nil).prepareForCaller(context.Background(),
-			Caller{OrganizationID: "org-1", UserID: "user-1", AuthType: "user"}, body, nil)
+			Caller{OrganizationID: "org-1", UserID: "user-1", AuthType: "user"}, body, nil, "chat")
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("无效流式选项 %s 应拒绝，实际: %v", options, err)
 		}

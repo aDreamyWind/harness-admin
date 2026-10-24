@@ -7,7 +7,6 @@ import {
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
-  SwapOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -224,9 +223,15 @@ export function ModelGatewayPage() {
       </div>,
     },
     {
-      title: '可用模型', key: 'allowedModels', width: 220,
+      title: '可用模型', key: 'allowedModels', width: 320,
       render: (_, item) => item.allowedModelCodes.length > 0
-        ? <div className="gateway-model-scope">{item.allowedModelCodes.slice(0, 2).map((code) => <Tag key={code}>{code}</Tag>)}{item.allowedModelCodes.length > 2 ? <Text type="secondary">+{item.allowedModelCodes.length - 2}</Text> : null}</div>
+        ? <div className="gateway-model-scope">
+          {(item.allowedModels ?? []).slice(0, 2).map((model) => <AllowedModelScope key={model.code} model={model} />)}
+          {item.allowedModelCodes.length > 2 ? <details>
+            <summary>其余 {item.allowedModelCodes.length - 2} 个模型</summary>
+            <div className="gateway-model-scope-extra">{(item.allowedModels ?? []).slice(2).map((model) => <AllowedModelScope key={model.code} model={model} />)}</div>
+          </details> : null}
+        </div>
         : <Text type="secondary">全部模型</Text>,
     },
     { title: '有效期', key: 'expiresAt', width: 180, render: (_, item) => item.expiresAt ? formatTime(item.expiresAt) : '永不过期' },
@@ -248,13 +253,18 @@ export function ModelGatewayPage() {
 
   const callColumns: TableColumnsType<GatewayCall> = useMemo(() => [
     { title: '发生时间', dataIndex: 'createdAt', key: 'createdAt', width: 178, render: formatTime },
+    { title: '供应商', key: 'providerName', width: 190, render: (_, item) => <span className="gateway-call-provider">{item.providerName || '连接已删除'}</span> },
     {
-      title: '请求流向', key: 'flow', width: 300,
-      render: (_, item) => <div className="gateway-call-flow"><strong>{item.modelCode}</strong><SwapOutlined /><span>{item.upstreamModelId}</span>{item.streaming ? <Tag>流式</Tag> : null}</div>,
+      title: '模型', key: 'modelName', width: 230,
+      render: (_, item) => <div className="gateway-call-model">
+        <strong>{item.modelName || item.modelCode}</strong>
+        <div><Tag>{item.modelType === 'image' ? '图片' : item.modelType === 'video' ? '视频' : '对话'}</Tag>{item.streaming ? <Tag>流式</Tag> : null}</div>
+      </div>,
     },
     { title: '调用身份', key: 'caller', width: 170, render: (_, item) => item.authType === 'user' ? <span>{item.userName || item.userId}<Tag color="blue">用户</Tag></span> : item.apiKeyName },
     { title: '结果', key: 'result', width: 105, render: (_, item) => <StatusIndicator label={item.result === 'success' ? '成功' : '失败'} tone={item.result === 'success' ? 'success' : 'danger'} /> },
     { title: 'HTTP', dataIndex: 'httpStatus', key: 'httpStatus', width: 80 },
+    { title: '错误码', dataIndex: 'errorCode', key: 'errorCode', width: 180, render: (value: string) => value ? <Text className="model-resource-code" copyable>{value}</Text> : '—' },
     { title: '耗时', dataIndex: 'latencyMs', key: 'latencyMs', width: 100, render: (value: number) => `${value} ms` },
     { title: 'Token', key: 'totalTokens', width: 120, render: (_, item) => item.usageReported ? item.totalTokens.toLocaleString() : <Tag color="orange">用量未知</Tag> },
     { title: '额度', key: 'quota', width: 100, render: (_, item) => item.quotaExceeded ? <Tag color="red">本次超额</Tag> : '—' },
@@ -296,7 +306,7 @@ export function ModelGatewayPage() {
         error={keysQuery.isError ? errorMessage(keysQuery.error, '调用密钥加载失败') : ''}
         retry={() => keysQuery.refetch()}
       >
-        <Table<GatewayAPIKey> rowKey="id" columns={keyColumns} dataSource={keys} loading={keysQuery.isLoading} pagination={false} scroll={{ x: 1380 }} locale={{ emptyText: '尚未创建调用密钥' }} />
+        <Table<GatewayAPIKey> rowKey="id" columns={keyColumns} dataSource={keys} loading={keysQuery.isLoading} pagination={false} scroll={{ x: 1480 }} locale={{ emptyText: '尚未创建调用密钥' }} />
       </GatewayResource>,
     },
     {
@@ -396,7 +406,7 @@ export function ModelGatewayPage() {
             showTotal: (total) => `共 ${total} 条`,
             onChange: (page, pageSize) => setCallQuery((current) => ({ ...current, page, pageSize })),
           }}
-          scroll={{ x: 1250 }}
+          scroll={{ x: 1600 }}
           locale={{ emptyText: '尚无模型调用记录' }}
         />
       </GatewayResource>,
@@ -438,7 +448,7 @@ export function ModelGatewayPage() {
             <Form.Item name="requestsPerMinute" label="每分钟请求上限" extra="0 表示不限制。" rules={[{ required: true, message: '请填写请求上限' }]}>
               <InputNumber min={0} max={100000} precision={0} />
             </Form.Item>
-            <Form.Item name="monthlyTokenLimit" label="每月 Token 上限" extra="按 UTC 自然月统计，0 表示不限制。" rules={[{ required: true, message: '请填写 Token 上限' }]}>
+            <Form.Item name="monthlyTokenLimit" label="每月 Token 上限" extra="按 UTC 自然月统计，0 表示不限制；图片和视频调用通常不返回 Token，用量不会计入此上限。" rules={[{ required: true, message: '请填写 Token 上限' }]}>
               <InputNumber min={0} max={9_000_000_000_000_000} precision={0} />
             </Form.Item>
           </div>
@@ -489,7 +499,7 @@ function GatewayResource({ title, hint, action, error, retry, children }: {
   children: ReactNode
 }) {
   return (
-    <Card className="model-resource-card" variant="borderless">
+    <Card className="model-resource-card gateway-resource-card" variant="borderless">
       <div className="model-resource-toolbar">
         <div><strong>{title}</strong><span>{hint}</span></div>
         {action}
@@ -498,6 +508,13 @@ function GatewayResource({ title, hint, action, error, retry, children }: {
       {children}
     </Card>
   )
+}
+
+function AllowedModelScope({ model }: { model: GatewayAPIKey['allowedModels'][number] }) {
+  return <div className="gateway-model-scope-item" title={model.code}>
+    <span>{model.providerName || '供应商已删除'}</span>
+    <strong>{model.modelName || '模型已删除'}</strong>
+  </div>
 }
 
 function keyStatus(item: GatewayAPIKey) {

@@ -237,8 +237,9 @@ export function ModelsPage() {
   const providerColumns: TableColumnsType<ModelProvider> = useMemo(() => [
     {
       title: '连接', key: 'identity', width: 210,
-      render: (_, provider) => <div className="model-resource-name"><CloudServerOutlined /><span><strong>{provider.name}</strong><small>{provider.code}</small></span></div>,
+      render: (_, provider) => <div className="model-resource-name"><CloudServerOutlined /><span><strong>{provider.name}</strong></span></div>,
     },
+    { title: '连接编码', dataIndex: 'code', key: 'code', width: 190, render: (value: string) => <Text className="model-resource-code" copyable>{value}</Text> },
     { title: '供应商协议', dataIndex: 'providerKind', key: 'providerKind', width: 170, render: (value: ProviderKind) => providerPresetByKind.get(value)?.label ?? value },
     { title: 'API 地址', dataIndex: 'baseUrl', key: 'baseUrl', render: (value: string) => <Text code>{value}</Text> },
     { title: '状态', key: 'status', width: 110, render: (_, provider) => <StatusIndicator label={provider.status === 'active' ? '已启用' : '已停用'} tone={provider.status === 'active' ? 'success' : 'muted'} /> },
@@ -262,13 +263,18 @@ export function ModelsPage() {
   const modelColumns: TableColumnsType<ModelCatalogEntry> = useMemo(() => [
     {
       title: '模型', key: 'identity', width: 210,
-      render: (_, model) => <div className="model-resource-name model-entry-name"><ApiOutlined /><span><strong>{model.name}</strong><small>{model.code}</small></span></div>,
+      render: (_, model) => <div className="model-resource-name model-entry-name"><ApiOutlined /><span><strong>{model.name}</strong></span></div>,
     },
+    { title: '模型编码', dataIndex: 'code', key: 'code', width: 280, render: (value: string) => <Text className="model-resource-code" copyable>{value}</Text> },
     { title: '供应商', dataIndex: 'providerName', key: 'providerName', width: 160 },
     { title: '类型', dataIndex: 'modelType', key: 'modelType', width: 95, render: (value: ModelType) => <Tag>{modelTypeLabels[value]}</Tag> },
-    { title: '对话网关', key: 'gateway', width: 100, render: (_, model) => {
+    { title: '调用入口', key: 'gateway', width: 100, render: (_, model) => {
       const provider = providers.find((item) => item.id === model.providerConnectionId)
-      if (model.modelType !== 'chat' || !provider || ['claude', 'gemini'].includes(provider.providerKind)) return '仅目录'
+      if (!provider) return '仅目录'
+      const supported = model.modelType === 'chat' ? !['claude', 'gemini'].includes(provider.providerKind)
+        : model.modelType === 'image' ? ['aliyun_bailian', 'openai_compatible'].includes(provider.providerKind)
+          : model.modelType === 'video' && provider.providerKind === 'aliyun_bailian'
+      if (!supported) return '仅目录'
       return model.status === 'active' && provider.status === 'active' ? '可调用' : '未启用'
     } },
     { title: '上游模型标识', dataIndex: 'upstreamModelId', key: 'upstreamModelId', render: (value: string) => <Text code>{value}</Text> },
@@ -296,7 +302,7 @@ export function ModelsPage() {
         action={canWriteProviders ? <Button type="primary" icon={<PlusOutlined />} onClick={openProviderCreate}>接入供应商</Button> : undefined}
         error={providersQuery.isError ? errorMessage(providersQuery.error, '供应商连接加载失败') : ''}
         retry={() => providersQuery.refetch()}
-      ><Table<ModelProvider> rowKey="id" columns={providerColumns} dataSource={providers} loading={providersQuery.isLoading} pagination={false} scroll={{ x: 980 }} locale={{ emptyText: '尚未接入模型供应商' }} /></ResourceTable>,
+      ><Table<ModelProvider> rowKey="id" columns={providerColumns} dataSource={providers} loading={providersQuery.isLoading} pagination={false} scroll={{ x: 1420 }} locale={{ emptyText: '尚未接入模型供应商' }} /></ResourceTable>,
     } : null,
     canReadModels ? {
       key: 'models', label: `模型 ${models.length}`,
@@ -332,7 +338,7 @@ export function ModelsPage() {
             </Popconfirm>
           </div>
         </div> : null}
-        <Table<ModelCatalogEntry> rowKey="id" columns={modelColumns} dataSource={filteredModels} loading={modelsQuery.isLoading} pagination={{ defaultPageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 个模型` }} rowSelection={canWriteModels ? { selectedRowKeys: selectedModelIds, preserveSelectedRowKeys: true, onChange: (keys) => { if (keys.length > 500) { messageApi.warning('每次最多选择 500 个模型'); return }; setSelectedModelIds(keys.map(String)) } } : undefined} scroll={{ x: 1050 }} locale={{ emptyText: models.length ? '没有符合条件的模型' : providers.length ? '尚未登记模型' : '请先接入供应商，再登记模型' }} />
+        <Table<ModelCatalogEntry> rowKey="id" columns={modelColumns} dataSource={filteredModels} loading={modelsQuery.isLoading} pagination={{ defaultPageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 个模型` }} rowSelection={canWriteModels ? { selectedRowKeys: selectedModelIds, preserveSelectedRowKeys: true, onChange: (keys) => { if (keys.length > 500) { messageApi.warning('每次最多选择 500 个模型'); return }; setSelectedModelIds(keys.map(String)) } } : undefined} scroll={{ x: 1600 }} locale={{ emptyText: models.length ? '没有符合条件的模型' : providers.length ? '尚未登记模型' : '请先接入供应商，再登记模型' }} />
       </ResourceTable>,
     } : null,
   ].filter(Boolean) as Array<{ key: string; label: string; children: ReactNode }>
@@ -398,7 +404,7 @@ export function ModelsPage() {
           <Form.Item label="模型目录地址（选填）" name="modelListUrl" extra="默认地址可以读取时请留空。若默认列表接口不可用，可填写独立的完整接口地址；百炼可使用与 API Key 同地域的业务空间地址。" rules={[{ type: 'url', message: '请输入完整的 HTTP(S) 地址' }, { max: 2048 }]}><Input placeholder="https://{业务空间ID}.cn-beijing.maas.aliyuncs.com/api/v1/models" /></Form.Item>
           <div className="model-form-grid">
             <Form.Item label={editingProvider ? '替换 API Key' : 'API Key'} name="apiKey" extra={editingProvider ? '留空表示继续使用当前凭据。' : '密钥将加密保存。'} rules={editingProvider ? [] : [{ required: true, message: '请输入 API Key' }]}><Input.Password autoComplete="new-password" placeholder={editingProvider ? '不修改请留空' : '输入供应商访问密钥'} /></Form.Item>
-            <Form.Item label="请求超时（毫秒）" name="requestTimeoutMs" rules={[{ required: true }]}><InputNumber min={1000} max={120000} step={1000} style={{ width: '100%' }} /></Form.Item>
+            <Form.Item label="请求超时（毫秒）" name="requestTimeoutMs" extra="对话、视频任务提交与查询使用此值；同步图片生成最长等待 10 分钟。" rules={[{ required: true }]}><InputNumber min={1000} max={120000} step={1000} style={{ width: '100%' }} /></Form.Item>
           </div>
           <Form.Item label="请求流式 Token 用量" name="streamUsageEnabled" valuePropName="checked" extra="默认关闭。确认上游支持 stream_options.include_usage 后再开启；不支持时可能拒绝流式请求，网关不会自动重试。"><Switch /></Form.Item>
         </Form>

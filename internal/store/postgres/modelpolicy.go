@@ -70,8 +70,10 @@ func (r *ModelPolicyRepository) SavePolicy(ctx context.Context, input modelgatew
 			SELECT COUNT(*) FROM unnest($2::TEXT[]) code
 			WHERE NOT EXISTS (SELECT 1 FROM model_catalog_entries m
 				JOIN model_provider_connections p ON p.id = m.provider_connection_id
-				WHERE m.organization_id = $1 AND LOWER(m.code) = code AND m.model_type = 'chat'
-				AND p.provider_kind NOT IN ('claude', 'gemini'))
+				WHERE m.organization_id = $1 AND LOWER(m.code) = code
+				AND ((m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini'))
+				  OR (m.model_type = 'image' AND p.provider_kind IN ('openai_compatible', 'aliyun_bailian'))
+				  OR (m.model_type = 'video' AND p.provider_kind = 'aliyun_bailian')))
 		`, input.OrganizationID, input.AllowedModelCodes).Scan(&missing)
 		if err != nil {
 			return modelgateway.SubjectPolicy{}, err
@@ -133,8 +135,10 @@ func (r *ModelPolicyRepository) SaveDepartmentPolicies(ctx context.Context, inpu
 		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM unnest($2::TEXT[]) code
 			WHERE NOT EXISTS (SELECT 1 FROM model_catalog_entries m
 				JOIN model_provider_connections p ON p.id = m.provider_connection_id
-				WHERE m.organization_id = $1 AND LOWER(m.code) = code AND m.model_type = 'chat'
-				AND p.provider_kind NOT IN ('claude', 'gemini'))`,
+				WHERE m.organization_id = $1 AND LOWER(m.code) = code
+				AND ((m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini'))
+				  OR (m.model_type = 'image' AND p.provider_kind IN ('openai_compatible', 'aliyun_bailian'))
+				  OR (m.model_type = 'video' AND p.provider_kind = 'aliyun_bailian')))`,
 			input.OrganizationID, input.AllowedModelCodes).Scan(&missing); err != nil {
 			return nil, err
 		}
@@ -257,10 +261,12 @@ func (r *ModelPolicyRepository) FindUserPolicy(ctx context.Context, organization
 }
 
 func (r *ModelPolicyRepository) ListAvailableModels(ctx context.Context, organizationID string) ([]modelgateway.AvailableModel, error) {
-	rows, err := r.pool.Query(ctx, `SELECT m.code, m.name, m.capabilities, m.created_at FROM model_catalog_entries m
+	rows, err := r.pool.Query(ctx, `SELECT m.code, m.name, m.model_type, m.capabilities, m.created_at FROM model_catalog_entries m
 		JOIN model_provider_connections p ON p.organization_id = m.organization_id AND p.id = m.provider_connection_id
 		WHERE m.organization_id = $1 AND m.status = 'active' AND p.status = 'active'
-		  AND m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini')
+		  AND ((m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini'))
+		    OR (m.model_type = 'image' AND p.provider_kind IN ('openai_compatible', 'aliyun_bailian'))
+		    OR (m.model_type = 'video' AND p.provider_kind = 'aliyun_bailian'))
 		ORDER BY m.code`, organizationID)
 	if err != nil {
 		return nil, err
@@ -269,7 +275,7 @@ func (r *ModelPolicyRepository) ListAvailableModels(ctx context.Context, organiz
 	items := make([]modelgateway.AvailableModel, 0)
 	for rows.Next() {
 		var item modelgateway.AvailableModel
-		if err := rows.Scan(&item.Code, &item.Name, &item.Capabilities, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.Code, &item.Name, &item.ModelType, &item.Capabilities, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

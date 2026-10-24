@@ -203,6 +203,11 @@ chmod 600 .secrets/oidc-signing-private-key.pem
 - `GET /api/v1/model-gateway/usage`
 - `GET /v1/models`
 - `POST /v1/chat/completions`
+- `POST /v1/images/generations`
+- `POST /v1/videos/generations`
+- `GET /v1/videos/tasks/{taskId}`
+
+图片与视频调用方式、适用供应商及任务归属规则见[图片与视频模型网关](docs/model-media-gateway.md)。
 
 模型策略接口：
 

@@ -114,6 +114,12 @@ func TestGatewayE2EConcurrentSoftQuotaAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	keysBeforeRename, err := service.ListAPIKeys(ctx, organizationID)
+	if err != nil || len(keysBeforeRename) != 1 || len(keysBeforeRename[0].AllowedModels) != 1 ||
+		keysBeforeRename[0].AllowedModels[0].ProviderName != "模拟供应商" ||
+		keysBeforeRename[0].AllowedModels[0].ModelName != "模拟模型" {
+		t.Fatalf("调用密钥范围应显示当前名称: %#v, %v", keysBeforeRename, err)
+	}
 	server := httptest.NewServer(New(Dependencies{
 		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
@@ -141,6 +147,30 @@ func TestGatewayE2EConcurrentSoftQuotaAgainstPostgres(t *testing.T) {
 	}
 	if unknownResponse.StatusCode != http.StatusOK {
 		t.Fatalf("未返回用量的调用仍应完成: %d", unknownResponse.StatusCode)
+	}
+	callQuery := modelgateway.CallQuery{OrganizationID: organizationID, Page: 1, PageSize: 10}
+	beforeRename, err := service.ListCalls(ctx, callQuery)
+	if err != nil || len(beforeRename.Items) != 1 || beforeRename.Items[0].ModelName != "模拟模型" || beforeRename.Items[0].ProviderName != "模拟供应商" {
+		t.Fatalf("调用记录应显示当前名称: %#v, %v", beforeRename, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE model_catalog_entries SET name = '修改后的模型名' WHERE id = $1`, modelID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE model_provider_connections SET name = '修改后的供应商名' WHERE id = $1`, providerID); err != nil {
+		t.Fatal(err)
+	}
+	keysAfterRename, err := service.ListAPIKeys(ctx, organizationID)
+	if err != nil || len(keysAfterRename) != 1 || len(keysAfterRename[0].AllowedModels) != 1 ||
+		keysAfterRename[0].AllowedModels[0].Code != "main" ||
+		keysAfterRename[0].AllowedModels[0].ProviderName != "修改后的供应商名" ||
+		keysAfterRename[0].AllowedModels[0].ModelName != "修改后的模型名" {
+		t.Fatalf("改名后调用密钥应显示新名称并保留编码: %#v, %v", keysAfterRename, err)
+	}
+	afterRename, err := service.ListCalls(ctx, callQuery)
+	if err != nil || len(afterRename.Items) != 1 || afterRename.Items[0].ModelName != "修改后的模型名" ||
+		afterRename.Items[0].ProviderName != "修改后的供应商名" || afterRename.Items[0].ModelCode != "main" ||
+		afterRename.Items[0].UpstreamModelID != "mock-model-v1" {
+		t.Fatalf("改名应更新历史记录展示名称并保留调用编码: %#v, %v", afterRename, err)
 	}
 	beforeConcurrency, err := service.ListUsage(ctx, modelgateway.UsageQuery{
 		OrganizationID: organizationID, Month: time.Now().UTC().Format("2006-01"), GroupBy: "model", Page: 1, PageSize: 10,

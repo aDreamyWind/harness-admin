@@ -164,7 +164,7 @@ export function ModelPoliciesPage() {
         </Form.Item> : null}
         <Space align="start" size={16}>
           <Form.Item name="requestsPerMinute" label="每人每分钟请求上限" extra="0 表示不限；不与部门其他成员共享" rules={[{ required: true }]}><InputNumber min={0} max={100000} precision={0} /></Form.Item>
-          <Form.Item name="monthlyTokenLimit" label="每月 Token 上限" extra="按 UTC 月份统计，0 表示不限" rules={[{ required: true }]}><InputNumber min={0} precision={0} /></Form.Item>
+          <Form.Item name="monthlyTokenLimit" label="每月 Token 上限" extra="按 UTC 月份统计，0 表示不限；图片和视频调用通常不返回 Token，用量不会计入此上限" rules={[{ required: true }]}><InputNumber min={0} precision={0} /></Form.Item>
         </Space>
         {subjectType === 'department' ? <Form.Item name="monthlyTokenMode" label="Token 额度计算方式" rules={[{ required: true }]}>
           <Select options={[{ value: 'shared', label: '本部门成员共享' }, { value: 'per_user', label: '本部门每位成员独立' }]} />

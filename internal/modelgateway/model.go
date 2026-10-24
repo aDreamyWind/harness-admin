@@ -17,6 +17,8 @@ var (
 	ErrModelDisabled           = errors.New("请求的模型已停用")
 	ErrProviderDisabled        = errors.New("模型供应商连接已停用")
 	ErrModelNotAllowed         = errors.New("当前调用身份无权访问该模型")
+	ErrModelTypeMismatch       = errors.New("模型类型与调用接口不匹配")
+	ErrVideoTaskNotFound       = errors.New("视频任务不存在")
 	ErrRateLimited             = errors.New("调用频率超过限制")
 	ErrMonthlyQuota            = errors.New("当月 Token 额度已用尽")
 )
@@ -33,8 +35,15 @@ type APIKey struct {
 	MonthlyTokenLimit int64
 	MonthlyTokenUsed  int64
 	AllowedModelCodes []string
+	AllowedModels     []AllowedModel
 	CreatedAt         time.Time
 	RevokedAt         *time.Time
+}
+
+type AllowedModel struct {
+	Code         string `json:"code"`
+	ProviderName string `json:"providerName"`
+	ModelName    string `json:"modelName"`
 }
 
 type CreatedAPIKey struct {
@@ -97,9 +106,11 @@ type Caller struct {
 type Route struct {
 	ModelID                    string
 	ModelCode                  string
+	ModelType                  string
 	ModelStatus                string
 	UpstreamModelID            string
 	ProviderID                 string
+	ProviderKind               string
 	ProviderStatus             string
 	ProviderBaseURL            string
 	ProviderAPIKey             string
@@ -114,6 +125,21 @@ type PreparedRequest struct {
 	Streaming bool
 }
 
+type VideoTask struct {
+	ID             string
+	Caller         Caller
+	Route          Route
+	UpstreamTaskID string
+}
+
+type SaveVideoTaskInput struct {
+	Caller         Caller
+	Route          Route
+	UpstreamTaskID string
+	RequestID      string
+	SourceIP       string
+}
+
 type Call struct {
 	ID               string
 	APIKeyID         string
@@ -124,7 +150,10 @@ type Call struct {
 	DepartmentID     string
 	RequestID        string
 	ModelCode        string
+	ModelName        string
+	ModelType        string
 	UpstreamModelID  string
+	ProviderName     string
 	Streaming        bool
 	Result           string
 	HTTPStatus       int
@@ -167,6 +196,7 @@ type RecordCallInput struct {
 	ProviderID       string
 	RequestID        string
 	ModelCode        string
+	ModelType        string
 	UpstreamModelID  string
 	Streaming        bool
 	Result           string
@@ -283,6 +313,8 @@ type Repository interface {
 	FindAPIKeyByHash(context.Context, []byte) (APIKey, error)
 	TouchAPIKey(context.Context, string) error
 	FindRoute(context.Context, string, string) (Route, error)
+	SaveVideoTask(context.Context, SaveVideoTaskInput) (VideoTask, error)
+	FindVideoTask(context.Context, Caller, string) (VideoTask, error)
 	RecordCall(context.Context, RecordCallInput) error
 	ListCalls(context.Context, CallQuery) (CallPage, error)
 	ListUsage(context.Context, UsageQuery) (UsagePage, error)

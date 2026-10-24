@@ -11,6 +11,7 @@ export interface GatewayAPIKey {
   monthlyTokenLimit: number
   monthlyTokenUsed: number
   allowedModelCodes: string[]
+  allowedModels: { code: string; providerName: string; modelName: string }[]
   createdAt: string
   revokedAt?: string
 }
@@ -29,7 +30,10 @@ export interface GatewayCall {
   departmentId?: string
   requestId: string
   modelCode: string
+  modelName: string
+  modelType: 'chat' | 'image' | 'video'
   upstreamModelId: string
+  providerName: string
   streaming: boolean
   result: 'success' | 'failed'
   httpStatus: number

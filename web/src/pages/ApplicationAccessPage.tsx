@@ -149,7 +149,7 @@ export function ApplicationAccessPage() {
     { title: '客户端 ID', dataIndex: 'clientId', key: 'clientId', width: 220, render: (value: string) => <Text code copyable>{value}</Text> },
     {
       title: '登录回调', dataIndex: 'redirectUris', key: 'redirectUris', width: 230,
-      render: (values: string[]) => <div className="application-access-callback"><Text ellipsis={{ tooltip: values[0] }}>{values[0]}</Text>{values.length > 1 ? <small>另有 {values.length - 1} 个地址</small> : null}</div>,
+      render: (values: string[]) => <div className="application-access-callback">{values.map((value) => <code key={value}>{value}</code>)}</div>,
     },
     {
       title: '授权范围', dataIndex: 'allowedScopes', key: 'allowedScopes', width: 200,

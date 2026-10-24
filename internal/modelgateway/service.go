@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 const gatewayKeyPrefix = "harness_sk_"
@@ -110,6 +112,13 @@ func (s *Service) RevokeAPIKey(ctx context.Context, input RevokeAPIKeyInput) (AP
 }
 
 func (s *Service) Prepare(ctx context.Context, credential string, body []byte) (PreparedRequest, error) {
+	return s.PrepareOperation(ctx, credential, body, "chat")
+}
+
+func (s *Service) PrepareOperation(ctx context.Context, credential string, body []byte, operation string) (PreparedRequest, error) {
+	if operation != "chat" && operation != "image" && operation != "video" {
+		return PreparedRequest{}, ErrInvalidInput
+	}
 	credential = strings.TrimSpace(credential)
 	if !strings.HasPrefix(credential, gatewayKeyPrefix) || len(credential) < len(gatewayKeyPrefix)+20 {
 		return PreparedRequest{}, ErrInvalidCredential
@@ -129,7 +138,7 @@ func (s *Service) Prepare(ctx context.Context, credential string, body []byte) (
 		return PreparedRequest{}, ErrAPIKeyExpired
 	}
 
-	if apiKey.MonthlyTokenLimit > 0 && apiKey.MonthlyTokenUsed >= apiKey.MonthlyTokenLimit {
+	if operation == "chat" && apiKey.MonthlyTokenLimit > 0 && apiKey.MonthlyTokenUsed >= apiKey.MonthlyTokenLimit {
 		return PreparedRequest{}, ErrMonthlyQuota
 	}
 	if apiKey.RequestsPerMinute > 0 {
@@ -144,7 +153,7 @@ func (s *Service) Prepare(ctx context.Context, credential string, body []byte) (
 			return PreparedRequest{}, ErrRateLimited
 		}
 	}
-	prepared, err := s.prepareForCaller(ctx, Caller{OrganizationID: apiKey.OrganizationID, APIKeyID: apiKey.ID, AuthType: "api_key"}, body, apiKey.AllowedModelCodes)
+	prepared, err := s.prepareForCaller(ctx, Caller{OrganizationID: apiKey.OrganizationID, APIKeyID: apiKey.ID, AuthType: "api_key"}, body, apiKey.AllowedModelCodes, operation)
 	if err != nil {
 		return PreparedRequest{}, err
 	}
@@ -155,6 +164,13 @@ func (s *Service) Prepare(ctx context.Context, credential string, body []byte) (
 }
 
 func (s *Service) PrepareForUser(ctx context.Context, organizationID, userID string, body []byte) (PreparedRequest, error) {
+	return s.PrepareForUserOperation(ctx, organizationID, userID, body, "chat")
+}
+
+func (s *Service) PrepareForUserOperation(ctx context.Context, organizationID, userID string, body []byte, operation string) (PreparedRequest, error) {
+	if operation != "chat" && operation != "image" && operation != "video" {
+		return PreparedRequest{}, ErrInvalidInput
+	}
 	if organizationID == "" || userID == "" {
 		return PreparedRequest{}, ErrInvalidCredential
 	}
@@ -168,13 +184,13 @@ func (s *Service) PrepareForUser(ctx context.Context, organizationID, userID str
 	}
 	caller.DepartmentID = snapshot.DepartmentID
 	allowed := effectiveUserModels(snapshot)
-	prepared, err := s.prepareForCaller(ctx, caller, body, allowed)
+	prepared, err := s.prepareForCaller(ctx, caller, body, allowed, operation)
 	if err != nil {
 		return PreparedRequest{}, err
 	}
 	policies := []*SubjectPolicy{snapshot.UserPolicy, snapshot.DepartmentPolicy}
 	for _, policy := range policies {
-		if policy != nil && policy.MonthlyTokenLimit > 0 && policy.MonthlyTokenUsed >= policy.MonthlyTokenLimit {
+		if operation == "chat" && policy != nil && policy.MonthlyTokenLimit > 0 && policy.MonthlyTokenUsed >= policy.MonthlyTokenLimit {
 			if policy.SubjectType == "department" {
 				if policy.MonthlyTokenMode == "per_user" {
 					return PreparedRequest{}, fmt.Errorf("部门策略的个人额度已用尽: %w", ErrMonthlyQuota)
@@ -209,7 +225,7 @@ func (s *Service) PrepareForUser(ctx context.Context, organizationID, userID str
 	return prepared, nil
 }
 
-func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []byte, allowedModelCodes []string) (PreparedRequest, error) {
+func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []byte, allowedModelCodes []string, operation string) (PreparedRequest, error) {
 	var payload map[string]json.RawMessage
 	if len(body) == 0 || json.Unmarshal(body, &payload) != nil || payload == nil {
 		return PreparedRequest{}, ErrInvalidInput
@@ -224,8 +240,22 @@ func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []by
 		return PreparedRequest{}, ErrModelNotAllowed
 	}
 	var streaming bool
-	if raw, ok := payload["stream"]; ok && json.Unmarshal(raw, &streaming) != nil {
-		return PreparedRequest{}, ErrInvalidInput
+	if raw, ok := payload["stream"]; ok {
+		if operation != "chat" || json.Unmarshal(raw, &streaming) != nil {
+			return PreparedRequest{}, ErrInvalidInput
+		}
+	}
+	if operation == "image" {
+		var prompt string
+		if json.Unmarshal(payload["prompt"], &prompt) != nil || strings.TrimSpace(prompt) == "" {
+			return PreparedRequest{}, ErrInvalidInput
+		}
+	}
+	if operation == "video" {
+		var input map[string]json.RawMessage
+		if json.Unmarshal(payload["input"], &input) != nil || len(input) == 0 {
+			return PreparedRequest{}, ErrInvalidInput
+		}
 	}
 	route, err := s.repository.FindRoute(ctx, caller.OrganizationID, modelCode)
 	if err != nil {
@@ -239,6 +269,12 @@ func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []by
 	}
 	if route.ProviderStatus != "active" {
 		return PreparedRequest{}, ErrProviderDisabled
+	}
+	if route.ModelType != "" && route.ModelType != operation {
+		return PreparedRequest{}, ErrModelTypeMismatch
+	}
+	if operation == "video" && route.ProviderKind != "aliyun_bailian" {
+		return PreparedRequest{}, ErrModelTypeMismatch
 	}
 	encodedModel, _ := json.Marshal(route.UpstreamModelID)
 	payload["model"] = encodedModel
@@ -263,7 +299,74 @@ func (s *Service) prepareForCaller(ctx context.Context, caller Caller, body []by
 	return PreparedRequest{Caller: caller, Route: route, Body: rewritten, Streaming: streaming}, nil
 }
 
+func (s *Service) SaveVideoTask(ctx context.Context, input SaveVideoTaskInput) (VideoTask, error) {
+	if input.Caller.OrganizationID == "" || input.Route.ModelID == "" || input.Route.ProviderID == "" ||
+		input.Route.ModelType != "video" || input.UpstreamTaskID == "" || len(input.UpstreamTaskID) > 200 || input.RequestID == "" ||
+		(input.Caller.AuthType != "api_key" && input.Caller.AuthType != "user") ||
+		(input.Caller.AuthType == "api_key" && (input.Caller.APIKeyID == "" || input.Caller.UserID != "")) ||
+		(input.Caller.AuthType == "user" && (input.Caller.UserID == "" || input.Caller.APIKeyID != "")) {
+		return VideoTask{}, ErrInvalidInput
+	}
+	task, err := s.repository.SaveVideoTask(ctx, input)
+	if err != nil {
+		return VideoTask{}, fmt.Errorf("保存视频任务失败: %w", err)
+	}
+	return task, nil
+}
+
+func (s *Service) FindVideoTaskForAPIKey(ctx context.Context, credential, taskID string) (VideoTask, error) {
+	if _, err := uuid.Parse(taskID); err != nil {
+		return VideoTask{}, ErrInvalidInput
+	}
+	credential = strings.TrimSpace(credential)
+	if !strings.HasPrefix(credential, gatewayKeyPrefix) || len(credential) < len(gatewayKeyPrefix)+20 {
+		return VideoTask{}, ErrInvalidCredential
+	}
+	digest := sha256.Sum256([]byte(credential))
+	key, err := s.repository.FindAPIKeyByHash(ctx, digest[:])
+	if errors.Is(err, ErrAPIKeyNotFound) {
+		return VideoTask{}, ErrInvalidCredential
+	}
+	if err != nil {
+		return VideoTask{}, fmt.Errorf("校验模型网关调用密钥失败: %w", err)
+	}
+	if key.Status != "active" {
+		return VideoTask{}, ErrAPIKeyRevoked
+	}
+	if key.ExpiresAt != nil && !key.ExpiresAt.After(s.now()) {
+		return VideoTask{}, ErrAPIKeyExpired
+	}
+	return s.findVideoTask(ctx, Caller{OrganizationID: key.OrganizationID, APIKeyID: key.ID, AuthType: "api_key"}, taskID)
+}
+
+func (s *Service) FindVideoTaskForUser(ctx context.Context, organizationID, userID, taskID string) (VideoTask, error) {
+	if organizationID == "" || userID == "" || s.policy == nil {
+		return VideoTask{}, ErrInvalidCredential
+	}
+	if _, err := uuid.Parse(taskID); err != nil {
+		return VideoTask{}, ErrInvalidInput
+	}
+	if _, err := s.policy.FindUserPolicy(ctx, organizationID, userID); err != nil {
+		return VideoTask{}, fmt.Errorf("校验用户身份失败: %w", err)
+	}
+	return s.findVideoTask(ctx, Caller{OrganizationID: organizationID, UserID: userID, AuthType: "user"}, taskID)
+}
+
+func (s *Service) findVideoTask(ctx context.Context, caller Caller, taskID string) (VideoTask, error) {
+	task, err := s.repository.FindVideoTask(ctx, caller, taskID)
+	if err != nil {
+		if errors.Is(err, ErrVideoTaskNotFound) {
+			return VideoTask{}, err
+		}
+		return VideoTask{}, fmt.Errorf("查询视频任务失败: %w", err)
+	}
+	return task, nil
+}
+
 func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
+	if input.ModelType == "" {
+		input.ModelType = "chat"
+	}
 	if input.AuthType == "" && input.APIKeyID != "" {
 		input.AuthType = "api_key"
 	}
@@ -272,7 +375,8 @@ func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
 	if input.OrganizationID == "" || !validCaller || input.ModelID == "" || input.ProviderID == "" || input.RequestID == "" || input.HTTPStatus < 100 || input.HTTPStatus > 599 || input.LatencyMS < 0 {
 		return ErrInvalidInput
 	}
-	if input.Result != "success" && input.Result != "failed" {
+	if (input.Result != "success" && input.Result != "failed") ||
+		(input.ModelType != "chat" && input.ModelType != "image" && input.ModelType != "video") {
 		return ErrInvalidInput
 	}
 	if input.PromptTokens < 0 || input.CompletionTokens < 0 || input.TotalTokens < 0 {
