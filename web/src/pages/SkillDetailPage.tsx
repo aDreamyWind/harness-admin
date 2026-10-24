@@ -48,8 +48,12 @@ function fileTree(files: SkillFile[]): FileNode[] {
 function SkillMarkdown({ value, anchors = false }: { value: string; anchors?: boolean }) {
   return <div className="skills-detail-markdown">
     <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{
+      h1: ({ node, children }) => <h1 id={anchors ? `skill-heading-${node?.position?.start.line}` : undefined}>{children}</h1>,
       h2: ({ node, children }) => <h2 id={anchors ? `skill-heading-${node?.position?.start.line}` : undefined}>{children}</h2>,
       h3: ({ node, children }) => <h3 id={anchors ? `skill-heading-${node?.position?.start.line}` : undefined}>{children}</h3>,
+      h4: ({ node, children }) => <h4 id={anchors ? `skill-heading-${node?.position?.start.line}` : undefined}>{children}</h4>,
+      h5: ({ node, children }) => <h5 id={anchors ? `skill-heading-${node?.position?.start.line}` : undefined}>{children}</h5>,
+      h6: ({ node, children }) => <h6 id={anchors ? `skill-heading-${node?.position?.start.line}` : undefined}>{children}</h6>,
       img: ({ alt }) => <span className="skills-detail-image-note">[图片：{alt || '未命名'}，请在文件页查看]</span>,
       a: ({ href, children }) => href && /^https?:\/\//i.test(href)
         ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
@@ -102,7 +106,7 @@ export function SkillDetailPage() {
   const [previewMode, setPreviewMode] = useState<PreviewMode>('预览')
   const [downloading, setDownloading] = useState(false)
   const introRef = useRef<HTMLDivElement>(null)
-  const [introHeadings, setIntroHeadings] = useState<{ id: string; title: string }[]>([])
+  const [introHeadings, setIntroHeadings] = useState<{ id: string; level: number; title: string }[]>([])
   const [messageApi, messageHolder] = message.useMessage()
   const skills = useQuery({ queryKey: ['enterprise-skills'], queryFn: listSkills })
   const versions = useQuery({ queryKey: ['enterprise-skill-versions', skillId],
@@ -119,9 +123,10 @@ export function SkillDetailPage() {
     enabled: Boolean(skillId && selectedVersion && introFile) })
   const introBody = intro.data ? MarkdownBody(intro.data) : ''
   useEffect(() => {
-    setIntroHeadings(Array.from(introRef.current?.querySelectorAll<HTMLHeadingElement>('h2[id]') ?? [],
-      (heading) => ({ id: heading.id, title: heading.textContent ?? '' })))
+    setIntroHeadings(Array.from(introRef.current?.querySelectorAll<HTMLHeadingElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]') ?? [],
+      (heading) => ({ id: heading.id, level: Number(heading.tagName[1]), title: heading.textContent ?? '' })))
   }, [introBody, selectedVersion?.id])
+  const outlineBaseLevel = Math.min(...introHeadings.map((heading) => heading.level))
 
   async function downloadVersion() {
     if (!skill || !selectedVersion || downloading) return
@@ -176,7 +181,8 @@ export function SkillDetailPage() {
                 </div>
                 {introHeadings.length > 0 && <aside className="skills-detail-outline" aria-label="文档目录">
                   <strong>文档目录</strong>
-                  <nav>{introHeadings.map((heading) => <a key={heading.id} href={`#${heading.id}`}>{heading.title}</a>)}</nav>
+                  <nav>{introHeadings.map((heading) => <a key={heading.id} href={`#${heading.id}`}
+                    className={`skills-detail-outline-level-${heading.level - outlineBaseLevel + 1}`}>{heading.title}</a>)}</nav>
                 </aside>}
               </div> },
               { key: 'files', label: `Skill 文件 (${files.length})`, children: <div className="skills-detail-files">

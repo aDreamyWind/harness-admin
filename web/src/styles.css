@@ -2385,7 +2385,7 @@ select {
 .skills-detail-tabs > .ant-tabs-content-holder { min-width: 0; }
 .skills-detail-intro {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
+  grid-template-columns: minmax(0, 1fr) 260px;
   align-items: start;
   gap: clamp(32px, 4vw, 76px);
   width: min(100%, 1500px);
@@ -2396,8 +2396,14 @@ select {
 .skills-detail-intro-body { min-width: 0; }
 .skills-detail-outline { position: sticky; top: 24px; padding: 4px 0 4px 18px; border-left: 1px solid #e4ebf3; }
 .skills-detail-outline > strong { display: block; margin-bottom: 14px; color: #4a5e79; font-size: 12px; }
-.skills-detail-outline nav { display: grid; gap: 3px; max-height: calc(100vh - 90px); overflow-y: auto; }
-.skills-detail-outline a { display: block; padding: 6px 0; color: #60728a; font-size: 13px; line-height: 1.45; text-decoration: none; overflow-wrap: anywhere; }
+.skills-detail-outline nav { display: grid; gap: 2px; max-height: calc(100vh - 90px); overflow-y: auto; }
+.skills-detail-outline a { display: block; padding: 5px 4px; color: #60728a; font-size: 12px; line-height: 1.45; text-decoration: none; overflow-wrap: anywhere; }
+.skills-detail-outline a.skills-detail-outline-level-1 { color: #20344f; font-size: 13px; font-weight: 700; }
+.skills-detail-outline a.skills-detail-outline-level-2 { margin-top: 6px; padding-left: 20px; color: #344c6a; font-weight: 600; }
+.skills-detail-outline a.skills-detail-outline-level-3 { padding-left: 36px; }
+.skills-detail-outline a.skills-detail-outline-level-4 { padding-left: 52px; color: #73839a; }
+.skills-detail-outline a.skills-detail-outline-level-5 { padding-left: 68px; color: #8391a4; }
+.skills-detail-outline a.skills-detail-outline-level-6 { padding-left: 84px; color: #8391a4; }
 .skills-detail-outline a:hover, .skills-detail-outline a:focus-visible { color: #2457d6; }
 .skills-detail-pane-head {
   display: flex;
@@ -2420,7 +2426,7 @@ select {
 .skills-detail-file-title > span:last-child { color: #8a98a9; white-space: nowrap; font-size: 12px; }
 .skills-detail-markdown { color: #253953; line-height: 1.85; overflow-wrap: anywhere; }
 .skills-detail-markdown h1, .skills-detail-markdown h2, .skills-detail-markdown h3 { margin: 1.5em 0 .5em; color: #193555; line-height: 1.35; }
-.skills-detail-markdown h2[id] { scroll-margin-top: 86px; }
+.skills-detail-markdown [id^="skill-heading-"] { scroll-margin-top: 86px; }
 .skills-detail-markdown h1:first-child, .skills-detail-markdown h2:first-child { margin-top: 0; }
 .skills-detail-markdown pre, .skills-detail-source { overflow: auto; border: 1px solid #e7edf4; border-radius: 8px; background: #f7f9fc; }
 .skills-detail-markdown pre { padding: 16px; }
