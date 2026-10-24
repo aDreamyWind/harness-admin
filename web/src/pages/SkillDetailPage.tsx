@@ -1,9 +1,10 @@
 import { ArrowLeftOutlined, DownloadOutlined, FileImageOutlined, FileTextOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Card, Empty, Segmented, Select, Skeleton, Space, Tabs, Tag, Tree, Typography, message } from 'antd'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import remarkGfm from 'remark-gfm'
 
 import { downloadSkillVersionZip, listSkills, listSkillVersions, readSkillVersionBlob, type SkillFile } from '../api/skills'
 
@@ -44,9 +45,11 @@ function fileTree(files: SkillFile[]): FileNode[] {
   return roots
 }
 
-function SkillMarkdown({ value }: { value: string }) {
+function SkillMarkdown({ value, anchors = false }: { value: string; anchors?: boolean }) {
   return <div className="skills-detail-markdown">
-    <ReactMarkdown skipHtml components={{
+    <ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{
+      h2: ({ node, children }) => <h2 id={anchors ? `skill-heading-${node?.position?.start.line}` : undefined}>{children}</h2>,
+      h3: ({ node, children }) => <h3 id={anchors ? `skill-heading-${node?.position?.start.line}` : undefined}>{children}</h3>,
       img: ({ alt }) => <span className="skills-detail-image-note">[图片：{alt || '未命名'}，请在文件页查看]</span>,
       a: ({ href, children }) => href && /^https?:\/\//i.test(href)
         ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
@@ -97,8 +100,9 @@ export function SkillDetailPage() {
   const [versionId, setVersionId] = useState<string | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
   const [previewMode, setPreviewMode] = useState<PreviewMode>('预览')
-  const [introMode, setIntroMode] = useState<PreviewMode>('预览')
   const [downloading, setDownloading] = useState(false)
+  const introRef = useRef<HTMLDivElement>(null)
+  const [introHeadings, setIntroHeadings] = useState<{ id: string; title: string }[]>([])
   const [messageApi, messageHolder] = message.useMessage()
   const skills = useQuery({ queryKey: ['enterprise-skills'], queryFn: listSkills })
   const versions = useQuery({ queryKey: ['enterprise-skill-versions', skillId],
@@ -113,6 +117,11 @@ export function SkillDetailPage() {
   const intro = useQuery({ queryKey: ['enterprise-skill-intro', skillId, selectedVersion?.id],
     queryFn: () => readSkillVersionBlob(skillId!, selectedVersion!.id, 'SKILL.md').then((blob) => blob.text()),
     enabled: Boolean(skillId && selectedVersion && introFile) })
+  const introBody = intro.data ? MarkdownBody(intro.data) : ''
+  useEffect(() => {
+    setIntroHeadings(Array.from(introRef.current?.querySelectorAll<HTMLHeadingElement>('h2[id]') ?? [],
+      (heading) => ({ id: heading.id, title: heading.textContent ?? '' })))
+  }, [introBody, selectedVersion?.id])
 
   async function downloadVersion() {
     if (!skill || !selectedVersion || downloading) return
@@ -152,7 +161,7 @@ export function SkillDetailPage() {
                 <Tag color={skill.status === 'published' ? 'green' : 'default'}>
                   {skill.status === 'published' ? '已发布' : skill.status === 'disabled' ? '已停用' : '草稿'}</Tag>
                 {selectedVersion && <Select aria-label="选择 Skill 版本" value={selectedVersion.id} style={{ minWidth: 130 }}
-                  onChange={(value) => { setVersionId(value); setFilePath(null); setPreviewMode('预览'); setIntroMode('预览') }}
+                  onChange={(value) => { setVersionId(value); setFilePath(null); setPreviewMode('预览') }}
                   options={versions.data?.map((version) => ({ value: version.id,
                     label: `v${version.versionNo}${version.id === skill.publishedVersionId ? ' · 当前发布' : ''}` }))} />}
                 {selectedVersion && <Button icon={<DownloadOutlined />} loading={downloading} onClick={downloadVersion}>
@@ -161,11 +170,14 @@ export function SkillDetailPage() {
             </div>
             <Tabs className="skills-detail-tabs" items={[
               { key: 'intro', label: 'Skill 介绍', children: <div className="skills-detail-intro">
-                <div className="skills-detail-pane-head"><strong>SKILL.md</strong>
-                  <Segmented value={introMode} onChange={(value) => setIntroMode(value as PreviewMode)} options={['预览', '源码']} /></div>
-                {intro.isLoading ? <Skeleton active /> : intro.isError ? <Alert type="error" showIcon message={errorText(intro.error)} /> :
-                  intro.data ? introMode === '源码' ? <pre className="skills-detail-source">{intro.data}</pre>
-                    : <SkillMarkdown value={MarkdownBody(intro.data)} /> : <Empty description="此版本没有 SKILL.md" />}
+                <div ref={introRef} className="skills-detail-intro-body">
+                  {intro.isLoading ? <Skeleton active /> : intro.isError ? <Alert type="error" showIcon message={errorText(intro.error)} /> :
+                    intro.data ? <SkillMarkdown value={introBody} anchors /> : <Empty description="此版本没有 SKILL.md" />}
+                </div>
+                {introHeadings.length > 0 && <aside className="skills-detail-outline" aria-label="文档目录">
+                  <strong>文档目录</strong>
+                  <nav>{introHeadings.map((heading) => <a key={heading.id} href={`#${heading.id}`}>{heading.title}</a>)}</nav>
+                </aside>}
               </div> },
               { key: 'files', label: `Skill 文件 (${files.length})`, children: <div className="skills-detail-files">
                 <aside className="skills-detail-tree" aria-label="Skill 文件列表">
