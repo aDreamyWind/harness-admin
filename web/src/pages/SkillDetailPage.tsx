@@ -165,7 +165,7 @@ export function SkillDetailPage() {
                   options={versions.data?.map((version) => ({ value: version.id,
                     label: `v${version.versionNo}${version.id === skill.publishedVersionId ? ' · 当前发布' : ''}` }))} />}
                 {selectedVersion && <Button icon={<DownloadOutlined />} loading={downloading} onClick={downloadVersion}>
-                  下载 v{selectedVersion.versionNo} ZIP</Button>}
+                  下载 ZIP</Button>}
               </Space>
             </div>
             <Tabs className="skills-detail-tabs" items={[
