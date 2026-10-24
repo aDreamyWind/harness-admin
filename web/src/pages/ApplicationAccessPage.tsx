@@ -1,13 +1,10 @@
 import {
-  ApiOutlined,
   CloudServerOutlined,
   CopyOutlined,
   DesktopOutlined,
   EditOutlined,
   EyeOutlined,
-  KeyOutlined,
   PlusOutlined,
-  SafetyCertificateOutlined,
   SyncOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -175,14 +172,6 @@ export function ApplicationAccessPage() {
     <main>
       {messageContext}
       <section className="module-heading"><Text className="module-kicker">AI 资源管理 / 应用接入</Text></section>
-
-      <section className="application-access-protocol" aria-label="统一登录协议">
-        <div><SafetyCertificateOutlined /><span><small>接入协议</small><strong>OpenID Connect</strong></span></div>
-        <i />
-        <div><KeyOutlined /><span><small>安全模式</small><strong>授权码 + PKCE</strong></span></div>
-        <i />
-        <div><ApiOutlined /><span><small>网关权限</small><strong>按用户校验</strong></span></div>
-      </section>
 
       <Card className="model-resource-card" variant="borderless">
         <div className="model-resource-toolbar">
