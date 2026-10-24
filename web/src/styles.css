@@ -2204,95 +2204,6 @@ select {
   font-size: 12px;
 }
 
-.model-health-rail {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(130px, 0.7fr)) minmax(250px, 1.45fr);
-  min-height: 104px;
-  margin-bottom: 24px;
-  border: 1px solid #d5e0e9;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.model-health-rail > div {
-  position: relative;
-  display: grid;
-  align-content: center;
-  padding: 18px 22px;
-  border-right: 1px solid #e2e9ef;
-}
-
-.model-health-rail > div::before {
-  position: absolute;
-  top: 20px;
-  bottom: 20px;
-  left: 0;
-  width: 2px;
-  background: #2457d6;
-  content: "";
-}
-
-.model-health-rail span,
-.model-health-rail em {
-  color: #7c899a;
-  font-size: 10px;
-  font-style: normal;
-}
-
-.model-health-rail strong {
-  margin: 4px 0 2px;
-  color: #1d2c42;
-  font: 650 24px/1.1 "SFMono-Regular", Menlo, monospace;
-}
-
-.model-health-rail strong small {
-  color: #9aa6b4;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.model-health-rail .model-health-flow {
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 12px;
-  border-right: 0;
-  background: #17243a;
-  color: #dbe7f5;
-}
-
-.model-health-flow::before {
-  display: none;
-}
-
-.model-health-flow > .anticon {
-  font-size: 18px;
-}
-
-.model-health-flow i {
-  position: relative;
-  height: 1px;
-  background: #58708f;
-}
-
-.model-health-flow i::after {
-  position: absolute;
-  top: -3px;
-  right: 0;
-  width: 7px;
-  height: 7px;
-  border-top: 1px solid #8aa2c1;
-  border-right: 1px solid #8aa2c1;
-  transform: rotate(45deg);
-  content: "";
-}
-
-.model-health-flow > span {
-  grid-column: 1 / -1;
-  color: #8fa3bc;
-  font: 600 9px/1 "SFMono-Regular", Menlo, monospace;
-  letter-spacing: 0.08em;
-}
-
 .model-resource-tabs .ant-tabs-nav {
   margin-bottom: 14px;
 }
@@ -3022,14 +2933,6 @@ select {
     min-height: auto;
   }
 
-  .model-health-rail {
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .model-health-rail .model-health-flow {
-    display: none;
-  }
-
   .gateway-endpoint-strip {
     grid-template-columns: 1fr 1fr;
   }
@@ -3227,20 +3130,6 @@ select {
   .organization-form-actions {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .model-health-rail {
-    grid-template-columns: 1fr;
-  }
-
-  .model-health-rail > div {
-    min-height: 82px;
-    border-right: 0;
-    border-bottom: 1px solid #e2e9ef;
-  }
-
-  .model-health-rail > div:last-of-type {
-    border-bottom: 0;
   }
 
   .model-resource-toolbar {

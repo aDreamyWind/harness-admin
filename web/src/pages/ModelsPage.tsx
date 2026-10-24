@@ -174,8 +174,6 @@ export function ModelsPage() {
   })
 
   const activeProviders = providers.filter((item) => item.status === 'active').length
-  const healthyProviders = providers.filter((item) => item.lastProbeStatus === 'success').length
-  const activeModels = models.filter((item) => item.status === 'active').length
   const filteredModels = models.filter((item) =>
     (modelTypeFilter === 'all' || item.modelType === modelTypeFilter) &&
     (modelStatusFilter === 'all' || item.status === modelStatusFilter),
@@ -330,7 +328,7 @@ export function ModelsPage() {
             <Button type="link" size="small" onClick={() => setSelectedModelIds([])}>清空选择</Button>
           </div>
           <div className="model-catalog-selection-actions">
-            <Popconfirm title={`启用选中的 ${selectedModelIds.length} 个模型？`} description="非对话模型启用后仍仅在目录中可用。" onConfirm={() => batchModelStatus.mutate({ modelIds: selectedModelIds, status: 'active' })}>
+            <Popconfirm title={`启用选中的 ${selectedModelIds.length} 个模型？`} description="是否可通过网关调用取决于模型类型与供应商协议。" onConfirm={() => batchModelStatus.mutate({ modelIds: selectedModelIds, status: 'active' })}>
               <Button type="primary" disabled={batchModelStatus.isPending} loading={batchModelStatus.isPending && batchModelStatus.variables?.status === 'active'}>批量启用</Button>
             </Popconfirm>
             <Popconfirm title={`停用选中的 ${selectedModelIds.length} 个模型？`} onConfirm={() => batchModelStatus.mutate({ modelIds: selectedModelIds, status: 'disabled' })}>
@@ -352,17 +350,10 @@ export function ModelsPage() {
         </div>
       </section>
 
-      <section className="model-health-rail" aria-label="模型资源概览">
-        <div><span>供应商连接</span><strong>{activeProviders}<small> / {providers.length}</small></strong><em>已启用</em></div>
-        <div><span>最近检测正常</span><strong>{healthyProviders}<small> / {providers.length}</small></strong><em>可连接</em></div>
-        <div><span>目录模型</span><strong>{activeModels}<small> / {models.length}</small></strong><em>已启用</em></div>
-        <div className="model-health-flow"><CloudServerOutlined /><i /><ApiOutlined /><span>连接 → 目录 → 网关</span></div>
-      </section>
-
       <Tabs className="model-resource-tabs" items={tabs} />
 
       <Modal title="从供应商批量导入模型" open={importModalOpen} width={850} okText={`导入选中模型（${selectedImportIds.length}）`} okButtonProps={{ disabled: !selectedImportIds.length || discoverModels.isPending }} confirmLoading={importModels.isPending} onOk={() => importModels.mutate()} onCancel={() => setImportModalOpen(false)} destroyOnHidden>
-        <Alert type="info" showIcon message="导入后模型默认停用。可同时启用所有选中的模型；图片、视频等非对话模型目前仅在目录中可用。" />
+        <Alert type="info" showIcon message="导入后模型默认停用。勾选下方选项可启用所选模型；是否可通过网关调用取决于模型类型与供应商协议。" />
         <Space style={{ margin: '16px 0' }}>
           <Select style={{ width: 260 }} value={importProviderId || undefined} options={providers.filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: item.name }))} onChange={(value) => { setImportProviderId(value); setDiscovered([]); setSelectedImportIds([]); discoverModels.reset() }} />
           <Button loading={discoverModels.isPending} disabled={!importProviderId} onClick={() => discoverModels.mutate(importProviderId)}>读取模型列表</Button>
@@ -376,7 +367,7 @@ export function ModelsPage() {
           { title: '类型', dataIndex: 'modelType', key: 'modelType', width: 90, render: (value: ModelType) => modelTypeLabels[value] },
           { title: '目录', key: 'existing', width: 95, render: (_: unknown, item: DiscoveredModel) => models.some((model) => model.providerConnectionId === importProviderId && model.upstreamModelId === item.upstreamModelId) ? '已登记' : '未登记' },
         ]} locale={{ emptyText: discoverModels.isSuccess ? '供应商未返回模型' : '选择供应商后读取模型列表' }} />
-        <Checkbox checked={activateImportedModels} onChange={(event) => setActivateImportedModels(event.target.checked)}>导入时启用所有选中的模型（非对话模型仅目录可用）</Checkbox>
+        <Checkbox checked={activateImportedModels} onChange={(event) => setActivateImportedModels(event.target.checked)}>导入时启用所选模型</Checkbox>
       </Modal>
 
       <Modal title={`${revealedProviderSecret?.name ?? ''} · API Key`} open={Boolean(revealedProviderSecret)} footer={null} onCancel={() => { setRevealedProviderSecret(null); revealProviderSecret.reset() }} destroyOnHidden>
