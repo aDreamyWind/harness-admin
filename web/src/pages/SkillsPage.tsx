@@ -1,6 +1,6 @@
 import { FileTextOutlined, GithubOutlined, InboxOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Empty, Form, Input, Modal, Segmented, Select, Space, Table, Tag, Typography, Upload, message } from 'antd'
+import { Alert, Button, Card, Collapse, Empty, Form, Input, Modal, Segmented, Select, Space, Spin, Table, Tag, Typography, Upload, message } from 'antd'
 import { useState } from 'react'
 
 import { useAuth } from '../auth/AuthContext'
@@ -150,36 +150,53 @@ export function SkillsPage() {
       </Form>}
     </Modal>
 
-    <Modal title={`版本与文件：${versionTarget?.name ?? ''}`} open={Boolean(versionTarget)} width={900}
+    <Modal title={`版本与文件：${versionTarget?.name ?? ''}`} open={Boolean(versionTarget)} width={920}
       onCancel={() => { setVersionTarget(null); setPreview(null) }} footer={<Button onClick={() => setVersionTarget(null)}>关闭</Button>}>
       <Alert type="info" showIcon style={{ marginBottom: 16 }} message="发布会立即替换员工可读的版本。请先核对 SKILL.md、脚本和文件摘要。" />
-      <Table<SkillVersion> rowKey="id" dataSource={versions.data ?? []} loading={versions.isLoading}
-        pagination={false} expandable={{ expandedRowRender: (version: SkillVersion) => <div>
-          {version.sourceType === 'github' && <Typography.Paragraph copyable={{ text: `${version.sourceRef}/commit/${version.sourceRevision}` }}>
-            来源：{version.sourceRef}{version.sourcePath ? ` / ${version.sourcePath}` : ''}<br />
-            固定提交：<Typography.Text code>{version.sourceRevision}</Typography.Text>
-          </Typography.Paragraph>}
-          <Table<SkillFile> size="small" rowKey="path" pagination={false}
-          dataSource={version.files} columns={[
-            { title: '文件', dataIndex: 'path', align: 'center', render: (path: string, file: SkillFile) =>
-              file.mimeType.startsWith('text/') ? <Button type="link" onClick={() => showFile(version, file)}>{path}</Button> : path },
-            { title: '大小', dataIndex: 'size', align: 'center', width: 100, render: (value: number) => `${value} B` },
-            { title: 'SHA-256', dataIndex: 'digest', align: 'center', width: 280,
-              render: (digest: string) => <span className="skills-cell-text skills-digest">{digest}</span> },
-          ]} />
-        </div> }} columns={[
-          { title: '版本', dataIndex: 'versionNo', align: 'center', width: 80, render: (value: number) => `v${value}` },
-          { title: '说明', align: 'center', render: (_: unknown, version: SkillVersion) => String(version.frontmatter.description ?? '') },
-          { title: '来源', align: 'center', width: 160, render: (_: unknown, version: SkillVersion) =>
-            version.sourceType === 'github' ? <Typography.Text title={`${version.sourceRef}${version.sourcePath ? ` / ${version.sourcePath}` : ''}\n${version.sourceRevision}`}>
-              <GithubOutlined /> GitHub · {version.sourceRevision.slice(0, 12)}</Typography.Text> : '本地上传' },
-          { title: '文件数', align: 'center', width: 90, render: (_: unknown, version: SkillVersion) => version.files.length },
-          { title: '清单摘要', dataIndex: 'manifestDigest', align: 'center', width: 280,
-            render: (digest: string) => <span className="skills-cell-text skills-digest">{digest}</span> },
-          { title: '操作', align: 'center', width: 120, render: (_: unknown, version: SkillVersion) => canWrite && <Button type="link" disabled={versionTarget?.publishedVersionId === version.id && versionTarget?.status === 'published'}
-            loading={publish.isPending} onClick={() => publish.mutate({ id: versionTarget!.id, status: 'published', versionId: version.id })}>
-            {versionTarget?.publishedVersionId === version.id && versionTarget?.status === 'published' ? '当前发布' : '发布此版本'}</Button> },
-        ]} />
+      <div className="skills-version-list">
+        {versions.isLoading ? <div className="skills-version-loading"><Spin /></div> :
+          versions.isError ? <Alert type="error" showIcon message={errorText(versions.error)} /> :
+          versions.data?.length ? versions.data.map((version) => {
+            const isPublished = versionTarget?.publishedVersionId === version.id && versionTarget?.status === 'published'
+            return <Card key={version.id} size="small" className="skills-version-card">
+              <div className="skills-version-header">
+                <Space size={8} wrap>
+                  <Tag color="blue">v{version.versionNo}</Tag>
+                  {isPublished && <Tag color="green">当前发布</Tag>}
+                  <Typography.Text type="secondary">{version.sourceType === 'github' ? 'GitHub 导入' : '本地上传'}</Typography.Text>
+                </Space>
+                {canWrite && <Button type={isPublished ? 'default' : 'primary'} disabled={isPublished}
+                  loading={publish.isPending} onClick={() => publish.mutate({ id: versionTarget!.id, status: 'published', versionId: version.id })}>
+                  {isPublished ? '当前发布' : '发布此版本'}</Button>}
+              </div>
+              <div className="skills-version-description">
+                <span className="skills-version-label">用途说明</span>
+                <Typography.Paragraph>{String(version.frontmatter.description ?? '')}</Typography.Paragraph>
+              </div>
+              <div className="skills-version-facts">
+                <div><span className="skills-version-label">文件数量</span><strong>{version.files.length} 个</strong></div>
+                <div><span className="skills-version-label">清单摘要</span>
+                  <Typography.Text className="skills-digest" copyable={{ text: version.manifestDigest }}>{version.manifestDigest}</Typography.Text></div>
+                {version.sourceType === 'github' && <>
+                  <div><span className="skills-version-label">来源仓库</span>
+                    <Typography.Text copyable={{ text: version.sourceRef }}>{version.sourceRef}</Typography.Text></div>
+                  <div><span className="skills-version-label">固定提交</span>
+                    <Typography.Text className="skills-digest" copyable={{ text: version.sourceRevision }}>{version.sourceRevision}</Typography.Text></div>
+                  {version.sourcePath && <div><span className="skills-version-label">Skill 子目录</span><Typography.Text>{version.sourcePath}</Typography.Text></div>}
+                </>}
+              </div>
+              <Collapse size="small" className="skills-version-files" items={[{ key: 'files', label: `查看文件清单（${version.files.length}）`,
+                children: <Table<SkillFile> size="small" rowKey="path" pagination={false} scroll={{ x: 740 }}
+                  dataSource={version.files} columns={[
+                    { title: '文件', dataIndex: 'path', align: 'center', width: 300, render: (path: string, file: SkillFile) =>
+                      file.mimeType.startsWith('text/') ? <Button type="link" onClick={() => showFile(version, file)}>{path}</Button> : path },
+                    { title: '大小', dataIndex: 'size', align: 'center', width: 100, render: (value: number) => `${value} B` },
+                    { title: 'SHA-256', dataIndex: 'digest', align: 'center', width: 340,
+                      render: (digest: string) => <span className="skills-cell-text skills-digest">{digest}</span> },
+                  ]} /> }]} />
+            </Card>
+          }) : <Empty description="暂无版本" />}
+      </div>
       {preview && <Card size="small" title={preview.name} style={{ marginTop: 16 }}>
         <Input.TextArea readOnly value={preview.text} autoSize={{ minRows: 8, maxRows: 20 }} />
       </Card>}

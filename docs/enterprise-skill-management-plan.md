@@ -12,7 +12,7 @@
 ## 企业资产首版边界
 
 - 当前输入支持本地 `.zip`、`.tar.gz` 和公开 GitHub 仓库。GitHub 分支或标签先解析为固定提交号，可选择仓库中的 Skill 子目录；仅访问受限的 GitHub 官方端点。只接受一个 Skill 根目录中的 `SKILL.md`、`references/`、`assets/` 和 `scripts/` 等普通文件。拒绝绝对路径、`..`、符号链接、设备文件、重名路径、超过资源数量或总字节上限的包。
-- `SKILL.md` 必须含合法 YAML frontmatter 的 `name` 与 `description`；名称与目录名一致。保留完整 frontmatter，不自行把 `allowed-tools` 当作 Admin 授权。
+- `SKILL.md` 必须含合法 YAML frontmatter 的 `name` 与 `description`。本地 `.tar.gz` 包要求 Skill 目录名与 `name` 一致；本地 ZIP 可带 GitHub 自动生成的“仓库名-分支”顶层目录，以 `SKILL.md` 的 `name` 登记资产。ZIP 中若有多个 `SKILL.md`，须重新打包单个 Skill，或改用 GitHub 导入并指定子目录。保留完整 frontmatter，不自行把 `allowed-tools` 当作 Admin 授权。
 - 导入生成不可变版本、逐文件 SHA-256 摘要与完整清单。管理员可在发布前预览文本、文件树、脚本以及各版本清单摘要；可视化版本差异尚未实现；审批所绑定的是摘要，不是可变名称。脚本不在 Admin 服务端自动运行。
 - 初版状态为草稿、已发布、已停用。更新产生新版本，旧版本保留审计；发布或回退显式指定版本。撤销发布后，新的目录与文件读取立即拒绝；已被客户端复制到本地的文件须由客户端按自己的缓存与撤销规则处理，Admin 不能声称远程删除。
 - 授权按企业、明确选中的部门和员工保存，与 MCP 连接授权分开。若 Skill 使用 MCP 工具，实际工具调用仍以 MCP 连接的当前权限为准。页面须同时显示“可读取 Skill”和“可调用其依赖工具”是两个判断。

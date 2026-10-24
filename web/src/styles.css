@@ -2285,6 +2285,81 @@ select {
   font-size: 12px;
 }
 
+.skills-version-list {
+  display: grid;
+  gap: 14px;
+  max-height: 64vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.skills-version-loading {
+  display: flex;
+  justify-content: center;
+  padding: 48px;
+}
+
+.skills-version-card .ant-card-body {
+  padding: 16px 18px;
+}
+
+.skills-version-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.skills-version-description {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid #e8eef5;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+
+.skills-version-description .ant-typography {
+  margin: 5px 0 0;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.skills-version-label {
+  display: block;
+  margin-bottom: 5px;
+  color: #78879a;
+  font-size: 12px;
+}
+
+.skills-version-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 24px;
+  margin-bottom: 16px;
+}
+
+.skills-version-facts > div {
+  min-width: 0;
+}
+
+.skills-version-facts .ant-typography {
+  overflow-wrap: anywhere;
+}
+
+.skills-version-files .ant-table-thead > tr > th,
+.skills-version-files .ant-table-tbody > tr > td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+@media (max-width: 640px) {
+  .skills-version-facts {
+    grid-template-columns: 1fr;
+  }
+}
+
 .model-catalog-controls {
   display: flex;
   align-items: center;

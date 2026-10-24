@@ -313,8 +313,12 @@ func enterpriseSkillEntry(item skilladmin.Published) (mcpclient.SkillEntry, erro
 
 func handleSkillError(ctx *gin.Context, deps Dependencies, err error) {
 	switch {
+	case errors.Is(err, skilladmin.ErrSkillManifestMissing):
+		httpx.Fail(ctx, http.StatusBadRequest, "skill_manifest_missing", "压缩包中找不到 SKILL.md；请打包单个 Skill 目录")
+	case errors.Is(err, skilladmin.ErrMultipleSkillManifests):
+		httpx.Fail(ctx, http.StatusBadRequest, "multiple_skill_manifests", "压缩包中有多个 SKILL.md；请只打包一个 Skill，或从 GitHub 指定子目录导入")
 	case errors.Is(err, skilladmin.ErrInvalidPackage), errors.Is(err, skilladmin.ErrInvalidInput):
-		httpx.Fail(ctx, http.StatusBadRequest, "invalid_skill", "Skill 包或参数不正确")
+		httpx.Fail(ctx, http.StatusBadRequest, "invalid_skill", "Skill 包校验失败；请检查 SKILL.md 内容、文件大小和压缩包路径")
 	case errors.Is(err, skilladmin.ErrNotFound), errors.Is(err, skilladmin.ErrForbidden):
 		httpx.Fail(ctx, http.StatusNotFound, "skill_not_found", "Skill 不存在或无权读取")
 	case errors.Is(err, skilladmin.ErrConflict):

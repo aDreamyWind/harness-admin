@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -109,6 +110,37 @@ func TestParseZIPKeepsFilesAndIgnoresFinderMetadata(t *testing.T) {
 	if err != nil || zipPack.Name != "lunch-helper" || len(zipPack.Files) != 2 ||
 		zipPack.ManifestDigest != tarPack.ManifestDigest {
 		t.Fatalf("ZIP 与 tar.gz 内容解析不一致: %#v, %v", zipPack, err)
+	}
+}
+
+func TestParseZIPAcceptsGitHubBranchWrapper(t *testing.T) {
+	frontmatter := "---\nname: amap-lbs-skill\ndescription: 高德地图综合服务\n---\n正文\n"
+	pack, err := ParsePackage(skillZIP(t, map[string]string{
+		"amap-lbs-skill-main/SKILL.md":          frontmatter,
+		"amap-lbs-skill-main/README.md":         "项目说明",
+		"amap-lbs-skill-main/scripts/search.js": "脚本",
+	}, false))
+	if err != nil || pack.Name != "amap-lbs-skill" || len(pack.Files) != 3 || pack.Files[0].Path == "amap-lbs-skill-main/SKILL.md" {
+		t.Fatalf("GitHub 下载 ZIP 的顶层目录不应成为 Skill 名称或文件前缀: %#v, %v", pack, err)
+	}
+}
+
+func TestParseZIPSelectsUniqueNestedSkill(t *testing.T) {
+	frontmatter := "---\nname: lunch-helper\ndescription: 推荐午餐\n---\n正文\n"
+	pack, err := ParsePackage(skillZIP(t, map[string]string{
+		"repository-main/README.md":                              "仓库说明",
+		"repository-main/skills/lunch-helper/SKILL.md":           frontmatter,
+		"repository-main/skills/lunch-helper/references/menu.md": "菜单",
+	}, false))
+	if err != nil || len(pack.Files) != 2 || pack.Name != "lunch-helper" {
+		t.Fatalf("未选中唯一的嵌套 Skill: %#v, %v", pack, err)
+	}
+	_, err = ParsePackage(skillZIP(t, map[string]string{
+		"repository-main/skills/one/SKILL.md": frontmatter,
+		"repository-main/skills/two/SKILL.md": frontmatter,
+	}, false))
+	if !errors.Is(err, ErrMultipleSkillManifests) {
+		t.Fatalf("多个 Skill 应要求明确选择: %v", err)
 	}
 }
 

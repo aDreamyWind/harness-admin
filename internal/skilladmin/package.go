@@ -25,6 +25,8 @@ const maxPackageBytes = 16 * 1024 * 1024
 const maxPackageFiles = 512
 
 var ErrInvalidPackage = errors.New("Skill 代码包格式不正确")
+var ErrSkillManifestMissing = fmt.Errorf("%w: 缺少 SKILL.md", ErrInvalidPackage)
+var ErrMultipleSkillManifests = fmt.Errorf("%w: 包含多个 SKILL.md", ErrInvalidPackage)
 var skillName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 type File struct {
@@ -53,8 +55,9 @@ func ParsePackage(input []byte) (Package, error) {
 	}
 	var files map[string][]byte
 	var err error
+	isZIP := len(input) >= 2 && input[0] == 'P' && input[1] == 'K'
 	switch {
-	case len(input) >= 2 && input[0] == 'P' && input[1] == 'K':
+	case isZIP:
 		files, err = parseZIPFiles(input)
 	case len(input) >= 2 && input[0] == 0x1f && input[1] == 0x8b:
 		files, err = parseTarGzipFiles(input)
@@ -63,6 +66,9 @@ func ParsePackage(input []byte) (Package, error) {
 	}
 	if err != nil {
 		return Package{}, err
+	}
+	if isZIP {
+		return packageFromZIPFiles(files)
 	}
 	root := ""
 	for file := range files {
@@ -78,6 +84,33 @@ func ParsePackage(input []byte) (Package, error) {
 		}
 	}
 	return packageFromFiles(files, root)
+}
+
+// ZIP 中 GitHub 自动生成的 "仓库名-分支" 只是归档目录，不作为 Skill 名称。
+// 只接收唯一的 SKILL.md 所在目录，避免把同仓库的其他内容误导入。
+func packageFromZIPFiles(files map[string][]byte) (Package, error) {
+	root := ""
+	found := false
+	for name := range files {
+		if name != "SKILL.md" && path.Base(name) != "SKILL.md" {
+			continue
+		}
+		if found {
+			return Package{}, ErrMultipleSkillManifests
+		}
+		root = strings.TrimSuffix(name, "SKILL.md")
+		found = true
+	}
+	if !found {
+		return Package{}, ErrSkillManifestMissing
+	}
+	selected := make(map[string][]byte)
+	for name, content := range files {
+		if strings.HasPrefix(name, root) {
+			selected[strings.TrimPrefix(name, root)] = content
+		}
+	}
+	return packageFromFiles(selected, "")
 }
 
 func parseTarGzipFiles(input []byte) (map[string][]byte, error) {
