@@ -64,7 +64,10 @@ export function SkillsPage() {
     } catch { /* 表单会显示校验结果 */ }
   }
   const publish = useMutation({ mutationFn: (input: { id: string; status: 'published' | 'disabled'; versionId?: string }) =>
-    publishSkill(input.id, input.status, input.versionId), onSuccess: async () => {
+    publishSkill(input.id, input.status, input.versionId), onSuccess: async (asset) => {
+    setVersionTarget((current) => current?.id === asset.id ? asset : current)
+    queryClient.setQueryData<SkillAsset[]>(['enterprise-skills'], (current) =>
+      current?.map((skill) => skill.id === asset.id ? asset : skill))
     await queryClient.invalidateQueries({ queryKey: ['enterprise-skills'] })
     messageApi.success('发布状态已更新')
   }, onError: (error) => messageApi.error(errorText(error)) })
