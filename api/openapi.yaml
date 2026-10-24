@@ -2527,6 +2527,26 @@ paths:
       responses:
         '200': { description: 原始文件字节；媒体类型来自导入时识别结果。 }
         '404': { $ref: '#/components/responses/NotFound' }
+  /skills/{skillId}/versions/{versionId}/download:
+    parameters:
+      - { name: skillId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: versionId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 下载企业 Skill 的固定版本 ZIP
+      description: 仅供有 skill.asset.read 权限的管理员下载；从不可变版本生成，逐文件校验 SHA-256 与整版清单摘要。不执行文件，也不包含其他版本。响应禁止缓存。
+      operationId: downloadEnterpriseSkillVersion
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 文件名为 <Skill 名称>-v<版本号>.zip，ZIP 内有 Skill 名称顶层目录。
+          headers:
+            Content-Disposition: { description: 附件下载文件名。, schema: { type: string } }
+            Cache-Control: { description: 私有且不缓存。, schema: { type: string, example: 'private, no-store' } }
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /skills/{skillId}/publish:
     parameters:
       - { name: skillId, in: path, required: true, schema: { type: string, format: uuid } }

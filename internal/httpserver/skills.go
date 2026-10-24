@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ type SkillService interface {
 	List(context.Context, string) ([]skilladmin.Asset, error)
 	Versions(context.Context, string, string) ([]skilladmin.Version, error)
 	ReadVersionFile(context.Context, string, string, string, string) (skilladmin.File, error)
+	ExportVersion(context.Context, string, string, string) (skilladmin.Archive, error)
 	Publish(context.Context, skilladmin.Actor, string, string, string) (skilladmin.Asset, error)
 	ReplaceGrants(context.Context, skilladmin.Actor, string, []string, []string) (skilladmin.Asset, error)
 	ListForUser(context.Context, string, string) ([]skilladmin.Published, error)
@@ -108,6 +110,18 @@ func registerSkillRoutes(router *gin.Engine, deps Dependencies) {
 		ctx.Header("X-Content-Type-Options", "nosniff")
 		ctx.Header("Content-Disposition", "attachment")
 		ctx.Data(http.StatusOK, "application/octet-stream", file.Content)
+	})
+	admin.GET("/:id/versions/:versionId/download", requirePermission(deps, "skill.asset.read"), func(ctx *gin.Context) {
+		archive, err := deps.Skills.ExportVersion(ctx.Request.Context(), currentSession(ctx).User.OrganizationID,
+			ctx.Param("id"), ctx.Param("versionId"))
+		if err != nil {
+			handleSkillError(ctx, deps, err)
+			return
+		}
+		ctx.Header("Cache-Control", "private, no-store")
+		ctx.Header("X-Content-Type-Options", "nosniff")
+		ctx.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fmt.Sprintf("%s-v%d.zip", archive.Name, archive.VersionNo)))
+		ctx.Data(http.StatusOK, "application/zip", archive.Content)
 	})
 	admin.PATCH("/:id/publish", requirePermission(deps, "skill.asset.write"), requireCSRF(deps), func(ctx *gin.Context) {
 		var request skillPublishRequest

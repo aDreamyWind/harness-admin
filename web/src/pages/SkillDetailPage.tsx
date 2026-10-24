@@ -1,11 +1,11 @@
-import { ArrowLeftOutlined, FileImageOutlined, FileTextOutlined, FolderOpenOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, DownloadOutlined, FileImageOutlined, FileTextOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Card, Empty, Segmented, Select, Skeleton, Space, Tabs, Tag, Tree, Typography } from 'antd'
+import { Alert, Button, Card, Empty, Segmented, Select, Skeleton, Space, Tabs, Tag, Tree, Typography, message } from 'antd'
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
-import { listSkills, listSkillVersions, readSkillVersionBlob, type SkillFile } from '../api/skills'
+import { downloadSkillVersionZip, listSkills, listSkillVersions, readSkillVersionBlob, type SkillFile } from '../api/skills'
 
 type FileNode = { key: string; title: string; icon?: React.ReactNode; children?: FileNode[]; isLeaf?: boolean }
 type PreviewMode = '预览' | '源码'
@@ -98,6 +98,8 @@ export function SkillDetailPage() {
   const [filePath, setFilePath] = useState<string | null>(null)
   const [previewMode, setPreviewMode] = useState<PreviewMode>('预览')
   const [introMode, setIntroMode] = useState<PreviewMode>('预览')
+  const [downloading, setDownloading] = useState(false)
+  const [messageApi, messageHolder] = message.useMessage()
   const skills = useQuery({ queryKey: ['enterprise-skills'], queryFn: listSkills })
   const versions = useQuery({ queryKey: ['enterprise-skill-versions', skillId],
     queryFn: () => listSkillVersions(skillId!), enabled: Boolean(skillId) })
@@ -112,7 +114,28 @@ export function SkillDetailPage() {
     queryFn: () => readSkillVersionBlob(skillId!, selectedVersion!.id, 'SKILL.md').then((blob) => blob.text()),
     enabled: Boolean(skillId && selectedVersion && introFile) })
 
+  async function downloadVersion() {
+    if (!skill || !selectedVersion || downloading) return
+    setDownloading(true)
+    try {
+      const blob = await downloadSkillVersionZip(skill.id, selectedVersion.id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${skill.name}-v${selectedVersion.versionNo}.zip`
+      document.body.append(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) {
+      messageApi.error(errorText(error))
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return <div className="page-stack skills-detail-page">
+    {messageHolder}
     <div className="skills-detail-back"><Button type="text" icon={<ArrowLeftOutlined />}
       onClick={() => navigate(returnTo)}>返回 Skills 管理</Button></div>
     {skills.isLoading || versions.isLoading ? <Card><Skeleton active paragraph={{ rows: 10 }} /></Card> :
@@ -132,6 +155,8 @@ export function SkillDetailPage() {
                   onChange={(value) => { setVersionId(value); setFilePath(null); setPreviewMode('预览'); setIntroMode('预览') }}
                   options={versions.data?.map((version) => ({ value: version.id,
                     label: `v${version.versionNo}${version.id === skill.publishedVersionId ? ' · 当前发布' : ''}` }))} />}
+                {selectedVersion && <Button icon={<DownloadOutlined />} loading={downloading} onClick={downloadVersion}>
+                  下载 v{selectedVersion.versionNo} ZIP</Button>}
               </Space>
             </div>
             <Tabs className="skills-detail-tabs" items={[

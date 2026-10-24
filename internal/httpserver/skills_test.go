@@ -21,6 +21,7 @@ import (
 type skillServiceStub struct {
 	allow   bool
 	archive []byte
+	export  skilladmin.Archive
 	actor   skilladmin.Actor
 	github  skilladmin.GitHubImportInput
 }
@@ -42,6 +43,9 @@ func (*skillServiceStub) Versions(context.Context, string, string) ([]skilladmin
 }
 func (*skillServiceStub) ReadVersionFile(context.Context, string, string, string, string) (skilladmin.File, error) {
 	return skilladmin.File{}, nil
+}
+func (s *skillServiceStub) ExportVersion(context.Context, string, string, string) (skilladmin.Archive, error) {
+	return s.export, nil
 }
 func (*skillServiceStub) Publish(context.Context, skilladmin.Actor, string, string, string) (skilladmin.Asset, error) {
 	return skilladmin.Asset{}, nil
@@ -139,6 +143,47 @@ func TestEnterpriseSkillGitHubImportRequiresSessionAndCSRF(t *testing.T) {
 	}
 	if skills.github.RepositoryURL != "https://github.com/owner/repo" || skills.github.SkillPath != "skills/lunch-helper" {
 		t.Fatalf("GitHub 参数未传递: %#v", skills.github)
+	}
+}
+
+type skillReadDeniedStub struct{}
+
+func (skillReadDeniedStub) Allowed(context.Context, string, string) (bool, error) { return false, nil }
+
+func TestEnterpriseSkillVersionDownloadRequiresPermissionAndReturnsZip(t *testing.T) {
+	skills := &skillServiceStub{export: skilladmin.Archive{Name: "lunch-helper", VersionNo: 2, Content: []byte("zip bytes")}}
+	path := "/api/v1/skills/skill-id/versions/version-id/download"
+	for _, tc := range []struct {
+		name   string
+		cookie bool
+		deny   bool
+		want   int
+	}{{"未登录", false, false, http.StatusUnauthorized}, {"无读取权限", true, true, http.StatusForbidden},
+		{"已授权", true, false, http.StatusOK}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var access AuthorizationService = accountAccessStub{}
+			if tc.deny {
+				access = skillReadDeniedStub{}
+			}
+			router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Auth: &accountAuthStub{session: accountTestSession()}, Access: access, Skills: skills,
+				OIDCProvider: &mcpEmployeeProviderStub{}, SessionCookie: "test_session"})
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			if tc.cookie {
+				request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != tc.want {
+				t.Fatalf("状态码 %d，期望 %d: %s", response.Code, tc.want, response.Body.String())
+			}
+			if tc.want == http.StatusOK && (response.Body.String() != "zip bytes" ||
+				response.Header().Get("Content-Type") != "application/zip" ||
+				response.Header().Get("Content-Disposition") != `attachment; filename="lunch-helper-v2.zip"` ||
+				response.Header().Get("Cache-Control") != "private, no-store") {
+				t.Fatalf("ZIP 下载响应不完整: %#v", response.Header())
+			}
+		})
 	}
 }
 

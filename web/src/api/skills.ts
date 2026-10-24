@@ -37,6 +37,22 @@ export interface SkillVersion {
 export const listSkills = () => request<SkillAsset[]>('/api/v1/skills')
 export const listSkillVersions = (id: string) => request<SkillVersion[]>(`/api/v1/skills/${id}/versions`)
 
+export async function downloadSkillVersionZip(id: string, versionId: string): Promise<Blob> {
+  let response: Response
+  try {
+    response = await fetch(`/api/v1/skills/${id}/versions/${versionId}/download`, {
+      credentials: 'same-origin', headers: { Accept: 'application/zip' },
+    })
+  } catch {
+    throw new ApiError('无法连接控制面服务，请检查服务是否已启动', 0, 'network_error')
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: { message?: string; code?: string } }
+    throw new ApiError(body.error?.message ?? '下载 Skill 版本失败', response.status, body.error?.code ?? 'skill_download_error')
+  }
+  return response.blob()
+}
+
 export function importSkill(file: File) {
   const body = new FormData()
   body.append('file', file)

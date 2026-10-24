@@ -1,11 +1,14 @@
 package skilladmin
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -55,6 +58,12 @@ type Version struct {
 type Published struct {
 	Asset   Asset   `json:"asset"`
 	Version Version `json:"version"`
+}
+
+type Archive struct {
+	Name      string
+	VersionNo int
+	Content   []byte
 }
 
 type Repository interface {
@@ -170,6 +179,69 @@ func (s *Service) ReadVersionFile(ctx context.Context, organizationID, skillID, 
 		return File{}, errors.New("Skill 文件摘要校验失败")
 	}
 	return file, nil
+}
+
+func (s *Service) ExportVersion(ctx context.Context, organizationID, skillID, versionID string) (Archive, error) {
+	if !validUUID(organizationID) || !validUUID(skillID) || !validUUID(versionID) {
+		return Archive{}, ErrInvalidInput
+	}
+	versions, err := s.repository.Versions(ctx, organizationID, skillID)
+	if err != nil {
+		return Archive{}, err
+	}
+	var selected *Version
+	for i := range versions {
+		if versions[i].ID == versionID {
+			selected = &versions[i]
+			break
+		}
+	}
+	if selected == nil {
+		return Archive{}, ErrNotFound
+	}
+	var metadata struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(selected.Frontmatter, &metadata); err != nil || !skillName.MatchString(metadata.Name) {
+		return Archive{}, errors.New("Skill 版本名称无效")
+	}
+	if len(selected.Files) == 0 || len(selected.Files) > maxPackageFiles {
+		return Archive{}, errors.New("Skill 文件数量无效")
+	}
+	files := append([]File(nil), selected.Files...)
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	manifest := sha256.New()
+	totalSize := 0
+	for _, expected := range files {
+		if !validSkillPath(expected.Path) || expected.Size < 0 || totalSize > maxPackageBytes-expected.Size {
+			return Archive{}, errors.New("Skill 文件清单无效")
+		}
+		file, err := s.repository.ReadVersionFile(ctx, organizationID, skillID, versionID, expected.Path)
+		if err != nil {
+			return Archive{}, err
+		}
+		if !validStoredFile(file) || file.Path != expected.Path || file.Digest != expected.Digest || file.Size != expected.Size {
+			return Archive{}, errors.New("Skill 文件摘要校验失败")
+		}
+		_, _ = fmt.Fprintf(manifest, "%s\x00%s\x00%d\x00", file.Path, file.Digest, file.Size)
+		entry, err := writer.CreateHeader(&zip.FileHeader{Name: metadata.Name + "/" + file.Path, Method: zip.Deflate})
+		if err != nil {
+			return Archive{}, err
+		}
+		if _, err := entry.Write(file.Content); err != nil {
+			return Archive{}, err
+		}
+		totalSize += file.Size
+	}
+	if selected.ManifestDigest != fmt.Sprintf("sha256:%x", manifest.Sum(nil)) {
+		return Archive{}, errors.New("Skill 清单摘要校验失败")
+	}
+	if err := writer.Close(); err != nil {
+		return Archive{}, err
+	}
+	return Archive{Name: metadata.Name, VersionNo: selected.VersionNo, Content: buffer.Bytes()}, nil
 }
 
 func (s *Service) Publish(ctx context.Context, actor Actor, skillID, versionID, status string) (Asset, error) {
