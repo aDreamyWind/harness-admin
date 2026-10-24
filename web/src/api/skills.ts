@@ -70,10 +70,14 @@ export function replaceSkillGrants(id: string, departmentIds: string[], userIds:
   })
 }
 
-export async function readSkillVersionFile(id: string, versionId: string, path: string): Promise<string> {
+export async function readSkillVersionBlob(id: string, versionId: string, path: string): Promise<Blob> {
   const response = await fetch(`/api/v1/skills/${id}/versions/${versionId}/files/${path.split('/').map(encodeURIComponent).join('/')}`, {
     credentials: 'same-origin', headers: { Accept: 'text/plain' },
   })
   if (!response.ok) throw new ApiError('读取 Skill 文件失败', response.status, 'skill_file_error')
-  return response.text()
+  return response.blob()
+}
+
+export async function readSkillVersionFile(id: string, versionId: string, path: string): Promise<string> {
+  return (await readSkillVersionBlob(id, versionId, path)).text()
 }

@@ -2,6 +2,7 @@ import { FileTextOutlined, GithubOutlined, InboxOutlined, PlusOutlined, ReloadOu
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Collapse, Empty, Form, Input, Modal, Segmented, Select, Space, Spin, Table, Tag, Typography, Upload, message } from 'antd'
 import { useState } from 'react'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { useAuth } from '../auth/AuthContext'
 import { listDepartments } from '../api/departments'
@@ -15,6 +16,12 @@ import { ModelPolicyDepartmentTree } from '../components/ModelPolicyDepartmentTr
 const errorText = (error: unknown) => error instanceof Error ? error.message : '操作失败，请重试'
 
 export function SkillsPage() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedPage = Number(searchParams.get('page'))
+  const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1
+  const returnTo = `${location.pathname}${location.search}`
   const { hasPermission } = useAuth()
   const canWrite = hasPermission('skill.asset.write')
   const canReadUsers = hasPermission('iam.user.read')
@@ -102,10 +109,15 @@ export function SkillsPage() {
       {skills.isError && <Alert className="model-resource-error" type="error" showIcon message={errorText(skills.error)}
         action={<Button size="small" onClick={() => skills.refetch()}>重试</Button>} />}
       <Table<SkillAsset> rowKey="id" dataSource={skills.data ?? []} loading={skills.isLoading}
-        pagination={{ pageSize: 10, hideOnSinglePage: true }} scroll={{ x: 1120 }}
+        onRow={(item) => ({ className: 'skills-clickable-row', onClick: (event) => {
+          if (!(event.target as HTMLElement).closest('button, a')) navigate(`/ai-resources/skills/${item.id}`, { state: { returnTo } })
+        } })}
+        pagination={{ current: page, pageSize: 10, hideOnSinglePage: true,
+          onChange: (nextPage) => setSearchParams(nextPage === 1 ? {} : { page: String(nextPage) }) }} scroll={{ x: 1120 }}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无企业 Skill，导入后可在这里审阅和发布" /> }} columns={[
           { title: 'Skill', dataIndex: 'name', align: 'center', width: 200,
-            render: (name: string) => <strong className="skills-cell-text">{name}</strong> },
+            render: (name: string, item: SkillAsset) => <Link className="skills-cell-text skills-name-link"
+              to={`/ai-resources/skills/${item.id}`} state={{ returnTo }}>{name}</Link> },
           { title: '用途说明', dataIndex: 'description', align: 'center', width: 330,
             render: (description: string) => <span className="skills-cell-text">{description}</span> },
           { title: '最新版本', dataIndex: 'latestVersionNo', align: 'center', width: 110, render: (value: number) => `v${value}` },

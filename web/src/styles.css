@@ -2264,6 +2264,10 @@ select {
   justify-content: center;
 }
 
+.skills-clickable-row { cursor: pointer; }
+.skills-clickable-row:hover .skills-name-link { text-decoration: underline; }
+.skills-name-link { color: #1746a2; font-weight: 650; }
+
 .skills-cell-text {
   display: inline-block;
   max-width: 100%;
@@ -2358,6 +2362,70 @@ select {
   .skills-version-facts {
     grid-template-columns: 1fr;
   }
+}
+
+.skills-detail-page { gap: 10px; }
+.skills-detail-back .ant-btn { padding-left: 0; color: #44617e; }
+.skills-detail-card { overflow: hidden; }
+.skills-detail-card > .ant-card-body { padding: 0; }
+.skills-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 30px 34px 24px;
+  border-bottom: 1px solid #e8edf3;
+  background: linear-gradient(110deg, #f5f9ff 0%, #fff 58%);
+}
+.skills-detail-heading > div:first-child { min-width: 0; }
+.skills-detail-eyebrow { color: #3261ae; font-size: 12px; font-weight: 700; letter-spacing: .05em; }
+.skills-detail-heading h1 { margin: 8px 0 8px; color: #172b49; font-size: 26px; line-height: 1.25; overflow-wrap: anywhere; }
+.skills-detail-heading p { max-width: 760px; margin: 0; color: #63758c; line-height: 1.65; }
+.skills-detail-tabs > .ant-tabs-nav { margin: 0; padding: 0 32px; }
+.skills-detail-tabs > .ant-tabs-content-holder { min-width: 0; }
+.skills-detail-intro { max-width: 1020px; min-height: 420px; padding: 26px 34px 48px; }
+.skills-detail-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 52px;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e9eef4;
+}
+.skills-detail-pane-head strong { color: #20344f; overflow-wrap: anywhere; }
+.skills-detail-files { display: grid; grid-template-columns: minmax(210px, 270px) minmax(0, 1fr); min-height: 540px; }
+.skills-detail-tree { min-width: 0; padding: 22px 12px; border-right: 1px solid #e9eef4; background: #fbfcfe; }
+.skills-detail-tree-title { display: flex; justify-content: space-between; gap: 8px; padding: 0 12px 14px; color: #243a56; font-weight: 650; }
+.skills-detail-tree-title span { color: #8998a9; font-size: 12px; font-weight: 400; }
+.skills-detail-tree .ant-tree-title { overflow-wrap: anywhere; }
+.skills-detail-file-content { min-width: 0; padding: 22px 28px 38px; }
+.skills-detail-file-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.skills-detail-file-title > span:last-child { color: #8a98a9; white-space: nowrap; font-size: 12px; }
+.skills-detail-markdown { color: #253953; line-height: 1.85; overflow-wrap: anywhere; }
+.skills-detail-markdown h1, .skills-detail-markdown h2, .skills-detail-markdown h3 { margin: 1.5em 0 .5em; color: #193555; line-height: 1.35; }
+.skills-detail-markdown h1:first-child, .skills-detail-markdown h2:first-child { margin-top: 0; }
+.skills-detail-markdown pre, .skills-detail-source { overflow: auto; border: 1px solid #e7edf4; border-radius: 8px; background: #f7f9fc; }
+.skills-detail-markdown pre { padding: 16px; }
+.skills-detail-markdown code, .skills-detail-source { font: 13px/1.7 "SFMono-Regular", Menlo, Consolas, monospace; }
+.skills-detail-markdown p code { padding: 2px 4px; border-radius: 3px; background: #f1f5fa; }
+.skills-detail-markdown blockquote { margin-left: 0; padding: 2px 16px; border-left: 3px solid #b4c9e8; color: #5f7188; }
+.skills-detail-markdown table { display: block; overflow: auto; border-collapse: collapse; }
+.skills-detail-markdown th, .skills-detail-markdown td { padding: 7px 12px; border: 1px solid #dce5ef; }
+.skills-detail-image-note { color: #788ba2; font-style: italic; }
+.skills-detail-source { margin: 0; padding: 18px 20px; white-space: pre; tab-size: 2; }
+.skills-detail-plain { white-space: pre-wrap; overflow-wrap: anywhere; }
+.skills-detail-image { display: block; max-width: 100%; max-height: 680px; margin: 0 auto; object-fit: contain; }
+
+@media (max-width: 760px) {
+  .skills-detail-heading { flex-direction: column; padding: 24px 20px; }
+  .skills-detail-tabs > .ant-tabs-nav { padding: 0 20px; }
+  .skills-detail-intro { padding: 20px; }
+  .skills-detail-files { grid-template-columns: 1fr; }
+  .skills-detail-tree { border-right: 0; border-bottom: 1px solid #e9eef4; }
+  .skills-detail-file-content { padding: 20px; }
+  .skills-detail-pane-head { flex-wrap: wrap; }
 }
 
 .model-catalog-controls {

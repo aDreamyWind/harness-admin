@@ -40,6 +40,7 @@ import { MCPConnectionsPage } from './pages/MCPConnectionsPage'
 import { MCPConnectionUsagePage } from './pages/MCPConnectionUsagePage'
 import { ApplicationAccessPage } from './pages/ApplicationAccessPage'
 import { SkillsPage } from './pages/SkillsPage'
+import { SkillDetailPage } from './pages/SkillDetailPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -235,6 +236,7 @@ export function App() {
               <Route path="/ai-resources/policies" element={<PermissionPage permission="model.policy.read"><ModelPoliciesPage /></PermissionPage>} />
               <Route path="/ai-resources/mcp" element={<PermissionPage permission="mcp.service.read"><MCPManagementPage /></PermissionPage>} />
               <Route path="/ai-resources/skills" element={<PermissionPage permission="skill.asset.read"><SkillsPage /></PermissionPage>} />
+              <Route path="/ai-resources/skills/:skillId" element={<PermissionPage permission="skill.asset.read"><SkillDetailPage /></PermissionPage>} />
               <Route path="/ai-resources/mcp-connections" element={<PermissionPage permission="mcp.connection.read"><MCPConnectionsPage /></PermissionPage>} />
               <Route path="/ai-resources/mcp-connections/:connectionId/usage" element={<PermissionPage permission="mcp.connection.read"><MCPConnectionUsagePage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
