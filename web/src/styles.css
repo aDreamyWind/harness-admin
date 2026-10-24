@@ -2238,6 +2238,53 @@ select {
   font-size: 11px;
 }
 
+.skills-card {
+  overflow: hidden;
+}
+
+.skills-toolbar {
+  min-height: 76px;
+}
+
+.skills-toolbar > div:first-child {
+  min-width: 0;
+}
+
+.skills-toolbar > .ant-space {
+  flex-shrink: 0;
+}
+
+.skills-card .ant-table-thead > tr > th,
+.skills-card .ant-table-tbody > tr > td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.skills-card .ant-table-tbody .ant-space {
+  justify-content: center;
+}
+
+.skills-cell-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.skills-digest {
+  color: #66788f;
+  font: 11px/1.5 "SFMono-Regular", Menlo, monospace;
+}
+
+.skills-card .ant-table-placeholder .ant-table-cell {
+  padding: 34px 16px;
+}
+
+.skills-card .ant-empty-description {
+  color: #8491a2;
+  font-size: 12px;
+}
+
 .model-catalog-controls {
   display: flex;
   align-items: center;

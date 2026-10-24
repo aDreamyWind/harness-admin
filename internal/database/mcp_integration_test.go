@@ -145,8 +145,8 @@ func TestMCPConnectionsAgainstPostgres(t *testing.T) {
 	}
 	managedService, err = deploymentRepo.UpdateMetadata(ctx, mcpadmin.Actor{OrganizationID: orgID, UserID: userID},
 		managed.Service.ID, "托管测试工具（已修改）", "## 使用说明")
-	if err != nil || managedService.Name != "托管测试工具（已修改）" || managedService.Description != "## 使用说明" {
-		t.Fatalf("托管服务元信息修改失败: %#v %v", managedService, err)
+	if err != nil || managedService.Name != "托管测试工具（已修改）" || managedService.Description != "" {
+		t.Fatalf("托管服务名称修改或版本描述保护失败: %#v %v", managedService, err)
 	}
 	if err := serviceRepo.ReplaceTools(ctx, mcpadmin.DiscoverInput{Actor: mcpadmin.Actor{OrganizationID: orgID, UserID: userID}, ServiceID: managed.Service.ID},
 		[]mcpadmin.Tool{{Name: "echo", InputSchema: []byte(`{"type":"object"}`)}}); err != nil {

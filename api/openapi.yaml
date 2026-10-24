@@ -2441,6 +2441,186 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MCPUserConnectionListEnvelope' }
         '401': { description: 员工访问令牌无效或缺少 mcp.invoke scope。 }
+  /skills:
+    get:
+      summary: 查看当前企业的 Skill 资产
+      operationId: listEnterpriseSkills
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Skill 资产列表。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SkillAssetListEnvelope' }
+  /skills/import:
+    post:
+      summary: 导入不可变企业 Skill 版本
+      description: 接受不超过 16 MiB 的 .tar.gz；拒绝越界路径、符号链接、无效 frontmatter 与超限文件。相同名称导入新版本，相同内容摘要返回 409。导入后不会自动发布或执行脚本。
+      operationId: importEnterpriseSkill
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: 已导入的 Skill 资产。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SkillAssetEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: 与最新版本的内容相同。 }
+  /skills/import/github:
+    post:
+      summary: 从公开 GitHub 仓库导入不可变企业 Skill 版本
+      description: 将分支或标签解析成固定提交号，仅读取指定子目录的普通文件；导入后为草稿，不执行脚本。
+      operationId: importEnterpriseSkillFromGitHub
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repositoryUrl]
+              properties:
+                repositoryUrl: { type: string, format: uri, description: 公开 GitHub 仓库 HTTPS 地址。 }
+                ref: { type: string, description: 可选分支、标签或完整提交号；留空使用默认分支。 }
+                skillPath: { type: string, description: 可选的仓库内 Skill 相对目录；留空使用根目录。 }
+      responses:
+        '201':
+          description: 已导入的资产及实际固定提交号。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubSkillImportEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: 与最新版本的内容相同。 }
+        '502': { description: GitHub 仓库读取失败。 }
+  /skills/{skillId}/versions:
+    parameters:
+      - { name: skillId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 查看企业 Skill 的不可变版本与文件清单
+      operationId: listEnterpriseSkillVersions
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 版本按序号倒序排列。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SkillVersionListEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /skills/{skillId}/versions/{versionId}/files/{filePath}:
+    parameters:
+      - { name: skillId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: versionId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: filePath, in: path, required: true, description: 相对 Skill 根目录的路径，可以包含斜杠。, schema: { type: string } }
+    get:
+      summary: 预览企业 Skill 版本的原始文件
+      operationId: readEnterpriseSkillVersionFile
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 原始文件字节；媒体类型来自导入时识别结果。 }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /skills/{skillId}/publish:
+    parameters:
+      - { name: skillId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      summary: 发布指定 Skill 版本或停用资产
+      operationId: publishEnterpriseSkill
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [published, disabled] }
+                versionId: { type: string, format: uuid, description: 发布时必填，须属于此资产。 }
+      responses:
+        '200':
+          description: 更新后的 Skill 资产。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SkillAssetEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /skills/{skillId}/grants:
+    parameters:
+      - { name: skillId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: 整体替换企业 Skill 员工授权
+      operationId: replaceEnterpriseSkillGrants
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [departmentIds, userIds]
+              properties:
+                departmentIds: { type: array, items: { type: string, format: uuid } }
+                userIds: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 更新后的 Skill 资产。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SkillAssetEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /skills/directory:
+    get:
+      summary: 查询当前员工获准读取的企业 Skills
+      description: OIDC 令牌须包含 mcp.invoke；仅返回已发布且当前用户或部门明确获授权的版本与文件摘要。
+      operationId: listEmployeeSkills
+      security: [{ oidcBearer: [] }]
+      responses:
+        '200':
+          description: 员工可读的企业 Skill 清单。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublishedSkillListEnvelope' }
+        '401': { description: 员工令牌无效或缺少 mcp.invoke。 }
+  /skills/files/{name}/{filePath}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+      - { name: filePath, in: path, required: true, description: 相对 Skill 根目录的路径，可以包含斜杠。, schema: { type: string } }
+    get:
+      summary: 读取当前员工获准的已发布 Skill 文件
+      operationId: readEmployeeSkillFile
+      security: [{ oidcBearer: [] }]
+      responses:
+        '200': { description: 原始文件字节；每次读取重新检查当前授权和发布状态。 }
+        '404': { description: 文件不存在或员工无权读取。 }
+  /enterprise-skills/mcp:
+    servers:
+      - url: /
+    post:
+      summary: 企业自有 Skills 的 Streamable HTTP MCP 入口
+      description: OIDC 令牌须包含 mcp.invoke；支持 skills/list、skills/get 和通过 resources/read 读取 skill://enterprise/{name}/... 文件。每次请求按当前员工授权判断，响应禁止共享缓存。
+      operationId: enterpriseSkillsMCPPost
+      security: [{ oidcBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: MCP JSON-RPC 响应。 }
+        '401': { description: 员工令牌无效。 }
+    get:
+      summary: 企业 Skills MCP 可选事件流入口
+      operationId: enterpriseSkillsMCPGet
+      security: [{ oidcBearer: [] }]
+      responses:
+        '405': { description: 无状态模式不提供独立 GET 事件流。 }
   /mcp/{code}:
     servers:
       - url: /
@@ -2448,7 +2628,7 @@ paths:
       - { name: code, in: path, required: true, schema: { type: string } }
     post:
       summary: Streamable HTTP MCP 网关入口
-      description: 根据连接用途校验应用 Bearer 密钥或员工 OIDC 令牌；显式发布的匿名开发者连接可不携带令牌。支持 MCP tools/list 和 tools/call；网关按连接和工具记录调用统计。
+      description: 根据连接用途校验应用 Bearer 密钥或员工 OIDC 令牌；显式发布的匿名开发者连接可不携带令牌。支持 MCP tools/list、tools/call、resources/list、resources/templates/list、resources/read、prompts/list、prompts/get；上游声明 io.modelcontextprotocol/skills 时还提供 skills/list 和 skills/get，skill:// 文件通过 resources/read 读取。资源和提示词目录从上游读取，工具调用按连接和工具记录统计。
       operationId: mcpGatewayPost
       security: [{ gatewayBearer: [] }, { oidcBearer: [] }, {}]
       requestBody:
@@ -2468,6 +2648,46 @@ paths:
       description: 当前使用无状态 Streamable HTTP；GET 返回 405，客户端应通过 POST 请求。
       responses:
         '405': { description: 此模式不提供独立 GET 事件流。 }
+  /mcp/{code}/sse:
+    servers:
+      - url: /
+    parameters:
+      - { name: code, in: path, required: true, schema: { type: string } }
+    get:
+      summary: 旧版 HTTP+SSE MCP 兼容入口
+      description: 兼容 MCP 2024-11-05 HTTP+SSE 传输。GET 建立最长 30 分钟的事件流，首个 endpoint 事件给出同一连接的消息提交地址；必须保持连接鉴权，员工令牌须包含 mcp.invoke。
+      operationId: mcpLegacySSEConnect
+      security: [{ gatewayBearer: [] }, { oidcBearer: [] }, {}]
+      responses:
+        '200': { description: text/event-stream，首个事件为 endpoint。 }
+        '401': { description: 入口密钥或员工令牌无效。 }
+        '403': { description: 员工未获授权或 Origin 不受信任。 }
+        '409': { description: 连接已停用、过期或服务不可用。 }
+        '429': { description: SSE 会话数量已达上限。 }
+  /mcp/{code}/messages:
+    servers:
+      - url: /
+    parameters:
+      - { name: code, in: path, required: true, schema: { type: string } }
+      - { name: sessionid, in: query, required: true, schema: { type: string } }
+    post:
+      summary: 向旧版 SSE 会话提交 MCP 消息
+      description: 使用 GET /mcp/{code}/sse 的 endpoint 事件返回的 URL；每次提交重新校验当前连接状态、入口凭据及员工授权，并核对会话所属员工。
+      operationId: mcpLegacySSEMessage
+      security: [{ gatewayBearer: [] }, { oidcBearer: [] }, {}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '202': { description: 消息已提交；JSON-RPC 响应从 SSE 事件流返回。 }
+        '400': { description: 缺少会话标识或消息无效。 }
+        '401': { description: 入口密钥或员工令牌无效。 }
+        '403': { description: 员工未获授权或 Origin 不受信任。 }
+        '404': { description: 会话不存在、已结束或不属于当前员工。 }
+        '409': { description: 连接已停用、过期或服务不可用。 }
+        '429': { description: 请求过多。 }
 components:
   securitySchemes:
     sessionCookie:
@@ -2546,6 +2766,79 @@ components:
         headerValue: { type: string, description: 上游请求头值。 }
         queryName: { type: string, description: 上游 URL 参数名称。 }
         queryValue: { type: string, description: 上游 URL 参数值。 }
+    SkillAsset:
+      type: object
+      required: [id, name, description, status, latestVersionNo, departmentIds, userIds, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [draft, published, disabled] }
+        publishedVersionId: { type: [string, 'null'], format: uuid }
+        latestVersionNo: { type: integer, minimum: 1 }
+        departmentIds: { type: array, items: { type: string, format: uuid } }
+        userIds: { type: array, items: { type: string, format: uuid } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    SkillFile:
+      type: object
+      required: [path, mimeType, digest, size]
+      properties:
+        path: { type: string }
+        mimeType: { type: string }
+        digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        size: { type: integer, minimum: 0 }
+    SkillVersion:
+      type: object
+      required: [id, skillId, versionNo, frontmatter, manifestDigest, sourceType, sourceRef, sourceRevision, sourcePath, files, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        skillId: { type: string, format: uuid }
+        versionNo: { type: integer, minimum: 1 }
+        frontmatter: { type: object, additionalProperties: true }
+        manifestDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        sourceType: { type: string, enum: [upload, github] }
+        sourceRef: { type: string, description: GitHub 仓库地址；本地上传时为空。 }
+        sourceRevision: { type: string, description: GitHub 固定提交号；本地上传时为空。 }
+        sourcePath: { type: string, description: 仓库内 Skill 相对目录；本地上传时为空。 }
+        files: { type: array, items: { $ref: '#/components/schemas/SkillFile' } }
+        createdAt: { type: string, format: date-time }
+    PublishedSkill:
+      type: object
+      required: [asset, version]
+      properties:
+        asset: { $ref: '#/components/schemas/SkillAsset' }
+        version: { $ref: '#/components/schemas/SkillVersion' }
+    SkillAssetEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/SkillAsset' }
+    GitHubSkillImportEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [asset, revision]
+          properties:
+            asset: { $ref: '#/components/schemas/SkillAsset' }
+            revision: { type: string, pattern: '^[0-9a-f]{40}$' }
+    SkillAssetListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/SkillAsset' } }
+    SkillVersionListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/SkillVersion' } }
+    PublishedSkillListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/PublishedSkill' } }
     MCPConnection:
       type: object
       required: [id, serviceId, serviceName, code, name, gatewayUrl, purpose, authMode, status, requestsPerMinute, departmentIds, userIds, createdAt, updatedAt]
@@ -3364,7 +3657,7 @@ components:
       required: [id, name, callCount, knownTokens, unknownUsageCalls, overQuotaCalls]
       properties:
         id: { type: string, description: 部门或用户 UUID、模型编码；历史缺失部门时为空字符串。 }
-        name: { type: string }
+        name: { type: string, description: 当前显示名称；按模型统计时为当前模型名称，目录项已删除时回退到模型编码。 }
         callCount: { type: integer, format: int64 }
         knownTokens: { type: integer, format: int64 }
         unknownUsageCalls: { type: integer, format: int64 }

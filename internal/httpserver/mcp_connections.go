@@ -1,10 +1,13 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 
 	"harness-admin/internal/httpx"
 	"harness-admin/internal/mcpadmin"
+	"harness-admin/internal/mcpclient"
 	"harness-admin/internal/mcpconnection"
 )
 
@@ -39,6 +43,19 @@ type MCPConnectionService interface {
 type MCPToolCaller interface {
 	CallTool(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials, string, json.RawMessage) (json.RawMessage, error)
 	ListTools(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) ([]mcpadmin.Tool, error)
+}
+
+type MCPContentCaller interface {
+	ListResources(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) ([]*mcp.Resource, []*mcp.ResourceTemplate, error)
+	ReadResource(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials, string) (*mcp.ReadResourceResult, error)
+	ListPrompts(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) ([]*mcp.Prompt, error)
+	GetPrompt(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials, string, map[string]string) (*mcp.GetPromptResult, error)
+}
+
+type MCPSkillCaller interface {
+	SupportsSkills(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) (bool, error)
+	ListSkills(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials, string) (*mcpclient.ListSkillsResult, error)
+	GetSkill(context.Context, mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials, string) (*mcpclient.GetSkillResult, error)
 }
 
 type mcpConnectionRequest struct {
@@ -265,6 +282,9 @@ func registerMCPConnectionRoutes(router *gin.Engine, deps Dependencies) {
 	router.POST("/mcp/:code", gateway)
 	router.GET("/mcp/:code", gateway)
 	router.DELETE("/mcp/:code", gateway)
+	legacy := newMCPLegacyGateway(deps)
+	router.GET("/mcp/:code/sse", legacy.stream)
+	router.POST("/mcp/:code/messages", legacy.message)
 }
 
 func mcpUserDirectoryHandler(deps Dependencies) gin.HandlerFunc {
@@ -300,88 +320,235 @@ func mcpGatewayURL(deps Dependencies, code string) string {
 
 func mcpGatewayHandler(deps Dependencies) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		route, err := deps.MCPConnections.Lookup(ctx.Request.Context(), ctx.Param("code"))
-		if err != nil {
-			handleMCPConnectionError(ctx, deps, err)
+		route, caller, ok := authorizedMCPGatewayRoute(ctx, deps)
+		if !ok {
 			return
 		}
-		credential := bearerCredential(ctx.GetHeader("Authorization"))
-		var caller mcpconnection.Caller
-		if route.Purpose == "harness" {
-			subject, tokenErr := deps.OIDCProvider.AuthenticateAccessToken(ctx.Request.Context(), credential, "mcp.invoke")
-			if tokenErr != nil {
-				ctx.Header("WWW-Authenticate", "Bearer")
-				httpx.Fail(ctx, http.StatusUnauthorized, "invalid_token", "请使用具有 MCP 调用权限的员工访问令牌")
-				return
-			}
-			caller, err = deps.MCPConnections.AuthorizeUser(ctx.Request.Context(), route, subject.OrganizationID, subject.ID)
-		} else {
-			caller, err = deps.MCPConnections.AuthorizeDeveloper(ctx.Request.Context(), route, credential)
-		}
-		if err != nil {
-			handleMCPConnectionError(ctx, deps, err)
-			return
-		}
-		if len(route.Tools) == 0 {
+		if len(route.Tools) == 0 && !supportsMCPContent(deps) {
 			httpx.Fail(ctx, http.StatusConflict, "mcp_tools_unavailable", "此连接的服务尚未发现工具，请管理员先刷新工具列表")
 			return
 		}
 		ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 4*1024*1024)
-		server := mcp.NewServer(&mcp.Implementation{Name: route.Name, Version: "1.0.0"}, nil)
-		for _, tool := range route.Tools {
-			var schema map[string]any
-			if err := json.Unmarshal(tool.InputSchema, &schema); err != nil || schema["type"] != "object" {
-				deps.Logger.Error("MCP 工具快照结构无效", "service_id", route.ServiceID, "tool", tool.Name)
-				httpx.Fail(ctx, http.StatusInternalServerError, "invalid_mcp_tool", "MCP 工具配置无效")
+		includeContent := false
+		requestedMethod := ""
+		if ctx.Request.Method == http.MethodPost {
+			body, readErr := io.ReadAll(ctx.Request.Body)
+			if readErr != nil {
+				httpx.Fail(ctx, http.StatusRequestEntityTooLarge, "mcp_request_too_large", "MCP 请求内容过大")
 				return
 			}
-			name := tool.Name
-			server.AddTool(&mcp.Tool{Name: name, Description: tool.Description, InputSchema: schema},
-				func(callCtx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					started := time.Now()
-					upstreamCtx, stopUpstream := context.WithTimeout(callCtx, 60*time.Second)
-					defer stopUpstream()
-					service := mcpadmin.ServiceRecord{ID: route.ServiceID, UpstreamURL: route.UpstreamURL, Transport: route.Transport,
-						SourceType: route.SourceType, RuntimeType: route.RuntimeType, EntryFile: route.EntryFile,
-						ContainerName: route.ContainerName, DeploymentStatus: route.DeploymentStatus}
-					credentials := mcpadmin.UpstreamCredentials{
-						Authorization: route.UpstreamAuthorization,
-						HeaderName:    route.UpstreamHeaderName, HeaderValue: route.UpstreamHeaderValue,
-						QueryName: route.UpstreamQueryName, QueryValue: route.UpstreamQueryValue,
-						Parameters: route.UpstreamParameters,
-					}
-					credentials = mcpadmin.MergeCredentials(mcpadmin.UpstreamCredentials{Parameters: route.ServiceParameters}, credentials)
-					raw, callErr := deps.MCPToolCaller.CallTool(upstreamCtx, service, credentials, name, request.Params.Arguments)
-					record := mcpconnection.CallRecord{
-						ConnectionID: route.ID, OrganizationID: route.OrganizationID, ServiceID: route.ServiceID,
-						ToolName: name, UserID: caller.UserID, DepartmentID: caller.DepartmentID,
-						Result: "success", LatencyMS: time.Since(started).Milliseconds(),
-					}
-					var result mcp.CallToolResult
-					if callErr != nil {
-						record.Result = "failed"
-					} else if err := json.Unmarshal(raw, &result); err != nil {
-						record.Result = "failed"
-						callErr = err
-					} else if result.IsError {
-						record.Result = "failed"
-					}
-					recordCtx, cancel := context.WithTimeout(context.WithoutCancel(callCtx), 3*time.Second)
-					defer cancel()
-					if err := deps.MCPConnections.RecordCall(recordCtx, record); err != nil {
-						deps.Logger.Error("记录 MCP 工具调用失败", "error", err, "connection_id", route.ID)
-						return nil, errors.New("记录 MCP 工具调用失败")
-					}
-					if callErr != nil {
-						deps.Logger.Warn("上游 MCP 工具调用失败", "error", callErr, "connection_id", route.ID, "tool", name)
-						return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "上游 MCP 工具调用失败"}}}, nil
-					}
-					return &result, nil
-				})
+			var envelope struct {
+				Method string `json:"method"`
+			}
+			_ = json.Unmarshal(body, &envelope)
+			requestedMethod = envelope.Method
+			includeContent = mcpMethodNeedsCatalog(envelope.Method)
+			ctx.Request.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		server, err := buildMCPGatewayServer(ctx.Request.Context(), deps, route, caller, includeContent, requestedMethod)
+		if err != nil {
+			if errors.Is(err, mcpadmin.ErrUpstream) {
+				httpx.Fail(ctx, http.StatusBadGateway, "mcp_upstream_error", "读取上游 MCP 目录失败")
+				return
+			}
+			httpx.Fail(ctx, http.StatusInternalServerError, "invalid_mcp_tool", "MCP 工具配置无效")
+			return
 		}
 		mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
 			&mcp.StreamableHTTPOptions{Stateless: true}).ServeHTTP(ctx.Writer, ctx.Request)
 	}
+}
+
+func authorizedMCPGatewayRoute(ctx *gin.Context, deps Dependencies) (mcpconnection.GatewayConnection, mcpconnection.Caller, bool) {
+	if origin := ctx.GetHeader("Origin"); origin != "" {
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Host == "" || parsed.User != nil || !strings.EqualFold(parsed.Host, ctx.Request.Host) {
+			httpx.Fail(ctx, http.StatusForbidden, "mcp_origin_forbidden", "MCP 请求来源不受信任")
+			return mcpconnection.GatewayConnection{}, mcpconnection.Caller{}, false
+		}
+	}
+	route, err := deps.MCPConnections.Lookup(ctx.Request.Context(), ctx.Param("code"))
+	if err != nil {
+		handleMCPConnectionError(ctx, deps, err)
+		return mcpconnection.GatewayConnection{}, mcpconnection.Caller{}, false
+	}
+	credential := bearerCredential(ctx.GetHeader("Authorization"))
+	var caller mcpconnection.Caller
+	if route.Purpose == "harness" {
+		subject, tokenErr := deps.OIDCProvider.AuthenticateAccessToken(ctx.Request.Context(), credential, "mcp.invoke")
+		if tokenErr != nil {
+			ctx.Header("WWW-Authenticate", "Bearer")
+			httpx.Fail(ctx, http.StatusUnauthorized, "invalid_token", "请使用具有 MCP 调用权限的员工访问令牌")
+			return mcpconnection.GatewayConnection{}, mcpconnection.Caller{}, false
+		}
+		caller, err = deps.MCPConnections.AuthorizeUser(ctx.Request.Context(), route, subject.OrganizationID, subject.ID)
+	} else {
+		caller, err = deps.MCPConnections.AuthorizeDeveloper(ctx.Request.Context(), route, credential)
+	}
+	if err != nil {
+		handleMCPConnectionError(ctx, deps, err)
+		return mcpconnection.GatewayConnection{}, mcpconnection.Caller{}, false
+	}
+	return route, caller, true
+}
+
+func mcpMethodNeedsCatalog(method string) bool {
+	return method == "initialize" || method == "server/discover" || strings.HasPrefix(method, "resources/") || strings.HasPrefix(method, "prompts/") || strings.HasPrefix(method, "skills/")
+}
+
+func buildMCPGatewayServer(ctx context.Context, deps Dependencies, route mcpconnection.GatewayConnection, caller mcpconnection.Caller, includeContent bool, requestedMethod string) (*mcp.Server, error) {
+	service, credentials := mcpGatewayUpstream(route)
+	capabilities := &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}, Resources: &mcp.ResourceCapabilities{}, Prompts: &mcp.PromptCapabilities{}}
+	var skillCaller MCPSkillCaller
+	if includeContent {
+		if candidate, ok := deps.MCPToolCaller.(MCPSkillCaller); ok {
+			probeCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+			supported, err := candidate.SupportsSkills(probeCtx, service, credentials)
+			stop()
+			if err != nil {
+				deps.Logger.Warn("检查上游 MCP Skills 能力失败", "error", err, "connection_id", route.ID)
+				if strings.HasPrefix(requestedMethod, "skills/") {
+					return nil, mcpadmin.ErrUpstream
+				}
+			} else if supported {
+				capabilities.AddExtension(mcpclient.SkillsExtension, nil)
+				skillCaller = candidate
+			}
+		}
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: route.Name, Version: "1.0.0"},
+		&mcp.ServerOptions{Capabilities: capabilities})
+	if skillCaller != nil {
+		if err := registerMCPGatewaySkills(server, deps, route, skillCaller); err != nil {
+			return nil, err
+		}
+	}
+	for _, tool := range route.Tools {
+		var schema map[string]any
+		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil || schema["type"] != "object" {
+			deps.Logger.Error("MCP 工具快照结构无效", "service_id", route.ServiceID, "tool", tool.Name)
+			return nil, errors.New("MCP 工具配置无效")
+		}
+		name := tool.Name
+		server.AddTool(&mcp.Tool{Name: name, Description: tool.Description, InputSchema: schema},
+			func(callCtx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				started := time.Now()
+				upstreamCtx, stopUpstream := context.WithTimeout(callCtx, 60*time.Second)
+				defer stopUpstream()
+				currentService, currentCredentials, callErr := mcpGatewayCurrentUpstream(upstreamCtx, deps, route)
+				var raw json.RawMessage
+				if callErr == nil {
+					raw, callErr = deps.MCPToolCaller.CallTool(upstreamCtx, currentService, currentCredentials, name, request.Params.Arguments)
+				}
+				record := mcpconnection.CallRecord{
+					ConnectionID: route.ID, OrganizationID: route.OrganizationID, ServiceID: route.ServiceID,
+					ToolName: name, UserID: caller.UserID, DepartmentID: caller.DepartmentID,
+					Result: "success", LatencyMS: time.Since(started).Milliseconds(),
+				}
+				var result mcp.CallToolResult
+				if callErr != nil {
+					record.Result = "failed"
+				} else if err := json.Unmarshal(raw, &result); err != nil {
+					record.Result = "failed"
+					callErr = err
+				} else if result.IsError {
+					record.Result = "failed"
+				}
+				recordCtx, cancel := context.WithTimeout(context.WithoutCancel(callCtx), 3*time.Second)
+				defer cancel()
+				if err := deps.MCPConnections.RecordCall(recordCtx, record); err != nil {
+					deps.Logger.Error("记录 MCP 工具调用失败", "error", err, "connection_id", route.ID)
+					return nil, errors.New("记录 MCP 工具调用失败")
+				}
+				if callErr != nil {
+					deps.Logger.Warn("上游 MCP 工具调用失败", "error", callErr, "connection_id", route.ID, "tool", name)
+					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "上游 MCP 工具调用失败"}}}, nil
+				}
+				return &result, nil
+			})
+	}
+	if content, ok := deps.MCPToolCaller.(MCPContentCaller); ok && includeContent {
+		catalogCtx, stopCatalog := context.WithTimeout(ctx, 15*time.Second)
+		resources, templates, resourceErr := content.ListResources(catalogCtx, service, credentials)
+		prompts, promptErr := content.ListPrompts(catalogCtx, service, credentials)
+		stopCatalog()
+		if resourceErr != nil {
+			deps.Logger.Warn("读取上游 MCP 资源目录失败", "error", resourceErr, "connection_id", route.ID)
+		}
+		if promptErr != nil {
+			deps.Logger.Warn("读取上游 MCP 提示词目录失败", "error", promptErr, "connection_id", route.ID)
+		}
+		if (resourceErr != nil && strings.HasPrefix(requestedMethod, "resources/")) ||
+			(promptErr != nil && strings.HasPrefix(requestedMethod, "prompts/")) ||
+			(len(route.Tools) == 0 && resourceErr != nil && promptErr != nil && skillCaller == nil) {
+			return nil, mcpadmin.ErrUpstream
+		}
+		if resourceErr == nil {
+			for _, resource := range resources {
+				server.AddResource(resource, func(callCtx context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+					upstreamCtx, stop := context.WithTimeout(callCtx, 30*time.Second)
+					defer stop()
+					currentService, currentCredentials, err := mcpGatewayCurrentUpstream(upstreamCtx, deps, route)
+					if err != nil {
+						return nil, err
+					}
+					return content.ReadResource(upstreamCtx, currentService, currentCredentials, request.Params.URI)
+				})
+			}
+			for _, template := range templates {
+				server.AddResourceTemplate(template, func(callCtx context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+					upstreamCtx, stop := context.WithTimeout(callCtx, 30*time.Second)
+					defer stop()
+					currentService, currentCredentials, err := mcpGatewayCurrentUpstream(upstreamCtx, deps, route)
+					if err != nil {
+						return nil, err
+					}
+					return content.ReadResource(upstreamCtx, currentService, currentCredentials, request.Params.URI)
+				})
+			}
+		}
+		if promptErr == nil {
+			for _, prompt := range prompts {
+				server.AddPrompt(prompt, func(callCtx context.Context, request *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+					upstreamCtx, stop := context.WithTimeout(callCtx, 30*time.Second)
+					defer stop()
+					currentService, currentCredentials, err := mcpGatewayCurrentUpstream(upstreamCtx, deps, route)
+					if err != nil {
+						return nil, err
+					}
+					return content.GetPrompt(upstreamCtx, currentService, currentCredentials, request.Params.Name, request.Params.Arguments)
+				})
+			}
+		}
+	}
+	return server, nil
+}
+
+func mcpGatewayUpstream(route mcpconnection.GatewayConnection) (mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials) {
+	service := mcpadmin.ServiceRecord{ID: route.ServiceID, UpstreamURL: route.UpstreamURL, Transport: route.Transport,
+		SourceType: route.SourceType, RuntimeType: route.RuntimeType, EntryFile: route.EntryFile,
+		ContainerName: route.ContainerName, DeploymentStatus: route.DeploymentStatus}
+	credentials := mcpadmin.UpstreamCredentials{
+		Authorization: route.UpstreamAuthorization,
+		HeaderName:    route.UpstreamHeaderName, HeaderValue: route.UpstreamHeaderValue,
+		QueryName: route.UpstreamQueryName, QueryValue: route.UpstreamQueryValue,
+		Parameters: route.UpstreamParameters,
+	}
+	return service, mcpadmin.MergeCredentials(mcpadmin.UpstreamCredentials{Parameters: route.ServiceParameters}, credentials)
+}
+
+func mcpGatewayCurrentUpstream(ctx context.Context, deps Dependencies, original mcpconnection.GatewayConnection) (mcpadmin.ServiceRecord, mcpadmin.UpstreamCredentials, error) {
+	current, err := deps.MCPConnections.Lookup(ctx, original.Code)
+	if err != nil || current.ID != original.ID {
+		return mcpadmin.ServiceRecord{}, mcpadmin.UpstreamCredentials{}, errors.New("MCP 连接已失效")
+	}
+	service, credentials := mcpGatewayUpstream(current)
+	return service, credentials, nil
+}
+
+func supportsMCPContent(deps Dependencies) bool {
+	_, ok := deps.MCPToolCaller.(MCPContentCaller)
+	return ok
 }
 
 func handleMCPConnectionError(ctx *gin.Context, deps Dependencies, err error) {

@@ -32,6 +32,7 @@ import (
 	"harness-admin/internal/platformadmin"
 	"harness-admin/internal/roleadmin"
 	"harness-admin/internal/secret"
+	"harness-admin/internal/skilladmin"
 	pgstore "harness-admin/internal/store/postgres"
 	"harness-admin/internal/useradmin"
 )
@@ -101,6 +102,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	mcpDeploymentService := mcpdeploy.NewService(mcpDeploymentRepository, mcpsource.NewGitHub(),
 		mcpruntime.NewDocker(cfg.MCPNodeImage, cfg.MCPPythonImage, cfg.MCPBuildNetwork), mcpUpstream, cfg.MCPDeployEnabled)
 	mcpConnectionService := mcpconnection.NewService(pgstore.NewMCPConnectionRepository(db, credentialCipher), cache.NewGatewayRequestLimiter(redisClient))
+	skillService := skilladmin.NewService(pgstore.NewSkillRepository(db), mcpsource.NewGitHub())
 	oidcRepository := pgstore.NewOIDCRepository(db, credentialCipher)
 	oidcService := oidc.NewService(oidcRepository)
 	oidcSigner, err := oidc.NewRS256Signer(cfg.OIDCSigningPrivateKey)
@@ -138,6 +140,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		MCPAdmin:              mcpService,
 		MCPDeploy:             mcpDeploymentService,
 		MCPConnections:        mcpConnectionService,
+		Skills:                skillService,
 		MCPToolCaller:         mcpUpstream,
 		GatewayForwarder:      modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts),
 		OIDCAdmin:             oidcService,

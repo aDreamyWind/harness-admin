@@ -15,7 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/yosida95/uritemplate/v3"
 
 	"harness-admin/internal/mcpadmin"
 )
@@ -87,6 +89,123 @@ func (c *Client) CallTool(ctx context.Context, service mcpadmin.ServiceRecord, c
 	return raw, nil
 }
 
+// ListResources returns the upstream resource catalog without copying resource content.
+// An upstream server that does not advertise resources has an empty catalog.
+func (c *Client) ListResources(ctx context.Context, service mcpadmin.ServiceRecord, credentials mcpadmin.UpstreamCredentials) ([]*mcp.Resource, []*mcp.ResourceTemplate, error) {
+	session, err := c.connect(ctx, service, credentials)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer session.Close()
+	initial := session.InitializeResult()
+	if initial == nil || initial.Capabilities == nil || initial.Capabilities.Resources == nil {
+		return nil, nil, nil
+	}
+	resources := make([]*mcp.Resource, 0)
+	for item, err := range session.Resources(ctx, nil) {
+		if err != nil || item == nil || !validResourceURI(item.URI) || len(resources) >= 500 {
+			return nil, nil, errors.New("上游资源目录无效或过大")
+		}
+		resources = append(resources, item)
+	}
+	templates := make([]*mcp.ResourceTemplate, 0)
+	for item, err := range session.ResourceTemplates(ctx, nil) {
+		var rpcErr *jsonrpc.Error
+		if errors.As(err, &rpcErr) && rpcErr.Code == jsonrpc.CodeMethodNotFound {
+			break
+		}
+		if err != nil || item == nil || !validResourceTemplate(item.URITemplate) || len(templates) >= 500 {
+			return nil, nil, errors.New("上游资源模板目录无效或过大")
+		}
+		templates = append(templates, item)
+	}
+	return resources, templates, nil
+}
+
+func (c *Client) ReadResource(ctx context.Context, service mcpadmin.ServiceRecord, credentials mcpadmin.UpstreamCredentials, uri string) (*mcp.ReadResourceResult, error) {
+	if !validResourceURI(uri) {
+		return nil, mcpadmin.ErrInvalidInput
+	}
+	session, err := c.connect(ctx, service, credentials)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	result, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	if err != nil {
+		return nil, errors.New("读取上游资源失败")
+	}
+	raw, err := json.Marshal(result)
+	limit := 2 * 1024 * 1024
+	if strings.HasPrefix(uri, "skill://") {
+		limit = 24 * 1024 * 1024
+	}
+	if err != nil || len(raw) > limit {
+		return nil, errors.New("上游资源内容无效或过大")
+	}
+	return result, nil
+}
+
+// ListPrompts returns prompt definitions, not rendered messages.
+func (c *Client) ListPrompts(ctx context.Context, service mcpadmin.ServiceRecord, credentials mcpadmin.UpstreamCredentials) ([]*mcp.Prompt, error) {
+	session, err := c.connect(ctx, service, credentials)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	initial := session.InitializeResult()
+	if initial == nil || initial.Capabilities == nil || initial.Capabilities.Prompts == nil {
+		return nil, nil
+	}
+	items := make([]*mcp.Prompt, 0)
+	for item, err := range session.Prompts(ctx, nil) {
+		if err != nil || item == nil || item.Name == "" || len(item.Name) > 256 || len(items) >= 500 {
+			return nil, errors.New("上游提示词目录无效或过大")
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (c *Client) GetPrompt(ctx context.Context, service mcpadmin.ServiceRecord, credentials mcpadmin.UpstreamCredentials, name string, args map[string]string) (*mcp.GetPromptResult, error) {
+	if name == "" || len(name) > 256 || len(args) > 100 {
+		return nil, mcpadmin.ErrInvalidInput
+	}
+	session, err := c.connect(ctx, service, credentials)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	result, err := session.GetPrompt(ctx, &mcp.GetPromptParams{Name: name, Arguments: args})
+	if err != nil {
+		return nil, errors.New("获取上游提示词失败")
+	}
+	raw, err := json.Marshal(result)
+	if err != nil || len(raw) > 2*1024*1024 {
+		return nil, errors.New("上游提示词内容无效或过大")
+	}
+	return result, nil
+}
+
+func validResourceURI(value string) bool {
+	if value == "" || len(value) > 2048 {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.Scheme != ""
+}
+
+func validResourceTemplate(value string) bool {
+	if value == "" || len(value) > 2048 {
+		return false
+	}
+	if _, err := uritemplate.New(value); err != nil {
+		return false
+	}
+	colon := strings.IndexByte(value, ':')
+	return colon > 0 && validResourceURI(value[:colon]+":/")
+}
+
 func (c *Client) connect(ctx context.Context, service mcpadmin.ServiceRecord, credentials mcpadmin.UpstreamCredentials) (*mcp.ClientSession, error) {
 	if !mcpadmin.ValidUpstreamCredentials(credentials) {
 		return nil, mcpadmin.ErrInvalidInput
@@ -113,7 +232,11 @@ func (c *Client) connect(ctx context.Context, service mcpadmin.ServiceRecord, cr
 		stderr := &limitedStderr{}
 		commandProcess.Stderr = stderr
 		transport := &mcp.CommandTransport{Command: commandProcess}
-		session, err := mcp.NewClient(&mcp.Implementation{Name: "harness-admin", Version: "0.1.0"}, nil).Connect(ctx, transport, nil)
+		protocolClient, err := newProtocolClient()
+		if err != nil {
+			return nil, err
+		}
+		session, err := protocolClient.Connect(ctx, transport, nil)
 		if err != nil {
 			return nil, fmt.Errorf("无法连接托管的 Stdio MCP 服务: %w (%s)", err, stderr.String())
 		}
@@ -147,7 +270,11 @@ func (c *Client) connect(ctx context.Context, service mcpadmin.ServiceRecord, cr
 	default:
 		return nil, mcpadmin.ErrInvalidInput
 	}
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "harness-admin", Version: "0.1.0"}, nil).Connect(ctx, transport, nil)
+	protocolClient, err := newProtocolClient()
+	if err != nil {
+		return nil, err
+	}
+	session, err := protocolClient.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, errors.New("无法连接上游 MCP 服务")
 	}

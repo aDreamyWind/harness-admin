@@ -1,6 +1,6 @@
 # MCP 中台与网关方案（分阶段实施）
 
-本文记录已确认的目标与分阶段实施边界；具体已交付接口以 OpenAPI 和 README 为准。此前“只登记无密钥 HTTP MCP、Admin 不代理调用”的草案已被后续需求取代。Skill 另行设计，不与本期 MCP 的数据模型和交付范围混在一起。Harness Admin 保持模块化单体；运行第三方 MCP 代码时可以使用受隔离的子进程或容器，但不拆业务微服务。
+本文记录已确认的目标与分阶段实施边界；具体已交付接口以 OpenAPI 和 README 为准。此前“只登记无密钥 HTTP MCP、Admin 不代理调用”的草案已被后续需求取代。Skills 分为“透传上游 MCP Skills 扩展”和“企业 Skill 资产管理”；两条路径均已具备代码入口，企业资产首版支持 `.tar.gz` 导入、版本、发布、授权与 MCP 读取，已通过隔离 PostgreSQL 迁移及授权撤销测试，仍需真实 Host 加载验收。Harness Admin 保持模块化单体；运行第三方 MCP 代码时可以使用受隔离的子进程或容器，但不拆业务微服务。
 
 ## 一、目标和三段链路
 
@@ -56,7 +56,7 @@ Stdio 是本机子进程标准输入/输出，不是一个 URL。远程客户端
 
 建议的员工目录接口为 `GET /api/v1/mcp/connections`，只返回当前登录员工有权使用的连接元数据和公开网关 URL，不返回任何上游密钥。建议的网关入口为 `/mcp/{connection_code}`；准确路径、协议版本、Web/桌面 Harness 的重载方式须在与 Harness 对齐 OpenAPI 后冻结。开发者连接可生成配置片段与复制按钮。无论使用哪种传输，MCP 会话、身份及上游配置都必须按连接隔离；调用中途撤权/停用不能继续执行后续工具请求。
 
-首批明确支持 `tools/list`、`tools/call`，不要对外宣称尚未实现的 resources、prompts 或采样能力。流式响应与错误语义按实际实现的 MCP 协议契约测试；若使用 SSE 兼容端点，说明其兼容范围。
+对外已支持 `tools/list`、`tools/call`、`resources/list`、`resources/templates/list`、`resources/read`、`prompts/list`、`prompts/get`。旧版 HTTP+SSE 通过 `/mcp/{code}/sse` 和端点事件给出的 `/mcp/{code}/messages` 接入，后者每次提交重新校验连接与员工授权。上游声明 `io.modelcontextprotocol/skills` 时，网关还透出 `skills/list`、`skills/get`，并以 `resources/read` 读取 `skill://` 文件；这是协议透传；企业自有 Skill 由独立的资产管理与专用 MCP 入口提供。采样能力尚未实现。
 
 ## 六、数据模型与统计
 
@@ -86,7 +86,7 @@ Stdio 是本机子进程标准输入/输出，不是一个 URL。远程客户端
 2. 做迁移、业务模块、管理员界面与基础审计；先接入现有 HTTP/SSE MCP，工具发现和测试，完成 Streamable HTTP 网关。
 3. 做 Harness 连接目录/部门用户授权/每次调用校验，以及开发者应用连接、密钥/无鉴权/有效期；完成各自统计与撤权、轮换测试。
 4. 做 GitHub 固定版本及本地代码包部署、隔离 Stdio 运行器、独立凭据实例、构建与运维；验收一个真实 MCP 工具的端到端调用。当前初版已实现公开 GitHub／Gitee 仓库完整地址、自动解析固定提交、根目录 README.md 服务描述、`.tar.gz` 上传、受限 Docker 构建与运行、版本记录、启停重启、日志和回退，并接入现有工具发现与网关。Node.js 可预检仓库的构建命令与入口，也可在导入时留空自动识别；构建容器安装开发依赖、断网执行 `npm run build`，编译后验证入口并裁剪开发依赖。已使用真实公开 GitHub 仓库 howtocook-mcp 的固定提交完成 Docker 构建、启动、MCP 握手、5 个工具发现及管理员侧只读工具调用；开发者 Bearer 连接也已通过 Admin 对外网关完成 `tools/list`、`tools/call`、统计、密钥轮换、停用和过期联调。Harness 员工 OIDC 连接已在 Admin 本地真实网关完成 scope、用户可见性、`tools/list`、`tools/call`、按员工统计及撤权即时生效的验证；独立企业插件已安装到本机 Web 测试 profile，并完成真实员工 OAuth 登录及一次 Host 到 Admin 的成功工具调用。多标签授权请求排队的长期处理、Web 端真实撤权／刷新和桌面 Host 验收仍待完成。默认关闭源码部署；运行容器默认断网，不支持连接级环境变量，因此“独立凭据实例”和需要访问业务系统的托管 MCP 仍未完成。管理页独立显示容器进程状态与 MCP 握手/工具发现结果。
-5. 补 SSE 对外兼容和 Stdio 本地桥接、更多 MCP 扩展；根据实际需要再做上游用户委托 OAuth。每阶段同步测试、OpenAPI 和部署文档；不自动改动 Harness 官方核心，优先独立企业集成。
+5. 旧版 HTTP+SSE 对外兼容、resources、prompts 和上游 MCP Skills 扩展协议透传已完成代码与回环测试；企业 Skill 资产首版完成导入、不可变版本、发布、员工授权与专用 MCP 入口代码。已通过隔离数据库迁移和授权撤销测试，仍需真实客户端和真实上游联调。从 Git 仓库导入 Skill、Stdio 本地桥接和上游用户委托 OAuth 尚未实现。每阶段同步测试、OpenAPI 和部署文档；不自动改动 Harness 官方核心，优先独立企业集成。
 
 验收至少覆盖：同一服务两条连接使用不同密钥互不串扰；Harness 的两名员工/部门可见性与调用权限不同且撤权即时生效；开发者连接只按连接统计；无鉴权连接仍可统计但不伪称知道调用者；过期/停用/轮换立即拒绝；工具调用失败可定位且不泄密；Web 与桌面端的员工无需逐项手动配置。
 

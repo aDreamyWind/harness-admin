@@ -70,8 +70,8 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 	if err := freshPool.QueryRow(ctx, `SELECT COUNT(*) FROM goose_db_version WHERE is_applied AND version_id > 0`).Scan(&appliedCount); err != nil {
 		t.Fatalf("读取基线执行次数失败: %v", err)
 	}
-	if appliedCount != 12 {
-		t.Fatalf("全新数据库执行了 %d 个迁移，预期执行基线及 21～31 号增量迁移", appliedCount)
+	if appliedCount != 14 {
+		t.Fatalf("全新数据库执行了 %d 个迁移，预期执行基线及 21～33 号增量迁移", appliedCount)
 	}
 
 	legacyConfig, err := pgx.ParseConfig(legacyURL)
@@ -136,12 +136,13 @@ func migrationTestAdminPermissions(t *testing.T, ctx context.Context, pool *pgxp
 		                 'oidc.client.read', 'oidc.client.write',
 		                 'model.policy.read', 'model.policy.write',
 		                 'mcp.service.read', 'mcp.service.write',
-		                 'mcp.connection.read', 'mcp.connection.write')
+		                 'mcp.connection.read', 'mcp.connection.write',
+		                 'skill.asset.read', 'skill.asset.write')
 	`, organizationID).Scan(&count); err != nil {
 		t.Fatalf("检查管理员权限失败: %v", err)
 	}
-	if count != 10 {
-		t.Errorf("企业 %s 的管理员只有 %d 项后期模块权限，预期 10 项", organizationID, count)
+	if count != 12 {
+		t.Errorf("企业 %s 的管理员只有 %d 项后期模块权限，预期 12 项", organizationID, count)
 	}
 }
 
@@ -209,8 +210,8 @@ func migrationTestSnapshot(t *testing.T, ctx context.Context, databaseURL string
 	if err := conn.QueryRow(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil {
 		t.Fatalf("读取迁移版本失败: %v", err)
 	}
-	if version != 30 {
-		t.Fatalf("迁移版本为 %d，预期 30", version)
+	if version != 33 {
+		t.Fatalf("迁移版本为 %d，预期 33", version)
 	}
 	return append(snapshot, fmt.Sprintf("version|%d", version))
 }

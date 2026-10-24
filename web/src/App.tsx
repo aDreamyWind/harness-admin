@@ -4,6 +4,7 @@ import {
   ApartmentOutlined,
   AuditOutlined,
   DashboardOutlined,
+  FileTextOutlined,
   IdcardOutlined,
   LogoutOutlined,
   LockOutlined,
@@ -38,6 +39,7 @@ import { MCPManagementPage } from './pages/MCPManagementPage'
 import { MCPConnectionsPage } from './pages/MCPConnectionsPage'
 import { MCPConnectionUsagePage } from './pages/MCPConnectionUsagePage'
 import { ApplicationAccessPage } from './pages/ApplicationAccessPage'
+import { SkillsPage } from './pages/SkillsPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -51,6 +53,7 @@ const menuRoutes: Record<string, string> = {
   gateway: '/ai-resources/gateway',
   policies: '/ai-resources/policies',
   mcp: '/ai-resources/mcp',
+  skills: '/ai-resources/skills',
   audit: '/audit',
   settings: '/settings/organization',
 }
@@ -101,6 +104,8 @@ export function App() {
             ? 'policies'
           : location.pathname.startsWith('/ai-resources/mcp')
             ? 'mcp'
+          : location.pathname.startsWith('/ai-resources/skills')
+            ? 'skills'
         : location.pathname.startsWith('/audit')
           ? 'audit'
           : location.pathname.startsWith('/settings/organization')
@@ -229,6 +234,7 @@ export function App() {
               <Route path="/ai-resources/gateway" element={<PermissionPage permission="model.gateway.read"><ModelGatewayPage /></PermissionPage>} />
               <Route path="/ai-resources/policies" element={<PermissionPage permission="model.policy.read"><ModelPoliciesPage /></PermissionPage>} />
               <Route path="/ai-resources/mcp" element={<PermissionPage permission="mcp.service.read"><MCPManagementPage /></PermissionPage>} />
+              <Route path="/ai-resources/skills" element={<PermissionPage permission="skill.asset.read"><SkillsPage /></PermissionPage>} />
               <Route path="/ai-resources/mcp-connections" element={<PermissionPage permission="mcp.connection.read"><MCPConnectionsPage /></PermissionPage>} />
               <Route path="/ai-resources/mcp-connections/:connectionId/usage" element={<PermissionPage permission="mcp.connection.read"><MCPConnectionUsagePage /></PermissionPage>} />
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
@@ -256,19 +262,21 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
   const canReadPolicies = hasPermission('model.policy.read')
   const canReadMCP = hasPermission('mcp.service.read')
   const canReadMCPConnections = hasPermission('mcp.connection.read')
+  const canReadSkills = hasPermission('skill.asset.read')
 
   return [
     { key: 'overview', icon: <DashboardOutlined />, label: '首页' },
     identityItems.length ? {
       key: 'identity', icon: <TeamOutlined />, label: '身份与组织', children: identityItems,
     } : null,
-    canReadApplications || canReadModels || canReadGateway || canReadPolicies || canReadMCP || canReadMCPConnections ? {
+    canReadApplications || canReadModels || canReadGateway || canReadPolicies || canReadMCP || canReadMCPConnections || canReadSkills ? {
       key: 'ai-resources', icon: <AppstoreOutlined />, label: 'AI 资源管理', children: [
         canReadApplications ? { key: 'applications', icon: <LinkOutlined />, label: '应用接入' } : null,
         canReadModels ? { key: 'models', icon: <ApiOutlined />, label: '模型目录' } : null,
         canReadGateway ? { key: 'gateway', icon: <NodeIndexOutlined />, label: '模型网关' } : null,
         canReadPolicies ? { key: 'policies', icon: <SafetyCertificateOutlined />, label: '模型策略' } : null,
         canReadMCP || canReadMCPConnections ? { key: 'mcp', icon: <ApiOutlined />, label: 'MCP 管理' } : null,
+        canReadSkills ? { key: 'skills', icon: <FileTextOutlined />, label: 'Skills 管理' } : null,
       ].filter(Boolean),
     } : null,
     { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },

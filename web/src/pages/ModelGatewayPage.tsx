@@ -266,16 +266,16 @@ export function ModelGatewayPage() {
     { title: 'HTTP', dataIndex: 'httpStatus', key: 'httpStatus', width: 80 },
     { title: '错误码', dataIndex: 'errorCode', key: 'errorCode', width: 180, render: (value: string) => value ? <Text className="model-resource-code" copyable>{value}</Text> : '—' },
     { title: '耗时', dataIndex: 'latencyMs', key: 'latencyMs', width: 100, render: (value: number) => `${value} ms` },
-    { title: 'Token', key: 'totalTokens', width: 120, render: (_, item) => item.usageReported ? item.totalTokens.toLocaleString() : <Tag color="orange">用量未知</Tag> },
+    { title: 'Token', key: 'totalTokens', width: 120, render: (_, item) => item.modelType === 'image' || item.modelType === 'video' ? '不适用' : item.usageReported ? item.totalTokens.toLocaleString() : <Tag color="orange">用量未知</Tag> },
     { title: '额度', key: 'quota', width: 100, render: (_, item) => item.quotaExceeded ? <Tag color="red">本次超额</Tag> : '—' },
     { title: '请求 ID', dataIndex: 'requestId', key: 'requestId', width: 210, render: (value: string) => <Text code copyable>{value}</Text> },
   ], [])
 
   const usageColumns: TableColumnsType<GatewayUsageGroup> = [
-    { title: usageQuery.groupBy === 'department' ? '部门' : usageQuery.groupBy === 'user' ? '用户' : '模型编码', key: 'name', render: (_, item) => <span>{item.name}{item.id && usageQuery.groupBy !== 'model' ? <Text type="secondary" style={{ marginLeft: 8 }}>{item.id.slice(0, 8)}</Text> : null}</span> },
+    { title: usageQuery.groupBy === 'department' ? '部门' : usageQuery.groupBy === 'user' ? '用户' : '模型', key: 'name', render: (_, item) => <span>{item.name}{item.id && usageQuery.groupBy !== 'model' ? <Text type="secondary" style={{ marginLeft: 8 }}>{item.id.slice(0, 8)}</Text> : null}</span> },
     { title: '调用次数', dataIndex: 'callCount', key: 'callCount', render: (value: number) => value.toLocaleString() },
     { title: '已统计 Token', dataIndex: 'knownTokens', key: 'knownTokens', render: (value: number) => value.toLocaleString() },
-    { title: '用量未知', dataIndex: 'unknownUsageCalls', key: 'unknownUsageCalls', render: (value: number) => value > 0 ? <Tag color="orange">{value} 次</Tag> : '—' },
+    { title: '未返回 Token', dataIndex: 'unknownUsageCalls', key: 'unknownUsageCalls', render: (value: number) => value > 0 ? <Tag color="orange">{value} 次</Tag> : '—' },
     { title: '超额调用', dataIndex: 'overQuotaCalls', key: 'overQuotaCalls', render: (value: number) => value > 0 ? <Tag color="red">{value} 次</Tag> : '—' },
     ...(canReadPolicies && usageQuery.month === currentUTCMonth && usageQuery.groupBy !== 'model' ? [{
       title: '策略额度', key: 'quota', width: 230,
@@ -324,9 +324,9 @@ export function ModelGatewayPage() {
           }} />
           <Select aria-label="统计维度" value={usageQuery.groupBy} onChange={(groupBy) => setUsageQuery((current) => ({ ...current, groupBy, page: 1 }))}
             options={[{ value: 'department', label: '按部门' }, { value: 'user', label: '按用户' }, { value: 'model', label: '按模型' }]} />
-          <Text type="secondary">{usagePage ? `调用 ${usagePage.callCount.toLocaleString()} 次 · 已统计 ${usagePage.knownTokens.toLocaleString()} Token · 用量未知 ${usagePage.unknownUsageCalls.toLocaleString()} 次 · 超额 ${usagePage.overQuotaCalls.toLocaleString()} 次` : '正在加载统计'}</Text>
+          <Text type="secondary">{usagePage ? `调用 ${usagePage.callCount.toLocaleString()} 次 · 已统计 ${usagePage.knownTokens.toLocaleString()} Token · 未返回 Token ${usagePage.unknownUsageCalls.toLocaleString()} 次 · 超额 ${usagePage.overQuotaCalls.toLocaleString()} 次` : '正在加载统计'}</Text>
         </div>
-        {usagePage && usagePage.unknownUsageCalls > 0 ? <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="部分调用未返回 Token 用量，额度使用率只反映已统计部分；请检查对应供应商是否支持流式用量返回。" /> : null}
+        {usagePage && usagePage.unknownUsageCalls > 0 ? <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="图片、视频调用通常不返回 Token；对话调用若未返回用量，请检查供应商响应。Token 额度只统计已返回的用量。" /> : null}
         <Table<GatewayUsageGroup> rowKey={(item) => item.id || 'unknown'} columns={usageColumns} dataSource={usagePage?.items ?? []}
           loading={usageResult.isLoading} pagination={{ current: usageQuery.page, pageSize: usageQuery.pageSize,
             total: usagePage?.total ?? 0, showSizeChanger: true, showTotal: (total) => `共 ${total} 项`,

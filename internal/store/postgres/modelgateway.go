@@ -483,7 +483,8 @@ func (r *ModelGatewayRepository) ListUsage(ctx context.Context, query modelgatew
 		joins = `LEFT JOIN users u ON u.organization_id = c.organization_id AND u.id = c.user_id`
 	case "model":
 		groupID = `c.model_code`
-		groupName = `MAX(c.model_code)`
+		groupName = `COALESCE(MAX(m.name), MAX(c.model_code))`
+		joins = `LEFT JOIN model_catalog_entries m ON m.organization_id = c.organization_id AND LOWER(m.code) = LOWER(c.model_code)`
 	default:
 		return modelgateway.UsagePage{}, modelgateway.ErrInvalidInput
 	}

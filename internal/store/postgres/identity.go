@@ -448,6 +448,8 @@ func (r *IdentityRepository) BootstrapAdmin(ctx context.Context, input identity.
 		{"mcp.service.write", "管理 MCP 服务", "mcp_service", "write"},
 		{"mcp.connection.read", "查看 MCP 连接", "mcp_connection", "read"},
 		{"mcp.connection.write", "管理 MCP 连接", "mcp_connection", "write"},
+		{"skill.asset.read", "查看企业 Skill", "skill_asset", "read"},
+		{"skill.asset.write", "管理企业 Skill", "skill_asset", "write"},
 	}
 	for _, permission := range permissions {
 		permissionID := uuid.NewString()

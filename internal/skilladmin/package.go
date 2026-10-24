@@ -1,0 +1,181 @@
+package skilladmin
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"path"
+	"regexp"
+	"sort"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/goccy/go-yaml"
+)
+
+const maxPackageBytes = 16 * 1024 * 1024
+const maxPackageFiles = 512
+
+var ErrInvalidPackage = errors.New("Skill 代码包格式不正确")
+var skillName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+type File struct {
+	Path     string `json:"path"`
+	Content  []byte `json:"-"`
+	MIMEType string `json:"mimeType"`
+	Digest   string `json:"digest"`
+	Size     int    `json:"size"`
+}
+
+type Package struct {
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	Frontmatter    json.RawMessage `json:"frontmatter"`
+	ManifestDigest string          `json:"manifestDigest"`
+	Files          []File          `json:"files"`
+	SourceType     string          `json:"sourceType"`
+	SourceRef      string          `json:"sourceRef"`
+	SourceRevision string          `json:"sourceRevision"`
+	SourcePath     string          `json:"sourcePath"`
+}
+
+func ParsePackage(input []byte) (Package, error) {
+	if len(input) == 0 || len(input) > maxPackageBytes {
+		return Package{}, ErrInvalidPackage
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(input))
+	if err != nil {
+		return Package{}, ErrInvalidPackage
+	}
+	defer gz.Close()
+	archive := tar.NewReader(gz)
+	files := make(map[string][]byte)
+	total := 0
+	entries := 0
+	for {
+		header, err := archive.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil || header == nil {
+			return Package{}, ErrInvalidPackage
+		}
+		entries++
+		if entries > 2048 {
+			return Package{}, ErrInvalidPackage
+		}
+		name := strings.TrimPrefix(header.Name, "./")
+		if name == "" || strings.HasPrefix(name, "/") || strings.ContainsAny(name, "\\\x00") ||
+			path.Clean(name) != strings.TrimSuffix(name, "/") || name == ".." || strings.HasPrefix(name, "../") {
+			return Package{}, ErrInvalidPackage
+		}
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			return Package{}, ErrInvalidPackage
+		}
+		if header.Size < 0 || header.Size > maxPackageBytes-int64(total) || len(files) >= maxPackageFiles {
+			return Package{}, ErrInvalidPackage
+		}
+		if _, exists := files[name]; exists {
+			return Package{}, ErrInvalidPackage
+		}
+		data, err := io.ReadAll(io.LimitReader(archive, header.Size+1))
+		if err != nil || int64(len(data)) != header.Size {
+			return Package{}, ErrInvalidPackage
+		}
+		total += len(data)
+		files[name] = data
+	}
+	root := ""
+	for file := range files {
+		if file == "SKILL.md" {
+			root = ""
+			break
+		}
+		if strings.Count(file, "/") == 1 && strings.HasSuffix(file, "/SKILL.md") {
+			if root != "" {
+				return Package{}, ErrInvalidPackage
+			}
+			root = strings.TrimSuffix(file, "SKILL.md")
+		}
+	}
+	return packageFromFiles(files, root)
+}
+
+func packageFromFiles(files map[string][]byte, root string) (Package, error) {
+	skillMD, exists := files[root+"SKILL.md"]
+	if !exists || len(skillMD) == 0 || len(skillMD) > 1024*1024 || !utf8.Valid(skillMD) {
+		return Package{}, ErrInvalidPackage
+	}
+	if root != "" {
+		for file := range files {
+			if !strings.HasPrefix(file, root) {
+				return Package{}, ErrInvalidPackage
+			}
+		}
+	}
+	frontmatter, err := parseFrontmatter(skillMD)
+	if err != nil {
+		return Package{}, err
+	}
+	name, _ := frontmatter["name"].(string)
+	description, _ := frontmatter["description"].(string)
+	if !skillName.MatchString(name) || len(name) > 64 || len(description) == 0 || len(description) > 1024 ||
+		(root != "" && strings.TrimSuffix(root, "/") != name) {
+		return Package{}, ErrInvalidPackage
+	}
+	encoded, err := json.Marshal(frontmatter)
+	if err != nil {
+		return Package{}, ErrInvalidPackage
+	}
+	paths := make([]string, 0, len(files))
+	for file := range files {
+		paths = append(paths, file)
+	}
+	sort.Strings(paths)
+	manifest := sha256.New()
+	result := Package{Name: name, Description: description, Frontmatter: encoded, Files: make([]File, 0, len(paths)), SourceType: "upload"}
+	for _, original := range paths {
+		relative := strings.TrimPrefix(original, root)
+		data := files[original]
+		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+		mimeType := http.DetectContentType(data)
+		if strings.HasSuffix(strings.ToLower(relative), ".md") {
+			mimeType = "text/markdown"
+		}
+		result.Files = append(result.Files, File{Path: relative, Content: data, MIMEType: mimeType, Digest: digest, Size: len(data)})
+		_, _ = fmt.Fprintf(manifest, "%s\x00%s\x00%d\x00", relative, digest, len(data))
+	}
+	result.ManifestDigest = fmt.Sprintf("sha256:%x", manifest.Sum(nil))
+	return result, nil
+}
+
+func parseFrontmatter(data []byte) (map[string]any, error) {
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	if !strings.HasPrefix(text, "---\n") {
+		return nil, ErrInvalidPackage
+	}
+	end := strings.Index(text[4:], "\n---\n")
+	if end < 0 {
+		return nil, ErrInvalidPackage
+	}
+	var value map[string]any
+	if err := yaml.Unmarshal([]byte(text[4:4+end]), &value); err != nil || value == nil {
+		return nil, ErrInvalidPackage
+	}
+	return value, nil
+}
+
+func validSkillPath(value string) bool {
+	return value != "" && len(value) <= 2048 && !strings.HasPrefix(value, "/") &&
+		!strings.ContainsAny(value, "\\\x00") && path.Clean(value) == value &&
+		value != ".." && !strings.HasPrefix(value, "../")
+}

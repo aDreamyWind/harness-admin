@@ -50,6 +50,7 @@ export function MCPServicesPage() {
   const [importText, setImportText] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [exampleId, setExampleId] = useState<string | null>(null)
+  const [exampleTransport, setExampleTransport] = useState<'streamable_http' | 'sse'>('streamable_http')
   const [toolConnectionId, setToolConnectionId] = useState<string | null>(null)
   const [testing, setTesting] = useState<MCPTool | null>(null)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
@@ -230,7 +231,7 @@ export function MCPServicesPage() {
   const exampleConfig = example ? JSON.stringify({
     mcpServers: {
       [selected?.name ?? 'MCP 服务']: {
-        type: 'streamable_http', url: example.gatewayUrl,
+        type: exampleTransport, url: exampleTransport === 'sse' ? `${example.gatewayUrl}/sse` : example.gatewayUrl,
         ...(example.authMode === 'bearer' ? { headers: { Authorization: 'Bearer <连接密钥>' } } : {}),
       },
     },
@@ -295,13 +296,16 @@ export function MCPServicesPage() {
             {example ? <>
               <Select style={{ minWidth: 220, maxWidth: '100%', marginBottom: 12 }} value={example.id}
                 onChange={setExampleId} options={connections.map((item) => ({ label: item.name, value: item.id }))} />
+              <Select style={{ minWidth: 190, maxWidth: '100%', marginBottom: 12, marginLeft: 8 }} value={exampleTransport}
+                onChange={setExampleTransport} options={[{ label: 'Streamable HTTP', value: 'streamable_http' }, { label: '旧版 SSE', value: 'sse' }]} />
               {example.purpose === 'harness'
                 ? <p className="mcp-description">员工登录 Harness 后自动获取已授权的连接，无需逐人配置。</p>
                 : <p className="mcp-description">{example.authMode === 'none'
                   ? '此连接无入口鉴权，持有地址即可调用。请仅在受控环境使用。'
-                  : '将连接地址和入口密钥配置到业务应用。下方是 Streamable HTTP 配置示例。'}</p>}
+                  : '将连接地址和入口密钥配置到业务应用。'}</p>}
               {example.purpose === 'harness'
-                ? <Input readOnly value={example.gatewayUrl} addonAfter={<CopyOutlined onClick={() => copy(example.gatewayUrl)} />} />
+                ? <Input readOnly value={exampleTransport === 'sse' ? `${example.gatewayUrl}/sse` : example.gatewayUrl}
+                    addonAfter={<CopyOutlined onClick={() => copy(exampleTransport === 'sse' ? `${example.gatewayUrl}/sse` : example.gatewayUrl)} />} />
                 : <div className="mcp-example"><pre>{exampleConfig}</pre><Button size="small" icon={<CopyOutlined />} onClick={() => copy(exampleConfig)}>复制</Button></div>}
             </> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="生成连接后，这里会显示接入示例" />}
           </Card>}

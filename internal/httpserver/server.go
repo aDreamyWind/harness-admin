@@ -36,6 +36,7 @@ type Dependencies struct {
 	MCPDeploy             MCPDeploymentService
 	MCPConnections        MCPConnectionService
 	MCPToolCaller         MCPToolCaller
+	Skills                SkillService
 	GatewayForwarder      ModelGatewayForwarder
 	OIDCAdmin             OIDCAdminService
 	OIDCProvider          OIDCProviderService
@@ -112,6 +113,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.MCPConnections != nil && deps.MCPToolCaller != nil && deps.OIDCProvider != nil {
 		registerMCPConnectionRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.Access != nil && deps.Skills != nil && deps.OIDCProvider != nil {
+		registerSkillRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.OIDCAdmin != nil {
 		registerOIDCAdminRoutes(router, deps)
