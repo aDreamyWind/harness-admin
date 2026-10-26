@@ -1,4 +1,4 @@
-import { ApiError, csrfHeaders, request } from './client'
+import { csrfHeaders, request, requestBlob } from './client'
 
 export interface SkillAsset {
   id: string
@@ -38,19 +38,7 @@ export const listSkills = () => request<SkillAsset[]>('/api/v1/skills')
 export const listSkillVersions = (id: string) => request<SkillVersion[]>(`/api/v1/skills/${id}/versions`)
 
 export async function downloadSkillVersionZip(id: string, versionId: string): Promise<Blob> {
-  let response: Response
-  try {
-    response = await fetch(`/api/v1/skills/${id}/versions/${versionId}/download`, {
-      credentials: 'same-origin', headers: { Accept: 'application/zip' },
-    })
-  } catch {
-    throw new ApiError('无法连接控制面服务，请检查服务是否已启动', 0, 'network_error')
-  }
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: { message?: string; code?: string } }
-    throw new ApiError(body.error?.message ?? '下载 Skill 版本失败', response.status, body.error?.code ?? 'skill_download_error')
-  }
-  return response.blob()
+  return requestBlob(`/api/v1/skills/${id}/versions/${versionId}/download`, 'application/zip', '下载 Skill 版本失败')
 }
 
 export function importSkill(file: File) {
@@ -87,11 +75,8 @@ export function replaceSkillGrants(id: string, departmentIds: string[], userIds:
 }
 
 export async function readSkillVersionBlob(id: string, versionId: string, path: string): Promise<Blob> {
-  const response = await fetch(`/api/v1/skills/${id}/versions/${versionId}/files/${path.split('/').map(encodeURIComponent).join('/')}`, {
-    credentials: 'same-origin', headers: { Accept: 'text/plain' },
-  })
-  if (!response.ok) throw new ApiError('读取 Skill 文件失败', response.status, 'skill_file_error')
-  return response.blob()
+  return requestBlob(`/api/v1/skills/${id}/versions/${versionId}/files/${path.split('/').map(encodeURIComponent).join('/')}`,
+    'text/plain', '读取 Skill 文件失败')
 }
 
 export async function readSkillVersionFile(id: string, versionId: string, path: string): Promise<string> {

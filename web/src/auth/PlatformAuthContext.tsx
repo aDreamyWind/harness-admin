@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import {
@@ -7,6 +8,7 @@ import {
   type PlatformAdmin,
   type PlatformLoginInput,
 } from '../api/platform'
+import { onSessionExpired } from '../api/client'
 
 interface PlatformAuthContextValue {
   admin: PlatformAdmin | null
@@ -19,9 +21,18 @@ interface PlatformAuthContextValue {
 const PlatformAuthContext = createContext<PlatformAuthContextValue | null>(null)
 
 export function PlatformAuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
   const [admin, setAdmin] = useState<PlatformAdmin | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [startupError, setStartupError] = useState('')
+
+  useEffect(() => onSessionExpired((scope) => {
+    if (scope !== 'platform' || !admin) return
+    queryClient.clear()
+    setAdmin(null)
+    setStartupError('平台登录状态已失效，请重新登录')
+    window.history.replaceState(null, '', '/platform/login')
+  }), [admin, queryClient])
 
   useEffect(() => {
     let active = true
@@ -41,16 +52,20 @@ export function PlatformAuthProvider({ children }: { children: ReactNode }) {
     isLoading,
     startupError,
     login: async (input) => {
-      setAdmin(await platformLogin(input))
+      const authenticatedAdmin = await platformLogin(input)
+      queryClient.clear()
+      setAdmin(authenticatedAdmin)
       setStartupError('')
       window.history.replaceState(null, '', '/platform')
     },
     logout: async () => {
       await platformLogout()
+      queryClient.clear()
       setAdmin(null)
+      setStartupError('')
       window.history.replaceState(null, '', '/platform/login')
     },
-  }), [admin, isLoading, startupError])
+  }), [admin, isLoading, queryClient, startupError])
 
   return <PlatformAuthContext.Provider value={value}>{children}</PlatformAuthContext.Provider>
 }

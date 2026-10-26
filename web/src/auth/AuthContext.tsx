@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import {
@@ -9,6 +10,7 @@ import {
   type LoginInput,
   type UpdateProfileInput,
 } from '../api/auth'
+import { onSessionExpired } from '../api/client'
 
 interface AuthContextValue {
   user: AuthUser | null
@@ -24,9 +26,17 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [startupError, setStartupError] = useState('')
+
+  useEffect(() => onSessionExpired((scope) => {
+    if (scope !== 'organization' || !user) return
+    queryClient.clear()
+    setUser(null)
+    setStartupError('登录状态已失效，请重新登录')
+  }), [queryClient, user])
 
   useEffect(() => {
     let active = true
@@ -64,19 +74,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       login: async (input) => {
         const authenticatedUser = await requestLogin(input)
+        queryClient.clear()
         setUser(authenticatedUser)
         setStartupError('')
       },
       logout: async () => {
         await requestLogout()
+        queryClient.clear()
         setUser(null)
+        setStartupError('')
       },
       updateProfile: async (input) => {
         const updatedUser = await requestUpdateProfile(input)
         setUser(updatedUser)
       },
     }),
-    [isLoading, startupError, user],
+    [isLoading, queryClient, startupError, user],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
