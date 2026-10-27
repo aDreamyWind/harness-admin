@@ -17,17 +17,23 @@
 .drama-workspace-header .ant-btn { flex: none; border-radius: 8px; }
 .drama-project-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 12px; color: #7f8a9c; font-size: 13px; }
 .drama-source-text { white-space: pre-wrap; word-break: break-word; color: #30354b; font: 14px/1.9 "PingFang SC", "Microsoft YaHei", sans-serif; }
-.drama-agent-panel { margin: 24px 0; padding: 20px 24px; border: 1px solid #e4e8f0; border-radius: 12px; background: #fff; }
-.drama-agent-panel > div:first-child { display: flex; gap: 14px; align-items: flex-start; }
-.drama-agent-panel > div:first-child > .anticon { color: #6078b9; font-size: 22px; }
-.drama-agent-panel h2 { margin: 0 0 5px; font-size: 16px; }
-.drama-agent-panel p { margin: 0; color: #7b8799; font-size: 13px; line-height: 1.6; }
-.drama-agent-panel .ant-btn { margin-top: 12px; }
-.drama-agent-steps { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.drama-agent-steps span { padding: 5px 11px; border-radius: 20px; background: #f3f5f9; color: #9ba4b2; font-size: 12px; }
-.drama-agent-steps span.done { background: #e9f3ee; color: #358162; }
-.drama-agent-steps span.current { background: #eaf0fb; color: #315fbd; font-weight: 600; }
-.drama-agent-steps span.skipped { opacity: .5; }
+.drama-workflow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 24px 0; }
+.drama-workflow-step { display: flex; gap: 16px; min-height: 134px; padding: 21px 23px; border: 1px solid #e0e6ee; border-radius: 12px; background: #fff; }
+.drama-workflow-step.complete { border-color: #c9e6d5; }
+.drama-workflow-step.failed { border-color: #f2d7d5; }
+.drama-workflow-step.pending { background: #fbfcfe; }
+.drama-workflow-number { display: grid; flex: none; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: #eaf0ff; color: #315fbd; font-size: 12px; font-weight: 700; }
+.drama-workflow-step.complete .drama-workflow-number { background: #e9f6ee; color: #27815a; }
+.drama-workflow-step.failed .drama-workflow-number { background: #fff0ed; color: #c4564c; }
+.drama-workflow-step.pending .drama-workflow-number { background: #edf0f5; color: #8a95a7; }
+.drama-workflow-body { min-width: 0; }
+.drama-workflow-title { display: flex; align-items: center; gap: 11px; margin: 4px 0 11px; }
+.drama-workflow-title strong { color: #26324a; font-size: 15px; }
+.drama-workflow-title span { color: #6d7e98; font-size: 12px; }
+.drama-workflow-step.complete .drama-workflow-title span { color: #27815a; }
+.drama-workflow-step.failed .drama-workflow-title span { color: #c4564c; }
+.drama-workflow-body p { margin: 0; color: #7b8799; font-size: 13px; line-height: 1.7; }
+.drama-workflow-error { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 10px; color: #bd5049; font-size: 12px; overflow-wrap: anywhere; }
 .drama-overview { margin-top: 24px; }
 .drama-overview-toolbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 18px; }
 .drama-overview-controls { display: flex; flex-wrap: wrap; gap: 14px; }
@@ -38,10 +44,10 @@
 .drama-overview-actions { display: flex; gap: 8px; flex: none; }
 .drama-overview-actions .ant-btn { border-radius: 8px; }
 .drama-field-label { display: block; margin-bottom: 13px; color: #748198; font-size: 12px; font-weight: 600; }
-.drama-synopsis-card { padding: 30px 32px 0; border: 1px solid #e2e7ee; border-radius: 12px; background: #fff; }
+.drama-synopsis-card { padding: 30px 32px; border: 1px solid #e2e7ee; border-radius: 12px; background: #fff; }
 .drama-synopsis-text { min-height: 125px; margin: 0; white-space: pre-wrap; color: #293a55; font-size: 16px; line-height: 1.95; }
 .drama-synopsis-card > .ant-input { margin-bottom: 24px; }
-.drama-story-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 26px; padding: 22px 0 25px; border-top: 1px solid #edf0f4; }
+.drama-story-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-bottom: 25px; padding-bottom: 23px; border-bottom: 1px solid #edf0f4; }
 .drama-story-facts .drama-field-label { margin-bottom: 8px; }
 .drama-story-facts strong { display: block; color: #2c3d58; font-size: 15px; font-weight: 550; }
 .drama-overview-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
@@ -58,6 +64,6 @@
 .drama-asset-grid p, .drama-episode-list p { color: #777f90; line-height: 1.7; }
 .drama-episode-list .ant-card span { color: #5977b8; font-size: 12px; font-weight: 700; }
 .drama-episode-list h3 { margin: 16px 0 8px; }
-@media (max-width: 1000px) { .drama-asset-grid, .drama-episode-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1000px) { .drama-workflow { grid-template-columns: 1fr; } .drama-asset-grid, .drama-episode-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) { .drama-workspace { grid-template-columns: 1fr; } .drama-workspace-sidebar { min-height: auto; padding: 12px; } .drama-workspace-brand, .drama-sidebar-bottom { display: none; } .drama-workspace-nav { display: flex; overflow-x: auto; } .drama-workspace-nav button { width: auto; flex: none; } .drama-workspace-nav small { display: none; } .drama-workspace-main { padding: 25px 18px 60px; } .drama-workspace-header, .drama-overview-toolbar { align-items: flex-start; flex-direction: column; } .drama-overview-actions { align-self: flex-end; } .drama-synopsis-card { padding: 22px 20px 0; } .drama-overview-panel { padding: 22px 20px; } .drama-overview-panels, .drama-asset-grid, .drama-episode-list { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .drama-workspace * { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }

@@ -285,9 +285,9 @@ func (s *Service) UpdateOverview(ctx context.Context, organizationID, ownerID, i
 	return s.repository.UpdateOverview(ctx, organizationID, ownerID, id, overview)
 }
 
-// Analyze 在后台顺序运行三个独立的创作阶段；每一阶段完成后立即保存，供工作台刷新查看。
+// Analyze 在后台完成剧本概览。完整原文入库，模型只读取前 ParseRuneLimit 个字符。
 func (s *Service) Analyze(project Project) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	if project.SourceMode == "generate" {
 		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", "script", nil); err != nil {
@@ -317,25 +317,16 @@ func (s *Service) Analyze(project Project) error {
 		}
 		project.SourceText = script.Script
 	}
-	source := []rune(project.SourceText)
-	if len(source) > ParseRuneLimit {
-		source = source[:ParseRuneLimit]
-	}
-	base := fmt.Sprintf("作品名：%s\n视频风格：%s\n画面比例：%s\n请仅依据以下剧本/小说内容工作，不要臆造后续剧情。\n原文：\n%s", project.Title, project.Style, project.AspectRatio, string(source))
-	steps := []struct{ phase, prompt string }{
-		{"story", "你是漫剧编剧。提取项目概览，返回严格 JSON 对象，键为 videoStyle、aspectRatio、protagonist、genre、synopsis、background、setting，值全部为中文字符串。\n" + base},
-		{"assets", "你是漫剧美术。提取原文中明确出现的资产，返回严格 JSON 对象，键为 characters、scenes、props；每个值是对象数组，对象键为 name、description。未知信息留空，不要添加解释。\n" + base},
-		{"episodes", "你是漫剧导演。根据提供的原文段落规划分集，返回严格 JSON 对象，键 episodes，值为对象数组；对象键 title、synopsis。最多 8 集，未覆盖的后续剧情不得编造。\n" + base},
-	}
-	for _, step := range steps {
-		// 上传项目重试时沿用已经保存的完整概览，避免再次支付故事理解调用。
-		if step.phase == "story" && project.SourceMode == "upload" && validateStage("story", project.Overview) == nil {
-			continue
+	if validateStage("story", project.Overview) != nil {
+		source := []rune(project.SourceText)
+		if len(source) > ParseRuneLimit {
+			source = source[:ParseRuneLimit]
 		}
-		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", step.phase, nil); err != nil {
+		base := fmt.Sprintf("作品名：%s\n视频风格：%s\n画面比例：%s\n请仅依据以下剧本/小说内容工作，不要臆造后续剧情。\n原文：\n%s", project.Title, project.Style, project.AspectRatio, string(source))
+		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", "story", nil); err != nil {
 			return s.fail(project, err)
 		}
-		result, err := s.writer.Complete(ctx, project.OrganizationID, project.OwnerID, project.ModelCode, step.prompt)
+		result, err := s.writer.Complete(ctx, project.OrganizationID, project.OwnerID, project.ModelCode, "你是漫剧编剧。提取项目概览，返回严格 JSON 对象，键为 videoStyle、aspectRatio、protagonist、genre、synopsis、background、setting，值全部为中文字符串。\n"+base)
 		if err != nil {
 			return s.fail(project, err)
 		}
@@ -343,14 +334,14 @@ func (s *Service) Analyze(project Project) error {
 		if err != nil {
 			return s.fail(project, err)
 		}
-		if err := validateStage(step.phase, data); err != nil {
+		if err := validateStage("story", data); err != nil {
 			return s.fail(project, err)
 		}
-		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", step.phase, data); err != nil {
+		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", "story", data); err != nil {
 			return s.fail(project, err)
 		}
 	}
-	if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "ready", "complete", nil); err != nil {
+	if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "ready", "overview_complete", nil); err != nil {
 		return s.fail(project, err)
 	}
 	return nil

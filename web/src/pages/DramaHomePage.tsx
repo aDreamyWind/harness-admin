@@ -28,11 +28,11 @@ const stylePresets: { name: string; category: Exclude<StyleCategory, '全部'>; 
 const emptySettings: DramaSettings = { textModelCode: '', imageModelCode: '', videoModelCode: '' }
 const phaseNames: Record<string, string> = {
   waiting: '等待解析', script: '编剧正在生成剧本', story: '编剧正在梳理故事',
-  assets: '美术正在整理资产', episodes: '导演正在规划分集', complete: '解析完成', failed: '解析失败',
+  assets: '美术正在整理资产', episodes: '导演正在规划分集', complete: '解析完成', overview_complete: '概览已完成', failed: '解析失败',
 }
 
 function statusTag(project: DramaProject) {
-  if (project.status === 'ready') return <Tag color="success">可继续创作</Tag>
+  if (project.status === 'ready') return <Tag color="success">概览已完成</Tag>
   if (project.status === 'failed') return <Tag color="error">解析失败</Tag>
   return <Tag color="processing">{phaseNames[project.phase] ?? '解析中'}</Tag>
 }

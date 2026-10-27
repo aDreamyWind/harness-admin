@@ -109,8 +109,6 @@ func TestCreateAndAnalyzePreservesFullSource(t *testing.T) {
 	repo := &fakeRepository{settings: Settings{TextModelCode: "writer"}}
 	writer := &fakeWriter{replies: []string{
 		`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"阿青","genre":"奇幻","synopsis":"寻找故乡","background":"古代","setting":"画中世界"}`,
-		`{"characters":[{"name":"阿青","description":"画师"}],"scenes":[],"props":[]}`,
-		`{"episodes":[{"title":"第一集","synopsis":"启程"}]}`,
 	}}
 	service := NewService(repo, writer)
 	project, err := service.Create(context.Background(), CreateInput{OrganizationID: "org", OwnerID: "user", Title: "画中人", SourceText: source, Style: "国风", AspectRatio: "9:16"})
@@ -123,14 +121,14 @@ func TestCreateAndAnalyzePreservesFullSource(t *testing.T) {
 	if err := service.Analyze(project); err != nil {
 		t.Fatal(err)
 	}
-	if repo.project.Status != "ready" || len(writer.prompts) != 3 {
-		t.Fatalf("解析阶段错误: %+v, 调用次数 %d", repo.project, len(writer.prompts))
+	if repo.project.Status != "ready" || repo.project.Phase != "overview_complete" || len(writer.prompts) != 1 {
+		t.Fatalf("概览解析阶段错误: %+v, 调用次数 %d", repo.project, len(writer.prompts))
 	}
 	if strings.Contains(writer.prompts[0], strings.Repeat("山", ParseRuneLimit+1)) {
 		t.Fatal("解析传入了超出三万字的原文")
 	}
-	if string(repo.project.Characters) == "[]" || string(repo.project.Episodes) == "[]" {
-		t.Fatal("资产或分集未保存")
+	if validateStage("story", repo.project.Overview) != nil || string(repo.project.Characters) != "[]" || string(repo.project.Episodes) != "[]" {
+		t.Fatal("上传后应只保存概览，资产和分集留到剧本解析阶段")
 	}
 }
 
@@ -139,8 +137,6 @@ func TestGenerateScriptBeforeAnalysis(t *testing.T) {
 	writer := &fakeWriter{replies: []string{
 		`{"script":"第一场：夜，画室。"}`,
 		`{"videoStyle":"国风","aspectRatio":"16:9","protagonist":"画师","genre":"悬疑","synopsis":"谜题","background":"现代","setting":"画室"}`,
-		`{"characters":[],"scenes":[],"props":[]}`,
-		`{"episodes":[]}`,
 	}}
 	service := NewService(repo, writer)
 	project, err := service.Create(context.Background(), CreateInput{OrganizationID: "org", OwnerID: "user", Title: "画室", SourceText: "一个画师的故事", SourceMode: "generate", Style: "二维动漫", AspectRatio: "16:9"})
@@ -150,8 +146,8 @@ func TestGenerateScriptBeforeAnalysis(t *testing.T) {
 	if err := service.Analyze(project); err != nil {
 		t.Fatal(err)
 	}
-	if repo.project.SourceText != "第一场：夜，画室。" || !strings.Contains(writer.prompts[1], repo.project.SourceText) {
-		t.Fatal("没有先生成剧本再解析")
+	if repo.project.SourceText != "第一场：夜，画室。" || len(writer.prompts) != 2 || !strings.Contains(writer.prompts[1], repo.project.SourceText) || repo.project.Phase != "overview_complete" {
+		t.Fatal("没有先生成剧本再解析概览")
 	}
 }
 
@@ -214,15 +210,12 @@ func TestAnalyzeRetrySkipsCompletedOverview(t *testing.T) {
 		Title: "画中人", SourceMode: "upload", SourceText: "完整原文", ModelCode: "writer",
 		Status: "queued", Overview: json.RawMessage(`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"阿青","genre":"奇幻","synopsis":"寻找故乡","background":"古代","setting":"画中世界"}`),
 	}}
-	writer := &fakeWriter{replies: []string{
-		`{"characters":[{"name":"阿青","description":"画师"}],"scenes":[],"props":[]}`,
-		`{"episodes":[{"title":"第一集","synopsis":"启程"}]}`,
-	}}
+	writer := &fakeWriter{}
 	if err := NewService(repo, writer).Analyze(repo.project); err != nil {
 		t.Fatal(err)
 	}
-	if len(writer.prompts) != 2 || len(repo.stages) == 0 || repo.stages[0] != "assets" {
-		t.Fatalf("重试重复执行了故事概览阶段: 调用 %d 次，阶段 %v", len(writer.prompts), repo.stages)
+	if len(writer.prompts) != 0 || len(repo.stages) != 1 || repo.stages[0] != "overview_complete" || repo.project.Status != "ready" {
+		t.Fatalf("重试应复用已有概览并结束自动解析: 调用 %d 次，阶段 %v", len(writer.prompts), repo.stages)
 	}
 }
 

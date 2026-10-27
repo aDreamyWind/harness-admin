@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.27.2
+  version: 0.27.3
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -72,7 +72,7 @@ paths:
                   data: { type: array, items: { $ref: '#/components/schemas/DramaProject' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
-      summary: 保存原文或创意并开始后台解析
+      summary: 保存原文或创意并开始后台概览解析
       operationId: createDramaProject
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -82,7 +82,7 @@ paths:
             schema: { $ref: '#/components/schemas/DramaCreateInput' }
       responses:
         '201':
-          description: 已保存项目及完整原文，解析已进入后台队列。
+          description: 已保存项目及完整原文；后台读取前 3 万字生成概览，完整原文留待后续剧本解析。
           content:
             application/json:
               schema:
@@ -93,7 +93,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
   /ai-drama/projects/{id}:
     get:
-      summary: 查询漫剧项目及分阶段解析结果
+      summary: 查询漫剧项目及概览解析结果
       operationId: getDramaProject
       security: [{ sessionCookie: [] }]
       parameters:
@@ -110,8 +110,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/retry:
     post:
-      summary: 重新解析本人上传且解析失败的漫剧项目
-      description: 复用数据库中保存的完整原文和当前用户的文本模型配置；保留已完成的故事概览，从后续阶段继续。AI 生成剧本项目暂不支持重试。
+      summary: 重新解析本人上传且概览解析失败的漫剧项目
+      description: 复用数据库中保存的完整原文和当前用户的文本模型配置；若概览已完成则直接恢复为可继续状态。AI 生成剧本项目暂不支持重试。
       operationId: retryDramaProject
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:

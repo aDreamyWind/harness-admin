@@ -163,7 +163,7 @@ func (r *DramaRepository) UpdateOverview(ctx context.Context, organizationID, ow
 
 func (r *DramaRepository) FailInterrupted(ctx context.Context) error {
 	_, err := r.db.Exec(ctx, `UPDATE drama_projects SET status='failed', phase='failed',
-		error_message='服务重启中断了解析，请重新创建项目以继续', updated_at=NOW()
+		error_message='服务重启中断了概览解析，请在项目页重新解析', updated_at=NOW()
 		WHERE status IN ('queued','running') AND updated_at < NOW() - INTERVAL '10 minutes'`)
 	return err
 }
