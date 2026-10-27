@@ -30,6 +30,7 @@ import {
   type TableColumnsType,
 } from 'antd'
 import { useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
 import {
@@ -80,6 +81,7 @@ const capabilityOptions = [
 const capabilityLabels = new Map(capabilityOptions.map((item) => [item.value, item.label]))
 
 export function ModelsPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const { hasPermission } = useAuth()
   const canReadProviders = hasPermission('model.provider.read')
   const canWriteProviders = hasPermission('model.provider.write')
@@ -340,6 +342,8 @@ export function ModelsPage() {
       </ResourceTable>,
     } : null,
   ].filter(Boolean) as Array<{ key: string; label: string; children: ReactNode }>
+  const requestedTab = searchParams.get('tab')
+  const activeTab = tabs.some((tab) => tab.key === requestedTab) ? requestedTab! : tabs[0]?.key
 
   return (
     <main>
@@ -350,7 +354,8 @@ export function ModelsPage() {
         </div>
       </section>
 
-      <Tabs className="model-resource-tabs" items={tabs} />
+      <Tabs className="model-resource-tabs" items={tabs} activeKey={activeTab}
+        onChange={(tab) => setSearchParams({ tab })} />
 
       <Modal title="从供应商批量导入模型" open={importModalOpen} width={850} okText={`导入选中模型（${selectedImportIds.length}）`} okButtonProps={{ disabled: !selectedImportIds.length || discoverModels.isPending }} confirmLoading={importModels.isPending} onOk={() => importModels.mutate()} onCancel={() => setImportModalOpen(false)} destroyOnHidden>
         <Alert type="info" showIcon message="导入后模型默认停用。勾选下方选项可启用所选模型；是否可通过网关调用取决于模型类型与供应商协议。" />

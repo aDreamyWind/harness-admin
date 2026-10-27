@@ -25,3 +25,12 @@ export async function getSystemBootstrap(): Promise<SystemBootstrap> {
   return body.data
 }
 
+export async function getSystemReadiness(): Promise<boolean> {
+  try {
+    const response = await fetch('/readyz', { credentials: 'same-origin' })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
