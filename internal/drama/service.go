@@ -14,6 +14,8 @@ import (
 
 var ErrInvalidInput = errors.New("漫剧项目参数不正确")
 var ErrNotFound = errors.New("漫剧项目不存在")
+var ErrModelNotConfigured = errors.New("请先在漫剧设置中配置可用的文本模型")
+var ErrModelUnavailable = errors.New("所选模型未启用或当前账号无权使用")
 
 const ParseRuneLimit = 30000
 
@@ -50,7 +52,15 @@ type CreateInput struct {
 	SourceMode     string `json:"sourceMode"`
 	Style          string `json:"style"`
 	AspectRatio    string `json:"aspectRatio"`
-	ModelCode      string `json:"modelCode"`
+}
+
+type Settings struct {
+	OrganizationID string    `json:"-"`
+	UserID         string    `json:"-"`
+	TextModelCode  string    `json:"textModelCode"`
+	ImageModelCode string    `json:"imageModelCode"`
+	VideoModelCode string    `json:"videoModelCode"`
+	UpdatedAt      time.Time `json:"updatedAt,omitempty"`
 }
 
 type Repository interface {
@@ -63,6 +73,8 @@ type Repository interface {
 	UpdateOverview(context.Context, string, string, string, json.RawMessage) (Project, error)
 	FailInterrupted(context.Context) error
 	SaveGeneratedScript(context.Context, string, string, string, string) error
+	GetSettings(context.Context, string, string) (Settings, error)
+	SaveSettings(context.Context, Settings) (Settings, error)
 }
 
 type Writer interface {
@@ -95,18 +107,66 @@ func (s *Service) AvailableModels(ctx context.Context, organizationID, userID st
 	return models, nil
 }
 
+func (s *Service) GetSettings(ctx context.Context, organizationID, userID string) (Settings, error) {
+	if organizationID == "" || userID == "" {
+		return Settings{}, ErrInvalidInput
+	}
+	return s.repository.GetSettings(ctx, organizationID, userID)
+}
+
+func (s *Service) SaveSettings(ctx context.Context, input Settings) (Settings, error) {
+	if input.OrganizationID == "" || input.UserID == "" {
+		return Settings{}, ErrInvalidInput
+	}
+	input.TextModelCode = strings.TrimSpace(input.TextModelCode)
+	input.ImageModelCode = strings.TrimSpace(input.ImageModelCode)
+	input.VideoModelCode = strings.TrimSpace(input.VideoModelCode)
+	models, err := s.AvailableModels(ctx, input.OrganizationID, input.UserID)
+	if err != nil {
+		return Settings{}, err
+	}
+	for _, selected := range []struct{ code, kind string }{
+		{input.TextModelCode, "chat"}, {input.ImageModelCode, "image"}, {input.VideoModelCode, "video"},
+	} {
+		if selected.code == "" {
+			continue
+		}
+		found := false
+		for _, item := range models {
+			if item.Code == selected.code && item.ModelType == selected.kind {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Settings{}, ErrModelUnavailable
+		}
+	}
+	result, err := s.repository.SaveSettings(ctx, input)
+	if err != nil {
+		return Settings{}, fmt.Errorf("保存漫剧模型设置失败: %w", err)
+	}
+	return result, nil
+}
+
 func (s *Service) Create(ctx context.Context, input CreateInput) (Project, error) {
 	input.Title = strings.TrimSpace(input.Title)
 	input.SourceName = strings.TrimSpace(input.SourceName)
 	input.Style = strings.TrimSpace(input.Style)
-	input.ModelCode = strings.TrimSpace(input.ModelCode)
 	if input.SourceMode == "" {
 		input.SourceMode = "upload"
 	}
-	if input.OrganizationID == "" || input.OwnerID == "" || input.Title == "" || strings.TrimSpace(input.SourceText) == "" || input.Style == "" || input.ModelCode == "" ||
+	if input.OrganizationID == "" || input.OwnerID == "" || input.Title == "" || strings.TrimSpace(input.SourceText) == "" || input.Style == "" ||
 		utf8.RuneCountInString(input.Title) > 120 || utf8.RuneCountInString(input.SourceName) > 255 || utf8.RuneCountInString(input.Style) > 80 ||
 		(input.AspectRatio != "9:16" && input.AspectRatio != "16:9") || (input.SourceMode != "upload" && input.SourceMode != "generate") || !utf8.ValidString(input.SourceText) {
 		return Project{}, ErrInvalidInput
+	}
+	settings, err := s.GetSettings(ctx, input.OrganizationID, input.OwnerID)
+	if err != nil {
+		return Project{}, fmt.Errorf("读取漫剧模型设置失败: %w", err)
+	}
+	if settings.TextModelCode == "" {
+		return Project{}, ErrModelNotConfigured
 	}
 	models, err := s.AvailableModels(ctx, input.OrganizationID, input.OwnerID)
 	if err != nil {
@@ -114,20 +174,20 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Project, error
 	}
 	allowed := false
 	for _, item := range models {
-		if item.Code == input.ModelCode && item.ModelType == "chat" {
+		if item.Code == settings.TextModelCode && item.ModelType == "chat" {
 			allowed = true
 			break
 		}
 	}
 	if !allowed {
-		return Project{}, ErrInvalidInput
+		return Project{}, ErrModelNotConfigured
 	}
 	item := Project{
 		ID: uuid.NewString(), OrganizationID: input.OrganizationID, OwnerID: input.OwnerID,
 		Title: input.Title, SourceName: input.SourceName, SourceText: input.SourceText,
 		SourceLength: utf8.RuneCountInString(input.SourceText), Style: input.Style,
 		SourceMode:  input.SourceMode,
-		AspectRatio: input.AspectRatio, ModelCode: input.ModelCode, Status: "queued", Phase: "waiting",
+		AspectRatio: input.AspectRatio, ModelCode: settings.TextModelCode, Status: "queued", Phase: "waiting",
 		Overview: json.RawMessage(`{}`), Characters: json.RawMessage(`[]`), Scenes: json.RawMessage(`[]`),
 		Props: json.RawMessage(`[]`), Episodes: json.RawMessage(`[]`),
 	}

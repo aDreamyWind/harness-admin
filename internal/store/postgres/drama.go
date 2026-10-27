@@ -18,6 +18,38 @@ type DramaRepository struct{ db *pgxpool.Pool }
 
 func NewDramaRepository(db *pgxpool.Pool) *DramaRepository { return &DramaRepository{db: db} }
 
+func (r *DramaRepository) GetSettings(ctx context.Context, organizationID, userID string) (drama.Settings, error) {
+	var item drama.Settings
+	item.OrganizationID, item.UserID = organizationID, userID
+	err := r.db.QueryRow(ctx, `SELECT text_model_code, image_model_code, video_model_code, updated_at
+		FROM drama_user_settings WHERE organization_id=$1 AND user_id=$2`, organizationID, userID).
+		Scan(&item.TextModelCode, &item.ImageModelCode, &item.VideoModelCode, &item.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return item, nil
+	}
+	if err != nil {
+		return drama.Settings{}, fmt.Errorf("读取漫剧模型设置失败: %w", err)
+	}
+	return item, nil
+}
+
+func (r *DramaRepository) SaveSettings(ctx context.Context, item drama.Settings) (drama.Settings, error) {
+	err := r.db.QueryRow(ctx, `INSERT INTO drama_user_settings
+		(organization_id, user_id, text_model_code, image_model_code, video_model_code)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (organization_id, user_id) DO UPDATE SET
+		text_model_code=EXCLUDED.text_model_code,
+		image_model_code=EXCLUDED.image_model_code,
+		video_model_code=EXCLUDED.video_model_code,
+		updated_at=NOW()
+		RETURNING updated_at`, item.OrganizationID, item.UserID, item.TextModelCode, item.ImageModelCode, item.VideoModelCode).
+		Scan(&item.UpdatedAt)
+	if err != nil {
+		return drama.Settings{}, err
+	}
+	return item, nil
+}
+
 const dramaColumns = `id, organization_id, owner_id, title, source_name, source_text, source_length, source_mode,
  style, aspect_ratio, model_code, status, phase, error_message, overview, characters, scenes, props, episodes, created_at, updated_at`
 

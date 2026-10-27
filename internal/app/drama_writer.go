@@ -37,7 +37,7 @@ func (w *dramaWriter) AvailableModels(ctx context.Context, organizationID, userI
 	}
 	result := make([]drama.Model, 0, len(items))
 	for _, item := range items {
-		if item.ModelType == "chat" {
+		if item.ModelType == "chat" || item.ModelType == "image" || item.ModelType == "video" {
 			result = append(result, drama.Model{Code: item.Code, Name: item.Name, ModelType: item.ModelType})
 		}
 	}

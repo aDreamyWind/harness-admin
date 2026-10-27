@@ -1,6 +1,12 @@
 import { csrfHeaders, request } from './client'
 
 export interface DramaModel { code: string; name: string; modelType: string }
+export interface DramaSettings {
+  textModelCode: string
+  imageModelCode: string
+  videoModelCode: string
+  updatedAt?: string
+}
 export interface DramaAsset { name: string; description: string }
 export interface DramaEpisode { title: string; synopsis: string }
 export interface DramaOverview {
@@ -39,10 +45,13 @@ export interface CreateDramaInput {
   sourceMode: 'upload' | 'generate'
   style: string
   aspectRatio: '9:16' | '16:9'
-  modelCode: string
 }
 
 export const listDramaModels = () => request<DramaModel[]>('/api/v1/ai-drama/models')
+export const getDramaSettings = () => request<DramaSettings>('/api/v1/ai-drama/settings')
+export const saveDramaSettings = (input: DramaSettings) => request<DramaSettings>('/api/v1/ai-drama/settings', {
+  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
+})
 export const listDramaProjects = () => request<DramaProject[]>('/api/v1/ai-drama/projects')
 export const getDramaProject = (id: string) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}`)
 export const getDramaSource = (id: string) => request<{ sourceText: string }>(`/api/v1/ai-drama/projects/${id}/source`)

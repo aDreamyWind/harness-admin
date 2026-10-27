@@ -14,6 +14,8 @@ import (
 
 type DramaService interface {
 	AvailableModels(context.Context, string, string) ([]drama.Model, error)
+	GetSettings(context.Context, string, string) (drama.Settings, error)
+	SaveSettings(context.Context, drama.Settings) (drama.Settings, error)
 	Create(context.Context, drama.CreateInput) (drama.Project, error)
 	List(context.Context, string, string) ([]drama.Project, error)
 	Get(context.Context, string, string, string) (drama.Project, error)
@@ -32,6 +34,30 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, items)
+	})
+	group.GET("/settings", func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		settings, err := deps.Drama.GetSettings(ctx.Request.Context(), session.User.OrganizationID, session.User.ID)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, settings)
+	})
+	group.PUT("/settings", requireCSRF(deps), func(ctx *gin.Context) {
+		var settings drama.Settings
+		if err := ctx.ShouldBindJSON(&settings); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "模型设置格式无效")
+			return
+		}
+		session := currentSession(ctx)
+		settings.OrganizationID, settings.UserID = session.User.OrganizationID, session.User.ID
+		saved, err := deps.Drama.SaveSettings(ctx.Request.Context(), settings)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, saved)
 	})
 	group.GET("/projects", func(ctx *gin.Context) {
 		session := currentSession(ctx)
@@ -101,8 +127,12 @@ func handleDramaError(ctx *gin.Context, deps Dependencies, err error) {
 	switch {
 	case errors.Is(err, drama.ErrInvalidInput):
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_drama_project", err.Error())
+	case errors.Is(err, drama.ErrModelUnavailable):
+		httpx.Fail(ctx, http.StatusBadRequest, "drama_model_unavailable", err.Error())
 	case errors.Is(err, drama.ErrNotFound):
 		httpx.Fail(ctx, http.StatusNotFound, "drama_project_not_found", err.Error())
+	case errors.Is(err, drama.ErrModelNotConfigured):
+		httpx.Fail(ctx, http.StatusConflict, "drama_model_not_configured", err.Error())
 	default:
 		deps.Logger.Error("AI 漫剧请求失败", "error", err)
 		httpx.Fail(ctx, http.StatusInternalServerError, "drama_failed", "AI 漫剧请求失败，请稍后重试")

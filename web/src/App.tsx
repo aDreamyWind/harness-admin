@@ -42,7 +42,8 @@ import { MCPConnectionUsagePage } from './pages/MCPConnectionUsagePage'
 import { ApplicationAccessPage } from './pages/ApplicationAccessPage'
 import { SkillsPage } from './pages/SkillsPage'
 import { SkillDetailPage } from './pages/SkillDetailPage'
-import { DramaHomePage, DramaProjectPage } from './pages/DramaPage'
+import { DramaHomePage } from './pages/DramaHomePage'
+import { DramaProjectPage } from './pages/DramaPage'
 
 const { Header, Sider, Content } = Layout
 

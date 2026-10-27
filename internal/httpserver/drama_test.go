@@ -14,12 +14,20 @@ import (
 )
 
 type dramaServiceStub struct {
-	created drama.CreateInput
-	started chan struct{}
+	created       drama.CreateInput
+	savedSettings drama.Settings
+	started       chan struct{}
 }
 
 func (s *dramaServiceStub) AvailableModels(context.Context, string, string) ([]drama.Model, error) {
 	return []drama.Model{{Code: "writer", Name: "剧本模型", ModelType: "chat"}}, nil
+}
+func (s *dramaServiceStub) GetSettings(context.Context, string, string) (drama.Settings, error) {
+	return drama.Settings{TextModelCode: "writer"}, nil
+}
+func (s *dramaServiceStub) SaveSettings(_ context.Context, input drama.Settings) (drama.Settings, error) {
+	s.savedSettings = input
+	return input, nil
 }
 func (s *dramaServiceStub) Create(_ context.Context, input drama.CreateInput) (drama.Project, error) {
 	s.created = input
@@ -43,7 +51,7 @@ func TestDramaCreateRequiresSessionAndCSRF(t *testing.T) {
 	service := &dramaServiceStub{started: make(chan struct{}, 1)}
 	router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Auth: &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}}, Drama: service, SessionCookie: "test_session"})
-	body := []byte(`{"title":"测试漫剧","sourceText":"很长的原文","sourceMode":"upload","style":"国风","aspectRatio":"9:16","modelCode":"writer"}`)
+	body := []byte(`{"title":"测试漫剧","sourceText":"很长的原文","sourceMode":"upload","style":"国风","aspectRatio":"9:16"}`)
 	call := func(cookie, csrf bool) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/ai-drama/projects", bytes.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
@@ -89,5 +97,33 @@ func TestDramaSourceRequiresSession(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte("完整原文")) {
 		t.Fatalf("已登录读取失败: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDramaSettingsRequiresSessionAndCSRF(t *testing.T) {
+	service := &dramaServiceStub{started: make(chan struct{}, 1)}
+	router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}}, Drama: service, SessionCookie: "test_session"})
+	body := []byte(`{"textModelCode":"writer","imageModelCode":"","videoModelCode":""}`)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/ai-drama/settings", bytes.NewReader(body))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录仍可保存设置: %d", response.Code)
+	}
+	request = httptest.NewRequest(http.MethodPut, "/api/v1/ai-drama/settings", bytes.NewReader(body))
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("缺少 CSRF 仍可保存设置: %d", response.Code)
+	}
+	request = httptest.NewRequest(http.MethodPut, "/api/v1/ai-drama/settings", bytes.NewReader(body))
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || service.savedSettings.OrganizationID != "org-1" || service.savedSettings.UserID == "" {
+		t.Fatalf("用户设置保存失败或未绑定当前用户: %d %+v", response.Code, service.savedSettings)
 	}
 }
