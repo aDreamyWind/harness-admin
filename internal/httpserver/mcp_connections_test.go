@@ -3,11 +3,13 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -509,5 +511,353 @@ func TestMCPGatewayProxiesSkillsExtension(t *testing.T) {
 	_, err = session.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: "skill://lunch-helper/SKILL.md"})
 	if err == nil {
 		t.Fatal("撤权后仍可读取 Skill 文件")
+	}
+}
+
+func TestMCPGatewayWithRealSSEUpstreamResourcesAndPrompts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const resourceURI = "test://sse-menu"
+	upstreamServer := mcp.NewServer(&mcp.Implementation{Name: "SSE 上游验收", Version: "1.0"},
+		&mcp.ServerOptions{})
+	upstreamServer.AddResource(&mcp.Resource{URI: resourceURI, Name: "sse-menu", MIMEType: "text/plain"},
+		func(_ context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: resourceURI, Text: "SSE 上游菜单"}}}, nil
+		})
+	upstreamServer.AddPrompt(&mcp.Prompt{Name: "hello", Arguments: []*mcp.PromptArgument{{Name: "name", Required: true}}},
+		func(_ context.Context, request *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{Messages: []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: "你好，" + request.Params.Arguments["name"]}}}}, nil
+		})
+	upstreamHandler := mcp.NewSSEHandler(func(*http.Request) *mcp.Server { return upstreamServer }, nil)
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer upstream-test" {
+			http.Error(writer, "missing upstream credential", http.StatusUnauthorized)
+			return
+		}
+		upstreamHandler.ServeHTTP(writer, request)
+	}))
+	defer upstream.Close()
+	connections := &mcpEmployeeConnectionsStub{
+		mcpConnectionsStub: &mcpConnectionsStub{route: mcpconnection.GatewayConnection{
+			Connection: mcpconnection.Connection{ID: "connection-1", Code: "employee_mcp", Name: "SSE 测试连接",
+				Purpose: "harness", AuthMode: "oidc", Status: "active"},
+			OrganizationID: "org-1", ServiceStatus: "active", Transport: "sse", UpstreamURL: upstream.URL,
+			UpstreamAuthorization: "Bearer upstream-test",
+		}}, grantActive: true,
+	}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
+		MCPConnections: connections, MCPToolCaller: mcpclient.New([]string{"127.0.0.1"}), OIDCProvider: &mcpEmployeeProviderStub{},
+	})
+	gateway := httptest.NewServer(router)
+	defer gateway.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "gateway-sse-upstream-test", Version: "1.0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint: gateway.URL + "/mcp/employee_mcp", HTTPClient: &http.Client{Transport: bearerTransport{token: "allowed"}},
+		DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("经 Admin 网关连接 SSE 上游失败: %v", err)
+	}
+	defer session.Close()
+	resources, err := session.ListResources(ctx, nil)
+	if err != nil || len(resources.Resources) != 1 || resources.Resources[0].URI != resourceURI {
+		t.Fatalf("SSE 上游资源目录未透传: %#v, %v", resources, err)
+	}
+	content, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: resourceURI})
+	if err != nil || len(content.Contents) != 1 || content.Contents[0].Text != "SSE 上游菜单" {
+		t.Fatalf("SSE 上游资源内容未透传: %#v, %v", content, err)
+	}
+	prompts, err := session.ListPrompts(ctx, nil)
+	if err != nil || len(prompts.Prompts) != 1 || prompts.Prompts[0].Name != "hello" {
+		t.Fatalf("SSE 上游提示词目录未透传: %#v, %v", prompts, err)
+	}
+	prompt, err := session.GetPrompt(ctx, &mcp.GetPromptParams{Name: "hello", Arguments: map[string]string{"name": "小明"}})
+	if err != nil || len(prompt.Messages) != 1 || prompt.Messages[0].Content.(*mcp.TextContent).Text != "你好，小明" {
+		t.Fatalf("SSE 上游提示词内容未透传: %#v, %v", prompt, err)
+	}
+	legacyClient := mcp.NewClient(&mcp.Implementation{Name: "legacy-sse-gateway-test", Version: "1.0"}, nil)
+	legacySession, err := legacyClient.Connect(ctx, &mcp.SSEClientTransport{
+		Endpoint: gateway.URL + "/mcp/employee_mcp/sse", HTTPClient: &http.Client{Transport: bearerTransport{token: "allowed"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("旧版 SSE 客户端连接 Admin 网关失败: %v", err)
+	}
+	defer legacySession.Close()
+	legacyResources, err := legacySession.ListResources(ctx, nil)
+	if err != nil || len(legacyResources.Resources) != 1 || legacyResources.Resources[0].URI != resourceURI {
+		t.Fatalf("旧版 SSE 客户端未读取到真实上游资源: %#v, %v", legacyResources, err)
+	}
+	legacyPrompt, err := legacySession.GetPrompt(ctx, &mcp.GetPromptParams{Name: "hello", Arguments: map[string]string{"name": "小红"}})
+	if err != nil || len(legacyPrompt.Messages) != 1 || legacyPrompt.Messages[0].Content.(*mcp.TextContent).Text != "你好，小红" {
+		t.Fatalf("旧版 SSE 客户端未读取到真实上游提示词: %#v, %v", legacyPrompt, err)
+	}
+	connections.grantActive = false
+	if _, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: resourceURI}); err == nil {
+		t.Fatal("撤销员工授权后仍可经 SSE 上游读取资源")
+	}
+	if _, err := legacySession.ReadResource(ctx, &mcp.ReadResourceParams{URI: resourceURI}); err == nil {
+		t.Fatal("撤销员工授权后旧版 SSE 会话仍可读取资源")
+	}
+}
+
+func TestMCPGatewayWithRealStreamableUpstreamSkills(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	const skillURI = "skill://lunch-helper/SKILL.md"
+	capabilities := &mcp.ServerCapabilities{Resources: &mcp.ResourceCapabilities{}}
+	capabilities.AddExtension(mcpclient.SkillsExtension, nil)
+	upstreamServer := mcp.NewServer(&mcp.Implementation{Name: "Skills 上游验收", Version: "1.0"},
+		&mcp.ServerOptions{Capabilities: capabilities})
+	upstreamServer.AddResource(&mcp.Resource{URI: skillURI, Name: "lunch-helper", MIMEType: "text/markdown"},
+		func(_ context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: skillURI, Text: "---\nname: lunch-helper\ndescription: 推荐午餐\n---\n选择午餐。\n"}}}, nil
+		})
+	skill := mcpclient.SkillEntry{URI: skillURI, Frontmatter: map[string]any{"name": "lunch-helper", "description": "推荐午餐"},
+		Resources: json.RawMessage(`"dynamic"`)}
+	if err := mcp.AddReceivingCustomMethod(upstreamServer, "skills/list",
+		func(_ context.Context, _ *mcp.ServerSession, _ *mcpclient.ListSkillsParams) (*mcpclient.ListSkillsResult, error) {
+			return &mcpclient.ListSkillsResult{ResultType: "complete", Skills: []mcpclient.SkillEntry{skill}, TTLMS: 300000, CacheScope: "public"}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mcp.AddReceivingCustomMethod(upstreamServer, "skills/get",
+		func(_ context.Context, _ *mcp.ServerSession, _ *mcpclient.GetSkillParams) (*mcpclient.GetSkillResult, error) {
+			return &mcpclient.GetSkillResult{ResultType: "complete", Skill: skill, TTLMS: 300000, CacheScope: "public"}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return upstreamServer },
+		&mcp.StreamableHTTPOptions{Stateless: true}))
+	defer upstream.Close()
+	connections := &mcpEmployeeConnectionsStub{
+		mcpConnectionsStub: &mcpConnectionsStub{route: mcpconnection.GatewayConnection{
+			Connection: mcpconnection.Connection{ID: "connection-1", Code: "employee_mcp", Name: "Skills 测试连接",
+				Purpose: "harness", AuthMode: "oidc", Status: "active"},
+			OrganizationID: "org-1", ServiceStatus: "active", Transport: "streamable_http", UpstreamURL: upstream.URL,
+		}}, grantActive: true,
+	}
+	router := New(Dependencies{
+		AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &accountAuthStub{session: accountTestSession()}, Access: accountAccessStub{},
+		MCPConnections: connections, MCPToolCaller: mcpclient.New([]string{"127.0.0.1"}), OIDCProvider: &mcpEmployeeProviderStub{},
+	})
+	gateway := httptest.NewServer(router)
+	defer gateway.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "gateway-streamable-skill-test", Version: "1.0"}, nil)
+	if err := mcp.AddSendingCustomMethod[*mcpclient.ListSkillsParams, *mcpclient.ListSkillsResult](client, "skills/list"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mcp.AddSendingCustomMethod[*mcpclient.GetSkillParams, *mcpclient.GetSkillResult](client, "skills/get"); err != nil {
+		t.Fatal(err)
+	}
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint: gateway.URL + "/mcp/employee_mcp", HTTPClient: &http.Client{Transport: bearerTransport{token: "allowed"}},
+		DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("经 Admin 网关连接 Skills 上游失败: %v", err)
+	}
+	defer session.Close()
+	if _, ok := session.InitializeResult().Capabilities.Extensions[mcpclient.SkillsExtension]; !ok {
+		t.Fatal("真实上游的 Skills 扩展未通过 Admin 网关声明")
+	}
+	listed, err := mcp.CallCustomMethod[*mcpclient.ListSkillsParams, *mcpclient.ListSkillsResult](ctx, session, "skills/list", &mcpclient.ListSkillsParams{})
+	if err != nil || len(listed.Skills) != 1 || listed.Skills[0].URI != skillURI {
+		t.Fatalf("真实上游 Skill 目录未透传: %#v, %v", listed, err)
+	}
+	got, err := mcp.CallCustomMethod[*mcpclient.GetSkillParams, *mcpclient.GetSkillResult](ctx, session, "skills/get", &mcpclient.GetSkillParams{URI: skillURI})
+	if err != nil || got.Skill.URI != skillURI {
+		t.Fatalf("真实上游 Skill 元数据未透传: %#v, %v", got, err)
+	}
+	file, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: skillURI})
+	if err != nil || len(file.Contents) != 1 || !strings.Contains(file.Contents[0].Text, "选择午餐") {
+		t.Fatalf("真实上游 Skill 文件未透传: %#v, %v", file, err)
+	}
+	connections.grantActive = false
+	if _, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: skillURI}); err == nil {
+		t.Fatal("撤权后仍可读取真实上游 Skill 文件")
+	}
+}
+
+// This fixture implements the legacy HTTP+SSE wire directly because the Go
+// SDK's SSE handler rejects custom MCP methods before dispatching them.
+func newSkillsSSEUpstream(t *testing.T, skillURI string) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	sessions := make(map[string]chan []byte)
+	nextID := 0
+	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer upstream-test" {
+			http.Error(writer, "missing upstream credential", http.StatusUnauthorized)
+			return
+		}
+		switch request.Method {
+		case http.MethodGet:
+			writer.Header().Set("Content-Type", "text/event-stream")
+			writer.Header().Set("Cache-Control", "no-cache")
+			flusher, ok := writer.(http.Flusher)
+			if !ok {
+				t.Error("SSE fixture lacks a flusher")
+				return
+			}
+			mu.Lock()
+			nextID++
+			id := fmt.Sprint(nextID)
+			messages := make(chan []byte, 8)
+			sessions[id] = messages
+			mu.Unlock()
+			defer func() { mu.Lock(); delete(sessions, id); mu.Unlock() }()
+			fmt.Fprintf(writer, "event: endpoint\ndata: /messages?sessionId=%s\n\n", id)
+			flusher.Flush()
+			for {
+				select {
+				case payload := <-messages:
+					fmt.Fprintf(writer, "event: message\ndata: %s\n\n", payload)
+					flusher.Flush()
+				case <-request.Context().Done():
+					return
+				}
+			}
+		case http.MethodPost:
+			id := request.URL.Query().Get("sessionId")
+			mu.Lock()
+			messages := sessions[id]
+			mu.Unlock()
+			if messages == nil {
+				http.Error(writer, "unknown session", http.StatusNotFound)
+				return
+			}
+			var call struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Params json.RawMessage `json:"params"`
+			}
+			if err := json.NewDecoder(io.LimitReader(request.Body, 1<<20)).Decode(&call); err != nil {
+				http.Error(writer, "invalid JSON-RPC", http.StatusBadRequest)
+				return
+			}
+			if len(call.ID) == 0 {
+				writer.WriteHeader(http.StatusAccepted)
+				return
+			}
+			entry := mcpclient.SkillEntry{URI: skillURI,
+				Frontmatter: map[string]any{"name": "lunch-helper", "description": "推荐午餐"},
+				Resources:   json.RawMessage(`"dynamic"`)}
+			var result any
+			switch call.Method {
+			case "initialize":
+				var params struct {
+					ProtocolVersion string `json:"protocolVersion"`
+				}
+				if err := json.Unmarshal(call.Params, &params); err != nil {
+					t.Error(err)
+				}
+				result = map[string]any{"protocolVersion": params.ProtocolVersion,
+					"capabilities": map[string]any{"resources": map[string]any{},
+						"extensions": map[string]any{mcpclient.SkillsExtension: map[string]any{}}},
+					"serverInfo": map[string]any{"name": "compatible-sse-skills", "version": "1.0"}}
+			case "ping":
+				result = map[string]any{}
+			case "skills/list":
+				result = mcpclient.ListSkillsResult{ResultType: "complete", Skills: []mcpclient.SkillEntry{entry}, TTLMS: 300000, CacheScope: "public"}
+			case "skills/get":
+				result = mcpclient.GetSkillResult{ResultType: "complete", Skill: entry, TTLMS: 300000, CacheScope: "public"}
+			case "resources/list":
+				result = map[string]any{"resources": []any{map[string]any{"uri": skillURI, "name": "lunch-helper", "mimeType": "text/markdown"}}}
+			case "resources/read":
+				result = map[string]any{"contents": []any{map[string]any{"uri": skillURI, "mimeType": "text/markdown", "text": "# 推荐午餐\n"}}}
+			case "resources/templates/list":
+				result = map[string]any{"resourceTemplates": []any{}}
+			default:
+				writer.WriteHeader(http.StatusAccepted)
+				messages <- []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"method not found"}}`, call.ID))
+				return
+			}
+			payload, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": call.ID, "result": result})
+			if err != nil {
+				t.Error(err)
+				http.Error(writer, "marshal failed", http.StatusInternalServerError)
+				return
+			}
+			writer.WriteHeader(http.StatusAccepted)
+			messages <- payload
+		default:
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+	return httptest.NewServer(handler)
+}
+
+func TestMCPGatewayWithCompatibleSSEUpstreamSkills(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	const skillURI = "skill://lunch-helper/SKILL.md"
+	upstream := newSkillsSSEUpstream(t, skillURI)
+	defer upstream.Close()
+	connections := &mcpEmployeeConnectionsStub{
+		mcpConnectionsStub: &mcpConnectionsStub{route: mcpconnection.GatewayConnection{
+			Connection: mcpconnection.Connection{ID: "connection-1", Code: "employee_mcp", Name: "SSE Skills 测试连接",
+				Purpose: "harness", AuthMode: "oidc", Status: "active"},
+			OrganizationID: "org-1", ServiceStatus: "active", Transport: "sse", UpstreamURL: upstream.URL,
+			UpstreamAuthorization: "Bearer upstream-test",
+		}}, grantActive: true,
+	}
+	router := New(Dependencies{AppName: "Harness Admin", Environment: "test",
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: &accountAuthStub{session: accountTestSession()},
+		Access: accountAccessStub{}, MCPConnections: connections, MCPToolCaller: mcpclient.New([]string{"127.0.0.1"}),
+		OIDCProvider: &mcpEmployeeProviderStub{}})
+	gateway := httptest.NewServer(router)
+	defer gateway.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "sse-skills-gateway-test", Version: "1.0"}, nil)
+	if err := mcp.AddSendingCustomMethod[*mcpclient.ListSkillsParams, *mcpclient.ListSkillsResult](client, "skills/list"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mcp.AddSendingCustomMethod[*mcpclient.GetSkillParams, *mcpclient.GetSkillResult](client, "skills/get"); err != nil {
+		t.Fatal(err)
+	}
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: gateway.URL + "/mcp/employee_mcp",
+		HTTPClient: &http.Client{Transport: bearerTransport{token: "allowed"}}, DisableStandaloneSSE: true, MaxRetries: -1}, nil)
+	if err != nil {
+		t.Fatalf("连接 SSE Skills 上游失败: %v", err)
+	}
+	defer session.Close()
+	if _, ok := session.InitializeResult().Capabilities.Extensions[mcpclient.SkillsExtension]; !ok {
+		t.Fatal("SSE Skills 扩展未声明")
+	}
+	listed, err := mcp.CallCustomMethod[*mcpclient.ListSkillsParams, *mcpclient.ListSkillsResult](ctx, session, "skills/list", &mcpclient.ListSkillsParams{})
+	if err != nil || len(listed.Skills) != 1 || listed.Skills[0].URI != skillURI {
+		t.Fatalf("SSE Skills 目录未透传: %#v, %v", listed, err)
+	}
+	got, err := mcp.CallCustomMethod[*mcpclient.GetSkillParams, *mcpclient.GetSkillResult](ctx, session, "skills/get", &mcpclient.GetSkillParams{URI: skillURI})
+	if err != nil || got.Skill.URI != skillURI {
+		t.Fatalf("SSE Skill 元数据未透传: %#v, %v", got, err)
+	}
+	file, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: skillURI})
+	if err != nil || len(file.Contents) != 1 || file.Contents[0].Text != "# 推荐午餐\n" {
+		t.Fatalf("SSE Skill 文件未透传: %#v, %v", file, err)
+	}
+	legacyClient := mcp.NewClient(&mcp.Implementation{Name: "legacy-sse-skills-gateway-test", Version: "1.0"}, nil)
+	if err := mcp.AddSendingCustomMethod[*mcpclient.ListSkillsParams, *mcpclient.ListSkillsResult](legacyClient, "skills/list"); err != nil {
+		t.Fatal(err)
+	}
+	legacySession, err := legacyClient.Connect(ctx, &mcp.SSEClientTransport{
+		Endpoint: gateway.URL + "/mcp/employee_mcp/sse", HTTPClient: &http.Client{Transport: bearerTransport{token: "allowed"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("旧版 SSE 客户端连接 Skills 网关失败: %v", err)
+	}
+	defer legacySession.Close()
+	legacyList, err := mcp.CallCustomMethod[*mcpclient.ListSkillsParams, *mcpclient.ListSkillsResult](ctx, legacySession, "skills/list", &mcpclient.ListSkillsParams{})
+	if err != nil || len(legacyList.Skills) != 1 || legacyList.Skills[0].URI != skillURI {
+		t.Fatalf("旧版 SSE 客户端未读取到 Skill 目录: %#v, %v", legacyList, err)
+	}
+	connections.grantActive = false
+	if _, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: skillURI}); err == nil {
+		t.Fatal("撤权后仍可读取 SSE Skill 文件")
+	}
+	if _, err := legacySession.ReadResource(ctx, &mcp.ReadResourceParams{URI: skillURI}); err == nil {
+		t.Fatal("撤权后旧版 SSE 客户端仍可读取 Skill 文件")
 	}
 }

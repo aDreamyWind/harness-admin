@@ -2,6 +2,16 @@
 
 本记录供新会话接续工作使用。先阅读根目录 `AGENTS.md`、`README.md`、`docs/enterprise-skills-mcp-plan.md`、`api/openapi.yaml` 与当前 Git 状态；以代码和实时环境为准，不把本记录当成永远有效的运行状态。项目保持 Go 模块化单体，前端使用 React、TypeScript、Ant Design。未经用户要求不要提交、清理或覆盖当前工作树。
 
+## 2026-10-27 续验记录
+
+- 本轮修复了旧版 SSE 入站网关拒绝 MCP Skills 扩展方法的问题：Go MCP SDK v1.6.1 的 `SSEServerTransport.ServeHTTP` 会在分发前用固定内置方法表拒绝 `skills/list` 等自定义方法。Admin 改用受原有逐请求 OIDC／连接授权、会话绑定、请求体大小和并发上限保护的 SSE 消息传输，交由 MCP Server 正常分发。隔离 SSE 上游经 Admin 网关向 Streamable HTTP 与旧版 SSE 客户端提供 `skills/list`、`skills/get` 和 Skill 文件；撤权后，两种已建立会话的资源读取均失败。相关测试及 `go test -race ./internal/httpserver -run '^TestMCPGatewayWith'` 通过。
+- 官方 DSH SDK 工作树增加了 `skills/change` Host→Client 转发，Skill 菜单收到事件后清除各会话目录缓存，避免员工登录后仍需刷新页面才能看到企业 Skill；同时防止过期请求回写缓存。定向测试 40/40、完整 GUI 测试 10,715 项通过，产物构建与 Host／Client 汇总类型检查通过。真实 Desktop 现场刷新验收仍需在本机解锁、登录 Admin 后完成。
+- 官方 SDK 的 Skill 相关 Web 回放 3 个文件／8 项通过。完整 Web 回放在未改动的聊天滚动、历史会话和预览启动用例出现失败，因此未将该全套判为通过；现有失败需要另行定位。Admin 本地 8080 已重启到本轮 SSE 修复，`/readyz` 显示数据库与 Redis 正常。临时 Skill 授权尚未创建或更改。
+- 独立企业插件已接入 Host 的 MCP resources、prompts、上游 Skills 和 Admin 已发布企业 Skills。插件改动仍在 `/Users/hanxiaoxu/Documents/project202607/harness-enterprise-plugin` 工作树；发行包已安装到 Web 与 Desktop 测试 profile，官方 SDK 仓库未修改。Desktop 使用原有 8080 Admin 与 5173 控制台配置，员工重新登录后，技能菜单能找到并选中 `stock-technical-indicator`。首次登录后旧会话的技能菜单保留了登录前的空目录，刷新 Desktop 页面后显示正确；这是客户端目录缓存的待修体验问题。
+- Desktop 真实模型调用在轨迹中显示 `read_mcp_resource` 以 `server=enterprise-skills`、`uri=skill://enterprise/stock-technical-indicator/SKILL.md` 成功读取文件，助手只返回其首个标题“股票技术指标分析”。这验证了员工 OIDC、企业 Skill 文件资源、Host 工具与 Desktop 模型调用链路。未通过模型执行 Skill 脚本。Admin 本地 `/readyz` 返回 200。
+- 新增 HTTP 网关网络验收：Go SDK 实际 SSE 上游经 Admin 网关向 Streamable HTTP 和旧版 SSE 客户端提供 resources、prompts；撤销测试员工授权后，两种入口均阻断资源读取。另以实际 Streamable HTTP 上游验证 `skills/list`、`skills/get`、`resources/read` 经 Admin 透传及撤权阻断。`go test ./internal/httpserver ./internal/mcpclient -count=1` 通过。测试使用回环 `httptest` 上游和隔离的员工授权替身，不改本地业务数据库。
+- Go MCP SDK v1.6.1 的旧版 SSE 服务端处理器仍会在接收 `skills/list` 这类自定义方法时返回 400；本轮使用独立的兼容 SSE 上游补足网关协议验收。实际 Desktop 的撤权后目录自动消失仍待现场验证；网关逐次授权和上述网络测试已覆盖调用阻断。
+
 ## 已交付与已验证
 
 - “AI 资源管理 / MCP 管理”是单一二级菜单。左侧服务列表，右侧服务描述、部署与运行、连接、接入示例及工具列表。远程 Streamable HTTP／SSE 可接入；源码可从公开 GitHub／Gitee 完整 URL 或 `.tar.gz` 包导入，固定 Git 提交、读取根目录 `README.md` 作为描述，并在受限 Docker 容器内构建 Node.js／Python Stdio MCP。

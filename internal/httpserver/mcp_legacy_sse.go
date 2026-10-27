@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"harness-admin/internal/httpx"
 	"harness-admin/internal/mcpadmin"
@@ -25,7 +24,7 @@ type mcpLegacyGateway struct {
 }
 
 type mcpLegacySession struct {
-	transport *mcp.SSEServerTransport
+	transport *mcpLegacyTransport
 	routeID   string
 	userID    string
 	closed    chan struct{}
@@ -62,7 +61,7 @@ func (g *mcpLegacyGateway) stream(ctx *gin.Context) {
 	sessionID := base64.RawURLEncoding.EncodeToString(secret)
 	endpoint := "/mcp/" + route.Code + "/messages?sessionid=" + sessionID
 	session := &mcpLegacySession{
-		transport: &mcp.SSEServerTransport{Endpoint: endpoint, Response: ctx.Writer},
+		transport: newMCPLegacyTransport(endpoint, ctx.Writer),
 		routeID:   route.ID, userID: caller.UserID,
 		closed: make(chan struct{}), inFlight: make(chan struct{}, 8),
 	}
@@ -93,7 +92,10 @@ func (g *mcpLegacyGateway) stream(ctx *gin.Context) {
 		return
 	}
 	defer serverSession.Close()
-	<-streamCtx.Done()
+	select {
+	case <-streamCtx.Done():
+	case <-session.transport.done:
+	}
 }
 
 func (g *mcpLegacyGateway) message(ctx *gin.Context) {
