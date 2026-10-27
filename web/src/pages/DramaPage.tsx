@@ -14,7 +14,7 @@ import './drama.css'
 
 const phaseNames: Record<string, string> = {
   waiting: '等待解析', script: '编剧正在生成剧本', story: '正在理解故事',
-  assets: '正在整理角色、场景和道具', episodes: '正在规划分集', complete: '解析完成', overview_complete: '概览已完成', failed: '解析失败',
+  assets: '正在整理角色、场景和道具', episodes: '正在规划分集', complete: '解析完成', overview_done: '概览已完成', failed: '解析失败',
 }
 const stylePresets = ['电影写实', '国风水墨', '日系动漫', '三维动画', '暗黑漫画', '奇幻绘本', '美式漫画', '怀旧动画', '赛博霓虹']
 const ratioOptions = [{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }]

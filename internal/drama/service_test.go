@@ -121,7 +121,7 @@ func TestCreateAndAnalyzePreservesFullSource(t *testing.T) {
 	if err := service.Analyze(project); err != nil {
 		t.Fatal(err)
 	}
-	if repo.project.Status != "ready" || repo.project.Phase != "overview_complete" || len(writer.prompts) != 1 {
+	if repo.project.Status != "ready" || repo.project.Phase != "overview_done" || len(writer.prompts) != 1 {
 		t.Fatalf("概览解析阶段错误: %+v, 调用次数 %d", repo.project, len(writer.prompts))
 	}
 	if strings.Contains(writer.prompts[0], strings.Repeat("山", ParseRuneLimit+1)) {
@@ -146,7 +146,7 @@ func TestGenerateScriptBeforeAnalysis(t *testing.T) {
 	if err := service.Analyze(project); err != nil {
 		t.Fatal(err)
 	}
-	if repo.project.SourceText != "第一场：夜，画室。" || len(writer.prompts) != 2 || !strings.Contains(writer.prompts[1], repo.project.SourceText) || repo.project.Phase != "overview_complete" {
+	if repo.project.SourceText != "第一场：夜，画室。" || len(writer.prompts) != 2 || !strings.Contains(writer.prompts[1], repo.project.SourceText) || repo.project.Phase != "overview_done" {
 		t.Fatal("没有先生成剧本再解析概览")
 	}
 }
@@ -214,7 +214,7 @@ func TestAnalyzeRetrySkipsCompletedOverview(t *testing.T) {
 	if err := NewService(repo, writer).Analyze(repo.project); err != nil {
 		t.Fatal(err)
 	}
-	if len(writer.prompts) != 0 || len(repo.stages) != 1 || repo.stages[0] != "overview_complete" || repo.project.Status != "ready" {
+	if len(writer.prompts) != 0 || len(repo.stages) != 1 || repo.stages[0] != "overview_done" || repo.project.Status != "ready" {
 		t.Fatalf("重试应复用已有概览并结束自动解析: 调用 %d 次，阶段 %v", len(writer.prompts), repo.stages)
 	}
 }

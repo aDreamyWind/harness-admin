@@ -341,7 +341,7 @@ func (s *Service) Analyze(project Project) error {
 			return s.fail(project, err)
 		}
 	}
-	if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "ready", "overview_complete", nil); err != nil {
+	if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "ready", "overview_done", nil); err != nil {
 		return s.fail(project, err)
 	}
 	return nil
