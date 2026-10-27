@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.27.0
+  version: 0.27.1
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -13,7 +13,7 @@ paths:
       security: [{ sessionCookie: [] }]
       responses:
         '200':
-          description: 可调用的对话模型。
+          description: 当前用户可调用的文本、图片和视频模型。
           content:
             application/json:
               schema:
@@ -108,6 +108,26 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/DramaProject' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/retry:
+    post:
+      summary: 重新解析本人上传且解析失败的漫剧项目
+      description: 复用数据库中保存的完整原文和当前用户的文本模型配置；重置旧解析结果并重新排队。AI 生成剧本项目暂不支持重试。
+      operationId: retryDramaProject
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202':
+          description: 项目已重新排队解析。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaProject' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 项目状态不允许重试，或当前用户未配置可用文本模型。 }
   /ai-drama/projects/{id}/overview:
     put:
       summary: 修改漫剧项目概览

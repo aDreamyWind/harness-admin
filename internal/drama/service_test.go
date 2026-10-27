@@ -33,6 +33,15 @@ func (r *fakeRepository) List(_ context.Context, _, _ string) ([]Project, error)
 func (r *fakeRepository) Get(_ context.Context, _, _, _ string) (Project, error) {
 	return r.project, nil
 }
+func (r *fakeRepository) RetryFailed(_ context.Context, _, _, _, modelCode string) (Project, error) {
+	if r.project.Status != "failed" || r.project.SourceMode != "upload" {
+		return Project{}, ErrNotFound
+	}
+	r.project.Status, r.project.Phase, r.project.Error, r.project.ModelCode = "queued", "waiting", "", modelCode
+	r.project.Overview = json.RawMessage(`{}`)
+	r.project.Characters, r.project.Scenes, r.project.Props, r.project.Episodes = json.RawMessage(`[]`), json.RawMessage(`[]`), json.RawMessage(`[]`), json.RawMessage(`[]`)
+	return r.project, nil
+}
 func (r *fakeRepository) GetSource(_ context.Context, _, _, _ string) (string, error) {
 	return r.project.SourceText, nil
 }
@@ -174,5 +183,28 @@ func TestSaveSettingsValidatesModelTypes(t *testing.T) {
 	}
 	if saved.TextModelCode != "writer" || repo.settings.ImageModelCode != "painter" || repo.settings.VideoModelCode != "director" {
 		t.Fatal("当前用户的默认模型未保存")
+	}
+}
+
+func TestRetryFailedUploadReusesSavedSource(t *testing.T) {
+	id := "b6e6da1c-7c27-4f72-babf-34a7c4e19617"
+	repo := &fakeRepository{
+		project:  Project{ID: id, Status: "failed", SourceMode: "upload", SourceText: "已保存的完整原文", Error: "旧错误", ModelCode: "old"},
+		settings: Settings{TextModelCode: "writer"},
+	}
+	service := NewService(repo, &fakeWriter{})
+	project, err := service.Retry(context.Background(), "org", "user", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Status != "queued" || project.Phase != "waiting" || project.SourceText != "已保存的完整原文" || project.ModelCode != "writer" || project.Error != "" {
+		t.Fatalf("重新解析未复用原文或清除旧状态: %+v", project)
+	}
+	if _, err := service.Retry(context.Background(), "org", "user", id); !errors.Is(err, ErrRetryNotAllowed) {
+		t.Fatalf("非失败项目不能重复排队: %v", err)
+	}
+	repo.project.Status, repo.project.SourceMode = "failed", "generate"
+	if _, err := service.Retry(context.Background(), "org", "user", id); !errors.Is(err, ErrRetryNotAllowed) {
+		t.Fatalf("AI 生成剧本项目不应直接重新解析: %v", err)
 	}
 }

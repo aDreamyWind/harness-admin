@@ -16,6 +16,7 @@ var ErrInvalidInput = errors.New("漫剧项目参数不正确")
 var ErrNotFound = errors.New("漫剧项目不存在")
 var ErrModelNotConfigured = errors.New("请先在漫剧设置中配置可用的文本模型")
 var ErrModelUnavailable = errors.New("所选模型未启用或当前账号无权使用")
+var ErrRetryNotAllowed = errors.New("当前项目不能重新解析")
 
 const ParseRuneLimit = 30000
 
@@ -73,6 +74,7 @@ type Repository interface {
 	UpdateOverview(context.Context, string, string, string, json.RawMessage) (Project, error)
 	FailInterrupted(context.Context) error
 	SaveGeneratedScript(context.Context, string, string, string, string) error
+	RetryFailed(context.Context, string, string, string, string) (Project, error)
 	GetSettings(context.Context, string, string) (Settings, error)
 	SaveSettings(context.Context, Settings) (Settings, error)
 }
@@ -207,6 +209,49 @@ func (s *Service) Get(ctx context.Context, organizationID, ownerID, id string) (
 		return Project{}, ErrInvalidInput
 	}
 	return s.repository.Get(ctx, organizationID, ownerID, id)
+}
+
+// Retry 只重试上传的失败项目；原文从数据库读取，沿用当前用户配置的文本模型。
+func (s *Service) Retry(ctx context.Context, organizationID, ownerID, id string) (Project, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return Project{}, ErrInvalidInput
+	}
+	project, err := s.repository.Get(ctx, organizationID, ownerID, id)
+	if err != nil {
+		return Project{}, err
+	}
+	if project.Status != "failed" || project.SourceMode != "upload" {
+		return Project{}, ErrRetryNotAllowed
+	}
+	settings, err := s.GetSettings(ctx, organizationID, ownerID)
+	if err != nil {
+		return Project{}, err
+	}
+	if settings.TextModelCode == "" {
+		return Project{}, ErrModelNotConfigured
+	}
+	models, err := s.AvailableModels(ctx, organizationID, ownerID)
+	if err != nil {
+		return Project{}, err
+	}
+	available := false
+	for _, item := range models {
+		if item.Code == settings.TextModelCode && item.ModelType == "chat" {
+			available = true
+			break
+		}
+	}
+	if !available {
+		return Project{}, ErrModelNotConfigured
+	}
+	project, err = s.repository.RetryFailed(ctx, organizationID, ownerID, id, settings.TextModelCode)
+	if errors.Is(err, ErrNotFound) {
+		return Project{}, ErrRetryNotAllowed
+	}
+	if err != nil {
+		return Project{}, fmt.Errorf("重新解析漫剧项目失败: %w", err)
+	}
+	return project, nil
 }
 
 func (s *Service) GetSource(ctx context.Context, organizationID, ownerID, id string) (string, error) {

@@ -6,7 +6,7 @@ import { Button, Card, Drawer, Empty, Input, Skeleton, Tag, Typography, message 
 import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
-import { getDramaProject, getDramaSource, updateDramaOverview,
+import { getDramaProject, getDramaSource, retryDramaProject, updateDramaOverview,
   type DramaAsset, type DramaOverview, type DramaProject } from '../api/drama'
 import './drama.css'
 
@@ -47,6 +47,7 @@ export function DramaProjectPage() {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<DramaOverview>({})
   const [saving, setSaving] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [sourceLoading, setSourceLoading] = useState(false)
   const [sourceText, setSourceText] = useState('')
@@ -72,6 +73,14 @@ export function DramaProjectPage() {
     finally { setSaving(false) }
   }
 
+  async function retry() {
+    if (!project) return
+    setRetrying(true)
+    try { setProject(await retryDramaProject(project.id)); messageApi.success('已重新开始解析') }
+    catch (error) { messageApi.error(error instanceof Error ? error.message : '重新解析失败') }
+    finally { setRetrying(false) }
+  }
+
   async function showSource() {
     if (!project) return
     setSourceOpen(true)
@@ -94,7 +103,7 @@ export function DramaProjectPage() {
     <aside className="drama-workspace-sidebar"><button type="button" className="drama-back" onClick={() => navigate('/ai-apps/drama')}><ArrowLeftOutlined /> 返回 AI 漫剧</button><div className="drama-workspace-brand">漫剧创作台</div><div className="drama-workspace-nav">{navItems.map((item) => <button type="button" key={item.key} className={section === item.key ? 'active' : ''} onClick={() => setSection(item.key)}>{item.icon}<span>{item.label}</span>{project && item.key !== 'overview' && <small>{sectionCount(item.key)}</small>}</button>)}</div><div className="drama-sidebar-bottom"><span>创作流程</span><p>剧本解析 → 资产整理 → 分集创作 → 分镜生成</p></div></aside>
     <main className="drama-workspace-main">{loading ? <Skeleton active /> : !project ? <Empty description="项目不存在" /> : <>
       <header className="drama-workspace-header"><div><h1>{project.title}</h1><div className="drama-project-summary">{statusTag(project)}<span>{project.style}</span><span>{project.aspectRatio}</span><span>原文 {project.sourceLength.toLocaleString()} 字符</span></div></div><div className="drama-workspace-actions"><Button icon={<FileTextOutlined />} onClick={() => void showSource()}>{project.sourceMode === 'generate' ? '查看生成剧本' : '查看完整原文'}</Button></div></header>
-      {project.status !== 'ready' && <section className="drama-agent-panel"><div><RobotOutlined /><div><h2>{project.status === 'failed' ? '解析遇到问题' : '创作团队正在工作'}</h2><p>{project.status === 'failed' ? project.error : '编剧、美术和导演会依次读取故事，整理可供后续创作的项目资料。'}</p></div></div>{project.status !== 'failed' && <div className="drama-agent-steps">{['生成剧本', '故事理解', '资产整理', '分集规划'].map((name, index) => <span key={name} className={project.sourceMode === 'upload' && index === 0 ? 'skipped' : phaseIndex >= index ? 'done' : ''}>{index + 1}. {name}</span>)}</div>}</section>}
+      {project.status !== 'ready' && <section className="drama-agent-panel"><div><RobotOutlined /><div><h2>{project.status === 'failed' ? '解析遇到问题' : '创作团队正在工作'}</h2><p>{project.status === 'failed' ? project.error : '编剧、美术和导演会依次读取故事，整理可供后续创作的项目资料。'}</p>{project.status === 'failed' && project.sourceMode === 'upload' && <Button type="primary" loading={retrying} onClick={() => void retry()}>重新解析</Button>}</div></div>{project.status !== 'failed' && <div className="drama-agent-steps">{['生成剧本', '故事理解', '资产整理', '分集规划'].map((name, index) => <span key={name} className={project.sourceMode === 'upload' && index === 0 ? 'skipped' : phaseIndex >= index ? 'done' : ''}>{index + 1}. {name}</span>)}</div>}</section>}
       <div className="drama-section-head"><h2>{navItems.find((item) => item.key === section)?.label}</h2>{section === 'overview' && !editing && <Button onClick={() => { setDraft({ ...project.overview }); setEditing(true) }}>编辑概览</Button>}{section === 'overview' && editing && <div><Button onClick={() => setEditing(false)}>取消</Button> <Button type="primary" loading={saving} onClick={() => void save()}>保存修改</Button></div>}</div>
       {section === 'overview' ? <div className="drama-overview-grid">{overviewFields.map((field) => <div key={field.key} className={field.multiline ? 'wide' : ''}><span>{field.label}</span>{editing ? field.multiline ? <Input.TextArea rows={4} value={draft[field.key] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /> : <Input value={draft[field.key] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /> : <p>{project.overview?.[field.key] || (field.key === 'videoStyle' ? project.style : field.key === 'aspectRatio' ? project.aspectRatio : '等待解析结果')}</p>}</div>)}</div> : section === 'episodes' ? project.episodes.length === 0 ? <div className="drama-empty small"><Empty description="导演完成分析后，分集会出现在这里" /></div> : <div className="drama-episode-list">{project.episodes.map((episode, index) => <Card key={`${episode.title}-${index}`}><span>EPISODE {String(index + 1).padStart(2, '0')}</span><h3>{episode.title}</h3><p>{episode.synopsis}</p></Card>)}</div> : assets.length === 0 ? <div className="drama-empty small"><Empty description="美术完成分析后，相关资产会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={`${item.name}-${index}`}><div className="drama-asset-icon">{section === 'characters' ? <TeamOutlined /> : section === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p></Card>)}</div>}
     </>}</main>

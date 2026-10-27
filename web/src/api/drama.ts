@@ -55,6 +55,9 @@ export const saveDramaSettings = (input: DramaSettings) => request<DramaSettings
 export const listDramaProjects = () => request<DramaProject[]>('/api/v1/ai-drama/projects')
 export const getDramaProject = (id: string) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}`)
 export const getDramaSource = (id: string) => request<{ sourceText: string }>(`/api/v1/ai-drama/projects/${id}/source`)
+export const retryDramaProject = (id: string) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/retry`, {
+  method: 'POST', headers: csrfHeaders(),
+})
 export const createDramaProject = (input: CreateDramaInput) => request<DramaProject>('/api/v1/ai-drama/projects', {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })

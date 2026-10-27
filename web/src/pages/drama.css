@@ -26,6 +26,7 @@
 .drama-agent-panel > div:first-child > .anticon { font-size: 25px; color: #7665bd; }
 .drama-agent-panel h2 { font-size: 17px; margin: 0 0 4px; }
 .drama-agent-panel p { margin: 0; color: #777b8e; font-size: 13px; }
+.drama-agent-panel .ant-btn { margin-top: 12px; }
 .drama-agent-steps { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .drama-agent-steps span { border: 1px solid #e3e0ed; border-radius: 20px; padding: 6px 11px; color: #a2a2b0; font-size: 11px; }
 .drama-agent-steps span.done { color: #6c58b1; background: #eee9fb; border-color: #e1d9f6; }

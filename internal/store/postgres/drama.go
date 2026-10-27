@@ -100,6 +100,14 @@ func (r *DramaRepository) Get(ctx context.Context, organizationID, ownerID, id s
 	return item, err
 }
 
+func (r *DramaRepository) RetryFailed(ctx context.Context, organizationID, ownerID, id, modelCode string) (drama.Project, error) {
+	return scanDrama(r.db.QueryRow(ctx, `UPDATE drama_projects SET status='queued', phase='waiting',
+		error_message='', model_code=$4, overview='{}'::jsonb, characters='[]'::jsonb,
+		scenes='[]'::jsonb, props='[]'::jsonb, episodes='[]'::jsonb, updated_at=NOW()
+		WHERE organization_id=$1 AND owner_id=$2 AND id=$3 AND status='failed' AND source_mode='upload'
+		RETURNING `+dramaColumns, organizationID, ownerID, id, modelCode))
+}
+
 func (r *DramaRepository) GetSource(ctx context.Context, organizationID, ownerID, id string) (string, error) {
 	var source string
 	err := r.db.QueryRow(ctx, `SELECT source_text FROM drama_projects WHERE organization_id=$1 AND owner_id=$2 AND id=$3`, organizationID, ownerID, id).Scan(&source)
@@ -109,18 +117,20 @@ func (r *DramaRepository) GetSource(ctx context.Context, organizationID, ownerID
 	return source, err
 }
 
+const saveDramaAnalysisSQL = `UPDATE drama_projects SET status=$4::text, phase=$5::text,
+		overview=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN $6::jsonb || overview ELSE overview END,
+		characters=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'characters','[]'::jsonb) ELSE characters END,
+		scenes=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'scenes','[]'::jsonb) ELSE scenes END,
+		props=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'props','[]'::jsonb) ELSE props END,
+		episodes=CASE WHEN $5::text='episodes' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'episodes','[]'::jsonb) ELSE episodes END,
+		updated_at=NOW() WHERE organization_id=$1 AND owner_id=$2 AND id=$3`
+
 func (r *DramaRepository) SaveAnalysis(ctx context.Context, organizationID, ownerID, id, status, phase string, data json.RawMessage) error {
 	var result sql.NullString
 	if len(data) > 0 {
 		result = sql.NullString{String: string(data), Valid: true}
 	}
-	command, err := r.db.Exec(ctx, `UPDATE drama_projects SET status=$4, phase=$5,
-		overview=CASE WHEN $5='story' AND $6::jsonb IS NOT NULL THEN $6::jsonb || overview ELSE overview END,
-		characters=CASE WHEN $5='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'characters','[]'::jsonb) ELSE characters END,
-		scenes=CASE WHEN $5='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'scenes','[]'::jsonb) ELSE scenes END,
-		props=CASE WHEN $5='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'props','[]'::jsonb) ELSE props END,
-		episodes=CASE WHEN $5='episodes' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'episodes','[]'::jsonb) ELSE episodes END,
-		updated_at=NOW() WHERE organization_id=$1 AND owner_id=$2 AND id=$3`, organizationID, ownerID, id, status, phase, result)
+	command, err := r.db.Exec(ctx, saveDramaAnalysisSQL, organizationID, ownerID, id, status, phase, result)
 	if err != nil {
 		return fmt.Errorf("保存解析阶段失败: %w", err)
 	}

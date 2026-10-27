@@ -17,6 +17,7 @@ type DramaService interface {
 	GetSettings(context.Context, string, string) (drama.Settings, error)
 	SaveSettings(context.Context, drama.Settings) (drama.Settings, error)
 	Create(context.Context, drama.CreateInput) (drama.Project, error)
+	Retry(context.Context, string, string, string) (drama.Project, error)
 	List(context.Context, string, string) ([]drama.Project, error)
 	Get(context.Context, string, string, string) (drama.Project, error)
 	GetSource(context.Context, string, string, string) (string, error)
@@ -97,6 +98,20 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 		}
 		httpx.OK(ctx, http.StatusOK, project)
 	})
+	group.POST("/projects/:id/retry", requireCSRF(deps), func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		project, err := deps.Drama.Retry(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		go func() {
+			if err := deps.Drama.Analyze(project); err != nil {
+				deps.Logger.Error("AI 漫剧重新解析失败", "project_id", project.ID, "error", err)
+			}
+		}()
+		httpx.OK(ctx, http.StatusAccepted, project)
+	})
 	group.GET("/projects/:id/source", func(ctx *gin.Context) {
 		session := currentSession(ctx)
 		source, err := deps.Drama.GetSource(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"))
@@ -129,6 +144,8 @@ func handleDramaError(ctx *gin.Context, deps Dependencies, err error) {
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_drama_project", err.Error())
 	case errors.Is(err, drama.ErrModelUnavailable):
 		httpx.Fail(ctx, http.StatusBadRequest, "drama_model_unavailable", err.Error())
+	case errors.Is(err, drama.ErrRetryNotAllowed):
+		httpx.Fail(ctx, http.StatusConflict, "drama_retry_not_allowed", err.Error())
 	case errors.Is(err, drama.ErrNotFound):
 		httpx.Fail(ctx, http.StatusNotFound, "drama_project_not_found", err.Error())
 	case errors.Is(err, drama.ErrModelNotConfigured):
