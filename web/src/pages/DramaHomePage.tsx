@@ -158,12 +158,12 @@ export function DramaHomePage() {
           {sourceName && !pasteOpen ? <div className="drama-uploaded-file"><span className="drama-file-icon"><FileTextOutlined /></span><span className="drama-file-name"><strong>{sourceName}</strong><small>{(sourceSize / 1024).toFixed(1)} KB · {uploadText.length.toLocaleString()} 字符</small></span><Button type="text" onClick={() => fileInput.current?.click()}>更换</Button><Button type="text" aria-label="移除文件" icon={<DeleteOutlined />} onClick={removeFile} /></div> : pasteOpen ? <Input.TextArea className="drama-paste-area" rows={5} value={uploadText} onChange={(event) => { setUploadText(event.target.value); setSourceName('') }} placeholder="在这里粘贴小说或剧本全文，不限制字数" /> : <button type="button" className="drama-upload-box" onClick={() => fileInput.current?.click()}><CloudUploadOutlined /><strong>点击选择小说或剧本文件</strong><span>支持 TXT、MD；也可以在下方直接粘贴原文</span></button>}
           <div className="drama-upload-secondary"><Button type="link" onClick={() => setPasteOpen((value) => !value)}>{pasteOpen ? '返回文件上传' : '直接粘贴原文'}</Button>{pasteOpen && <span>{uploadText.length.toLocaleString()} 字符</span>}</div>
         </> : <Input.TextArea className="drama-idea-area" rows={6} value={ideaText} onChange={(event) => setIdeaText(event.target.value)} placeholder="写下故事主角、冲突和你希望呈现的情节，AI 将据此生成第一集剧本" />}
-        <Input className="drama-title-input" value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} placeholder="项目名称" prefix="项目名称" />
       </div>
       <div className="drama-composer-footer">
         <div className="drama-creation-options">
           <button type="button" className="drama-option-button" onClick={() => setStyleOpen(true)}><span className="drama-option-preview" style={{ backgroundPosition: `${selectedStyle.x * 50}% ${selectedStyle.y * 50}%` }} /><span>{style}</span><span className="drama-option-chevron">⌄</span></button>
           <Select className="drama-ratio-select" variant="borderless" value={ratio} onChange={setRatio} options={[{ label: '9:16 竖屏', value: '9:16' }, { label: '16:9 横屏', value: '16:9' }]} />
+          <Input className="drama-title-input" value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} placeholder="项目名称" prefix="项目名称" />
         </div>
         <Button className="drama-create-button" type="primary" loading={submitting} onClick={() => void start()}>开始解析</Button>
       </div>
