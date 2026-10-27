@@ -1,4 +1,4 @@
-.drama-home { width: min(100%, 1320px); margin: 0 auto; color: #17243a; }
+.drama-home { width: 100%; min-width: 0; color: #17243a; }
 .drama-home-tools { display: flex; justify-content: flex-end; gap: 10px; margin: 0 0 16px; }
 .drama-home-tools .ant-btn { height: 36px; border-radius: 8px; }
 .drama-composer { overflow: hidden; border: 1px solid #dce4eb; border-radius: 14px; background: #fff; box-shadow: 0 8px 26px rgba(41, 65, 97, .045); }
