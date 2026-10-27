@@ -1,11 +1,121 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.25.0
+  version: 0.26.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
 paths:
+  /ai-drama/models:
+    get:
+      summary: 查询当前用户可调用的已启用漫剧解析模型
+      operationId: listDramaModels
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 可调用的对话模型。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DramaModel' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /ai-drama/projects:
+    get:
+      summary: 查询当前用户的漫剧项目及任务状态
+      operationId: listDramaProjects
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 项目列表。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DramaProject' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: 保存原文或创意并开始后台解析
+      operationId: createDramaProject
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaCreateInput' }
+      responses:
+        '201':
+          description: 已保存项目及完整原文，解析已进入后台队列。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaProject' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /ai-drama/projects/{id}:
+    get:
+      summary: 查询漫剧项目及分阶段解析结果
+      operationId: getDramaProject
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 当前用户拥有的项目。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaProject' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/overview:
+    put:
+      summary: 修改漫剧项目概览
+      operationId: updateDramaOverview
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaOverview' }
+      responses:
+        '200':
+          description: 更新后的项目。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaProject' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/source:
+    get:
+      summary: 读取本人漫剧项目的完整原文或生成剧本
+      operationId: getDramaProjectSource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 完整原文，不受解析截取范围影响。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      sourceText: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
   /platform/auth/login:
     post:
       summary: 平台管理员登录
@@ -2752,6 +2862,66 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
+    DramaModel:
+      type: object
+      required: [code, name, modelType]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        modelType: { type: string, enum: [chat] }
+    DramaCreateInput:
+      type: object
+      required: [title, sourceText, sourceMode, style, aspectRatio, modelCode]
+      properties:
+        title: { type: string, maxLength: 120 }
+        sourceName: { type: string, maxLength: 255 }
+        sourceText: { type: string, description: 完整原文或创意；不设置业务字数上限。 }
+        sourceMode: { type: string, enum: [upload, generate] }
+        style: { type: string, maxLength: 80 }
+        aspectRatio: { type: string, enum: ['9:16', '16:9'] }
+        modelCode: { type: string }
+    DramaOverview:
+      type: object
+      properties:
+        videoStyle: { type: string }
+        aspectRatio: { type: string }
+        protagonist: { type: string }
+        genre: { type: string }
+        synopsis: { type: string }
+        background: { type: string }
+        setting: { type: string }
+    DramaAsset:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+    DramaEpisode:
+      type: object
+      properties:
+        title: { type: string }
+        synopsis: { type: string }
+    DramaProject:
+      type: object
+      required: [id, title, sourceLength, sourceMode, style, aspectRatio, modelCode, status, phase, overview, characters, scenes, props, episodes, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        sourceName: { type: string }
+        sourceLength: { type: integer }
+        sourceMode: { type: string, enum: [upload, generate] }
+        style: { type: string }
+        aspectRatio: { type: string, enum: ['9:16', '16:9'] }
+        modelCode: { type: string }
+        status: { type: string, enum: [queued, running, ready, failed] }
+        phase: { type: string }
+        error: { type: string }
+        overview: { $ref: '#/components/schemas/DramaOverview' }
+        characters: { type: array, items: { $ref: '#/components/schemas/DramaAsset' } }
+        scenes: { type: array, items: { $ref: '#/components/schemas/DramaAsset' } }
+        props: { type: array, items: { $ref: '#/components/schemas/DramaAsset' } }
+        episodes: { type: array, items: { $ref: '#/components/schemas/DramaEpisode' } }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     MCPConnectionInput:
       type: object
       required: [serviceId, name, purpose, authMode]

@@ -16,6 +16,7 @@ import (
 	"harness-admin/internal/config"
 	"harness-admin/internal/database"
 	"harness-admin/internal/departmentadmin"
+	"harness-admin/internal/drama"
 	"harness-admin/internal/httpserver"
 	"harness-admin/internal/identity"
 	"harness-admin/internal/mcpadmin"
@@ -89,6 +90,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelPolicyRepository := pgstore.NewModelPolicyRepository(db)
 	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient), modelPolicyRepository)
 	modelPolicyService := modelgateway.NewPolicyService(modelPolicyRepository)
+	modelForwarder := modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts)
+	dramaService := drama.NewService(pgstore.NewDramaRepository(db), &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder})
+	if err := dramaService.Recover(startupCtx); err != nil {
+		redisClient.Close()
+		db.Close()
+		return nil, fmt.Errorf("恢复漫剧解析任务失败: %w", err)
+	}
 	mcpUpstream := mcpclient.New(cfg.MCPPrivateHosts)
 	mcpService := mcpadmin.NewService(pgstore.NewMCPRepository(db, credentialCipher), mcpUpstream)
 	mcpDeploymentRepository := pgstore.NewMCPDeploymentRepository(db)
@@ -141,8 +149,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		MCPDeploy:             mcpDeploymentService,
 		MCPConnections:        mcpConnectionService,
 		Skills:                skillService,
+		Drama:                 dramaService,
 		MCPToolCaller:         mcpUpstream,
-		GatewayForwarder:      modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts),
+		GatewayForwarder:      modelForwarder,
 		OIDCAdmin:             oidcService,
 		OIDCProvider:          oidcProviderService,
 		ConsoleURL:            cfg.ConsoleURL,

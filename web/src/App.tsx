@@ -4,6 +4,7 @@ import {
   ApartmentOutlined,
   AuditOutlined,
   DashboardOutlined,
+  VideoCameraOutlined,
   FileTextOutlined,
   IdcardOutlined,
   LogoutOutlined,
@@ -41,6 +42,7 @@ import { MCPConnectionUsagePage } from './pages/MCPConnectionUsagePage'
 import { ApplicationAccessPage } from './pages/ApplicationAccessPage'
 import { SkillsPage } from './pages/SkillsPage'
 import { SkillDetailPage } from './pages/SkillDetailPage'
+import { DramaHomePage, DramaProjectPage } from './pages/DramaPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -57,6 +59,7 @@ const menuRoutes: Record<string, string> = {
   skills: '/ai-resources/skills',
   audit: '/audit',
   settings: '/settings/organization',
+  drama: '/ai-apps/drama',
 }
 function Navigation({ items, selectedKey, onNavigate, collapsed = false }: {
   items: MenuProps['items']
@@ -72,7 +75,7 @@ function Navigation({ items, selectedKey, onNavigate, collapsed = false }: {
       inlineCollapsed={collapsed}
       triggerSubMenuAction={collapsed ? 'click' : 'hover'}
       selectedKeys={[selectedKey]}
-      defaultOpenKeys={collapsed ? [] : ['identity', 'ai-resources']}
+      defaultOpenKeys={collapsed ? [] : ['identity', 'ai-resources', 'ai-apps']}
       items={items}
       onClick={({ key }) => {
         const path = menuRoutes[key]
@@ -91,6 +94,7 @@ export function App() {
   const [messageApi, messageContext] = message.useMessage()
   const selectedMenuKey = location.pathname.startsWith('/identity/users')
     ? 'users'
+    : location.pathname.startsWith('/ai-apps/drama') ? 'drama'
     : location.pathname.startsWith('/identity/departments')
       ? 'departments'
       : location.pathname.startsWith('/identity/roles')
@@ -141,6 +145,10 @@ export function App() {
 
   if (location.pathname === '/oauth/consent') {
     return <OIDCConsentPage />
+  }
+
+  if (location.pathname.startsWith('/ai-apps/drama/projects/')) {
+    return <Routes><Route path="/ai-apps/drama/projects/:id" element={<DramaProjectPage />} /><Route path="*" element={<Navigate to="/ai-apps/drama" replace />} /></Routes>
   }
 
   const menuItems = buildMenuItems(hasPermission)
@@ -242,6 +250,7 @@ export function App() {
               <Route path="/audit" element={<PermissionPage permission="audit.event.read"><AuditPage /></PermissionPage>} />
               <Route path="/settings/organization" element={<PermissionPage permission="iam.organization.read"><OrganizationSettingsPage /></PermissionPage>} />
               <Route path="/account/security" element={<AccountSecurityPage />} />
+              <Route path="/ai-apps/drama" element={<DramaHomePage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Content>
@@ -282,6 +291,9 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
       ].filter(Boolean),
     } : null,
     { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },
+    { key: 'ai-apps', icon: <VideoCameraOutlined />, label: 'AI 应用管理', children: [
+      { key: 'drama', icon: <VideoCameraOutlined />, label: 'AI 漫剧' },
+    ] },
     hasPermission('audit.event.read') ? { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' } : null,
     hasPermission('iam.organization.read') ? { key: 'settings', icon: <SettingOutlined />, label: '企业设置' } : null,
   ].filter(Boolean) as NonNullable<MenuProps['items']>
