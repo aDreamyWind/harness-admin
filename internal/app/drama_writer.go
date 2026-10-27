@@ -25,6 +25,8 @@ type dramaForwarder interface {
 	Forward(context.Context, modelgateway.Route, []byte, bool) (*http.Response, error)
 }
 
+const dramaRequestTimeoutMS = 120000
+
 type dramaWriter struct {
 	gateway   dramaModelGateway
 	forwarder dramaForwarder
@@ -59,8 +61,13 @@ func (w *dramaWriter) Complete(ctx context.Context, organizationID, userID, mode
 	if err != nil {
 		return "", fmt.Errorf("模型调用准备失败: %w", err)
 	}
+	// 大段剧本解析通常超过供应商连接用于普通对话的短超时。
+	route := prepared.Route
+	if route.ProviderTimeoutMS < dramaRequestTimeoutMS {
+		route.ProviderTimeoutMS = dramaRequestTimeoutMS
+	}
 	started := time.Now()
-	response, callErr := w.forwarder.Forward(ctx, prepared.Route, prepared.Body, false)
+	response, callErr := w.forwarder.Forward(ctx, route, prepared.Body, false)
 	status := 0
 	if response != nil {
 		status = response.StatusCode
@@ -118,6 +125,9 @@ func (w *dramaWriter) Complete(ctx context.Context, organizationID, userID, mode
 		return "", fmt.Errorf("记录模型调用失败: %w", recordErr)
 	}
 	if callErr != nil {
+		if errors.Is(callErr, context.DeadlineExceeded) {
+			return "", errors.New("文本模型响应超时，请在项目页点击继续解析")
+		}
 		return "", fmt.Errorf("模型调用失败: %w", callErr)
 	}
 	if status < 200 || status >= 300 {

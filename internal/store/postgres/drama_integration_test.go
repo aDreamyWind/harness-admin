@@ -46,3 +46,28 @@ func TestDramaSaveAnalysisSQLAcceptsAllStages(t *testing.T) {
 		})
 	}
 }
+
+func TestDramaOverviewAndRetryQueriesAcceptParameters(t *testing.T) {
+	url := os.Getenv("HARNESS_TEST_WRITE_DATABASE_URL")
+	if url == "" {
+		t.Skip("设置 HARNESS_TEST_WRITE_DATABASE_URL 后验证 PostgreSQL 漫剧更新语句")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	repository := NewDramaRepository(pool)
+	missingID := "00000000-0000-0000-0000-000000000000"
+	_, err = repository.UpdateOverview(ctx, missingID, missingID, missingID,
+		json.RawMessage(`{"videoStyle":"国风水墨","aspectRatio":"9:16"}`))
+	if !errors.Is(err, drama.ErrNotFound) {
+		t.Fatalf("概览更新语句未正确执行: %v", err)
+	}
+	_, err = repository.RetryFailed(ctx, missingID, missingID, missingID, "writer")
+	if !errors.Is(err, drama.ErrNotFound) {
+		t.Fatalf("重试更新语句未正确执行: %v", err)
+	}
+}

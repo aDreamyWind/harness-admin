@@ -2,24 +2,22 @@ import {
   ArrowLeftOutlined, BgColorsOutlined, FileTextOutlined, RobotOutlined,
   SettingOutlined, TeamOutlined, VideoCameraOutlined,
 } from '@ant-design/icons'
-import { Button, Card, Drawer, Empty, Input, Skeleton, Tag, Typography, message } from 'antd'
+import { Button, Card, Drawer, Empty, Input, Select, Skeleton, Tag, Typography, message } from 'antd'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
-import { getDramaProject, getDramaSource, retryDramaProject, updateDramaOverview,
-  type DramaAsset, type DramaOverview, type DramaProject } from '../api/drama'
+import {
+  getDramaProject, getDramaSource, retryDramaProject, updateDramaOverview,
+  type DramaAsset, type DramaOverview, type DramaProject,
+} from '../api/drama'
 import './drama.css'
 
 const phaseNames: Record<string, string> = {
-  waiting: '等待解析', script: '编剧正在生成剧本', story: '编剧正在梳理故事',
-  assets: '美术正在整理资产', episodes: '导演正在规划分集', complete: '解析完成', failed: '解析失败',
+  waiting: '等待解析', script: '编剧正在生成剧本', story: '正在理解故事',
+  assets: '正在整理角色、场景和道具', episodes: '正在规划分集', complete: '解析完成', failed: '解析失败',
 }
-
-function statusTag(project: DramaProject) {
-  if (project.status === 'ready') return <Tag color="success">可继续创作</Tag>
-  if (project.status === 'failed') return <Tag color="error">解析失败</Tag>
-  return <Tag color="processing">{phaseNames[project.phase] ?? '解析中'}</Tag>
-}
+const stylePresets = ['电影写实', '国风水墨', '日系动漫', '三维动画', '暗黑漫画', '奇幻绘本', '美式漫画', '怀旧动画', '赛博霓虹']
+const ratioOptions = [{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }]
 
 type Section = 'overview' | 'characters' | 'scenes' | 'props' | 'episodes'
 const navItems: { key: Section; label: string; icon: ReactNode }[] = [
@@ -29,13 +27,16 @@ const navItems: { key: Section; label: string; icon: ReactNode }[] = [
   { key: 'props', label: '道具', icon: <SettingOutlined /> },
   { key: 'episodes', label: '分集', icon: <VideoCameraOutlined /> },
 ]
-const overviewFields: { key: keyof DramaOverview; label: string; multiline?: boolean }[] = [
-  { key: 'videoStyle', label: '视频风格' }, { key: 'aspectRatio', label: '画面比例' },
-  { key: 'protagonist', label: '主角' }, { key: 'genre', label: '故事类型' },
-  { key: 'synopsis', label: '故事梗概', multiline: true },
-  { key: 'background', label: '故事背景', multiline: true },
-  { key: 'setting', label: '故事设定', multiline: true },
-]
+
+function selectedAspectRatio(project: DramaProject) {
+  return ratioOptions.some((item) => item.value === project.overview?.aspectRatio) ? project.overview.aspectRatio : project.aspectRatio
+}
+
+function statusTag(project: DramaProject) {
+  if (project.status === 'ready') return <Tag color="success">可继续创作</Tag>
+  if (project.status === 'failed') return <Tag color="error">解析失败</Tag>
+  return <Tag color="processing">{phaseNames[project.phase] ?? '解析中'}</Tag>
+}
 
 export function DramaProjectPage() {
   const { id = '' } = useParams()
@@ -65,6 +66,23 @@ export function DramaProjectPage() {
     return () => window.clearInterval(timer)
   }, [id, project])
 
+  function beginEditing() {
+    if (!project) return
+    setDraft({ ...project.overview, videoStyle: project.overview?.videoStyle || project.style, aspectRatio: selectedAspectRatio(project) })
+    setEditing(true)
+  }
+  function changeDraft(key: keyof DramaOverview, value: string) {
+    setDraft((current) => ({ ...current, [key]: value }))
+  }
+  function changeSelection(key: 'videoStyle' | 'aspectRatio', value: string) {
+    if (!project) return
+    if (!editing) {
+      setDraft({ ...project.overview, videoStyle: project.overview?.videoStyle || project.style, aspectRatio: selectedAspectRatio(project), [key]: value })
+      setEditing(true)
+      return
+    }
+    changeDraft(key, value)
+  }
   async function save() {
     if (!project) return
     setSaving(true)
@@ -72,15 +90,13 @@ export function DramaProjectPage() {
     catch (error) { messageApi.error(error instanceof Error ? error.message : '保存失败') }
     finally { setSaving(false) }
   }
-
   async function retry() {
     if (!project) return
     setRetrying(true)
-    try { setProject(await retryDramaProject(project.id)); messageApi.success('已重新开始解析') }
+    try { setProject(await retryDramaProject(project.id)); messageApi.success('已从未完成的阶段继续解析') }
     catch (error) { messageApi.error(error instanceof Error ? error.message : '重新解析失败') }
     finally { setRetrying(false) }
   }
-
   async function showSource() {
     if (!project) return
     setSourceOpen(true)
@@ -92,6 +108,9 @@ export function DramaProjectPage() {
 
   const phaseIndex = project?.phase === 'script' ? 0 : project?.phase === 'story' ? 1 : project?.phase === 'assets' ? 2 : project?.phase === 'episodes' ? 3 : project?.status === 'ready' ? 4 : -1
   const assets: DramaAsset[] = project ? project[section === 'characters' || section === 'scenes' || section === 'props' ? section : 'characters'] : []
+  const overview = project?.overview ?? {}
+  const display = (key: keyof DramaOverview, fallback = '等待解析结果') => overview[key]?.trim() || fallback
+  const styleOptions = Array.from(new Set([...stylePresets, project?.style, overview.videoStyle].filter((item): item is string => Boolean(item)))).map((item) => ({ value: item, label: item }))
   function sectionCount(item: Section): number {
     if (!project || item === 'overview') return 0
     if (item === 'episodes') return project.episodes.length
@@ -100,12 +119,49 @@ export function DramaProjectPage() {
 
   return <div className="drama-workspace">
     {contextHolder}
-    <aside className="drama-workspace-sidebar"><button type="button" className="drama-back" onClick={() => navigate('/ai-apps/drama')}><ArrowLeftOutlined /> 返回 AI 漫剧</button><div className="drama-workspace-brand">漫剧创作台</div><div className="drama-workspace-nav">{navItems.map((item) => <button type="button" key={item.key} className={section === item.key ? 'active' : ''} onClick={() => setSection(item.key)}>{item.icon}<span>{item.label}</span>{project && item.key !== 'overview' && <small>{sectionCount(item.key)}</small>}</button>)}</div><div className="drama-sidebar-bottom"><span>创作流程</span><p>剧本解析 → 资产整理 → 分集创作 → 分镜生成</p></div></aside>
+    <aside className="drama-workspace-sidebar">
+      <button type="button" className="drama-back" onClick={() => navigate('/ai-apps/drama')}><ArrowLeftOutlined /> 返回 AI 漫剧</button>
+      <div className="drama-workspace-brand">漫剧创作台</div>
+      <nav className="drama-workspace-nav" aria-label="漫剧项目内容">
+        {navItems.map((item) => <button type="button" key={item.key} className={section === item.key ? 'active' : ''} onClick={() => { setSection(item.key); setEditing(false) }}>
+          {item.icon}<span>{item.label}</span>{project && item.key !== 'overview' && <small>{sectionCount(item.key)}</small>}
+        </button>)}
+      </nav>
+      <div className="drama-sidebar-bottom"><span>创作流程</span><p>剧本解析 → 资产整理 → 分集创作 → 分镜生成</p></div>
+    </aside>
     <main className="drama-workspace-main">{loading ? <Skeleton active /> : !project ? <Empty description="项目不存在" /> : <>
-      <header className="drama-workspace-header"><div><h1>{project.title}</h1><div className="drama-project-summary">{statusTag(project)}<span>{project.style}</span><span>{project.aspectRatio}</span><span>原文 {project.sourceLength.toLocaleString()} 字符</span></div></div><div className="drama-workspace-actions"><Button icon={<FileTextOutlined />} onClick={() => void showSource()}>{project.sourceMode === 'generate' ? '查看生成剧本' : '查看完整原文'}</Button></div></header>
-      {project.status !== 'ready' && <section className="drama-agent-panel"><div><RobotOutlined /><div><h2>{project.status === 'failed' ? '解析遇到问题' : '创作团队正在工作'}</h2><p>{project.status === 'failed' ? project.error : '编剧、美术和导演会依次读取故事，整理可供后续创作的项目资料。'}</p>{project.status === 'failed' && project.sourceMode === 'upload' && <Button type="primary" loading={retrying} onClick={() => void retry()}>重新解析</Button>}</div></div>{project.status !== 'failed' && <div className="drama-agent-steps">{['生成剧本', '故事理解', '资产整理', '分集规划'].map((name, index) => <span key={name} className={project.sourceMode === 'upload' && index === 0 ? 'skipped' : phaseIndex >= index ? 'done' : ''}>{index + 1}. {name}</span>)}</div>}</section>}
-      <div className="drama-section-head"><h2>{navItems.find((item) => item.key === section)?.label}</h2>{section === 'overview' && !editing && <Button onClick={() => { setDraft({ ...project.overview }); setEditing(true) }}>编辑概览</Button>}{section === 'overview' && editing && <div><Button onClick={() => setEditing(false)}>取消</Button> <Button type="primary" loading={saving} onClick={() => void save()}>保存修改</Button></div>}</div>
-      {section === 'overview' ? <div className="drama-overview-grid">{overviewFields.map((field) => <div key={field.key} className={field.multiline ? 'wide' : ''}><span>{field.label}</span>{editing ? field.multiline ? <Input.TextArea rows={4} value={draft[field.key] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /> : <Input value={draft[field.key] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} /> : <p>{project.overview?.[field.key] || (field.key === 'videoStyle' ? project.style : field.key === 'aspectRatio' ? project.aspectRatio : '等待解析结果')}</p>}</div>)}</div> : section === 'episodes' ? project.episodes.length === 0 ? <div className="drama-empty small"><Empty description="导演完成分析后，分集会出现在这里" /></div> : <div className="drama-episode-list">{project.episodes.map((episode, index) => <Card key={`${episode.title}-${index}`}><span>EPISODE {String(index + 1).padStart(2, '0')}</span><h3>{episode.title}</h3><p>{episode.synopsis}</p></Card>)}</div> : assets.length === 0 ? <div className="drama-empty small"><Empty description="美术完成分析后，相关资产会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={`${item.name}-${index}`}><div className="drama-asset-icon">{section === 'characters' ? <TeamOutlined /> : section === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p></Card>)}</div>}
+      <header className="drama-workspace-header">
+        <div><h1>{project.title}</h1><div className="drama-project-summary">{statusTag(project)}<span>{overview.videoStyle || project.style}</span><span>{selectedAspectRatio(project)}</span><span>原文 {project.sourceLength.toLocaleString()} 字符</span></div></div>
+        <Button icon={<FileTextOutlined />} onClick={() => void showSource()}>{project.sourceMode === 'generate' ? '查看生成剧本' : '查看完整原文'}</Button>
+      </header>
+      {project.status !== 'ready' && <section className="drama-agent-panel">
+        <div><RobotOutlined /><div><h2>{project.status === 'failed' ? '解析遇到问题' : '正在整理项目内容'}</h2><p>{project.status === 'failed' ? project.error : '故事理解、资产整理和分集规划会依次使用本项目的文本模型；每完成一步就保存结果。'}</p>{project.status === 'failed' && project.sourceMode === 'upload' && <Button type="primary" loading={retrying} onClick={() => void retry()}>继续解析</Button>}</div></div>
+        {project.status !== 'failed' && <div className="drama-agent-steps">{['生成剧本', '故事理解', '资产整理', '分集规划'].map((name, index) => <span key={name} className={project.sourceMode === 'upload' && index === 0 ? 'skipped' : phaseIndex > index ? 'done' : phaseIndex === index ? 'current' : ''}>{name}</span>)}</div>}
+      </section>}
+
+      {section === 'overview' ? <section className="drama-overview" aria-label="剧本概览内容">
+        <div className="drama-overview-toolbar">
+          <div className="drama-overview-controls">
+            <label><span>视频风格</span><Select value={editing ? draft.videoStyle : display('videoStyle', project.style)} options={styleOptions} onChange={(value) => changeSelection('videoStyle', value)} /></label>
+            <label><span>画面比例</span><Select value={editing ? draft.aspectRatio : selectedAspectRatio(project)} options={ratioOptions} onChange={(value) => changeSelection('aspectRatio', value)} /></label>
+          </div>
+          <div className="drama-overview-actions">{editing ? <><Button onClick={() => setEditing(false)}>取消</Button><Button type="primary" loading={saving} onClick={() => void save()}>保存修改</Button></> : <Button onClick={beginEditing}>编辑概览</Button>}</div>
+        </div>
+        <article className="drama-synopsis-card">
+          <span className="drama-field-label">故事梗概</span>
+          {editing ? <Input.TextArea autoSize={{ minRows: 5, maxRows: 12 }} value={draft.synopsis ?? ''} onChange={(event) => changeDraft('synopsis', event.target.value)} /> : <p className="drama-synopsis-text">{display('synopsis')}</p>}
+          <div className="drama-story-facts">
+            <div><span className="drama-field-label">主角</span>{editing ? <Input value={draft.protagonist ?? ''} onChange={(event) => changeDraft('protagonist', event.target.value)} /> : <strong>{display('protagonist')}</strong>}</div>
+            <div><span className="drama-field-label">故事类型</span>{editing ? <Input value={draft.genre ?? ''} onChange={(event) => changeDraft('genre', event.target.value)} /> : <strong>{display('genre')}</strong>}</div>
+          </div>
+        </article>
+        <div className="drama-overview-panels">
+          {([{ key: 'background', label: '故事背景' }, { key: 'setting', label: '故事设定' }] as const).map((field) => <article key={field.key} className="drama-overview-panel"><span className="drama-field-label">{field.label}</span>{editing ? <Input.TextArea autoSize={{ minRows: 5, maxRows: 12 }} value={draft[field.key] ?? ''} onChange={(event) => changeDraft(field.key, event.target.value)} /> : <p>{display(field.key)}</p>}</article>)}
+        </div>
+      </section> : <>
+        <div className="drama-section-head"><h2>{navItems.find((item) => item.key === section)?.label}</h2></div>
+        {section === 'episodes' ? project.episodes.length === 0 ? <div className="drama-empty"><Empty description="导演完成分析后，分集会出现在这里" /></div> : <div className="drama-episode-list">{project.episodes.map((episode, index) => <Card key={`${episode.title}-${index}`}><span>第 {index + 1} 集</span><h3>{episode.title}</h3><p>{episode.synopsis}</p></Card>)}</div> : assets.length === 0 ? <div className="drama-empty"><Empty description="资产整理完成后，内容会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={`${item.name}-${index}`}><div className="drama-asset-icon">{section === 'characters' ? <TeamOutlined /> : section === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p></Card>)}</div>}
+      </>}
     </>}</main>
     <Drawer title={project?.sourceMode === 'generate' ? '生成剧本' : '完整原文'} open={sourceOpen} onClose={() => setSourceOpen(false)} width={760}>{sourceLoading ? <Skeleton active /> : <pre className="drama-source-text">{sourceText}</pre>}</Drawer>
   </div>

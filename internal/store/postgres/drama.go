@@ -102,7 +102,7 @@ func (r *DramaRepository) Get(ctx context.Context, organizationID, ownerID, id s
 
 func (r *DramaRepository) RetryFailed(ctx context.Context, organizationID, ownerID, id, modelCode string) (drama.Project, error) {
 	return scanDrama(r.db.QueryRow(ctx, `UPDATE drama_projects SET status='queued', phase='waiting',
-		error_message='', model_code=$4, overview='{}'::jsonb, characters='[]'::jsonb,
+		error_message='', model_code=$4, characters='[]'::jsonb,
 		scenes='[]'::jsonb, props='[]'::jsonb, episodes='[]'::jsonb, updated_at=NOW()
 		WHERE organization_id=$1 AND owner_id=$2 AND id=$3 AND status='failed' AND source_mode='upload'
 		RETURNING `+dramaColumns, organizationID, ownerID, id, modelCode))
@@ -153,7 +153,10 @@ func (r *DramaRepository) FailAnalysis(ctx context.Context, organizationID, owne
 }
 
 func (r *DramaRepository) UpdateOverview(ctx context.Context, organizationID, ownerID, id string, overview json.RawMessage) (drama.Project, error) {
-	return scanDrama(r.db.QueryRow(ctx, `UPDATE drama_projects SET overview=$4::jsonb, updated_at=NOW()
+	return scanDrama(r.db.QueryRow(ctx, `UPDATE drama_projects SET overview=$4::jsonb,
+		style=COALESCE(NULLIF($4::jsonb->>'videoStyle',''), style),
+		aspect_ratio=COALESCE(NULLIF($4::jsonb->>'aspectRatio',''), aspect_ratio),
+		updated_at=NOW()
 		WHERE organization_id=$1 AND owner_id=$2 AND id=$3 RETURNING `+dramaColumns,
 		organizationID, ownerID, id, overview))
 }

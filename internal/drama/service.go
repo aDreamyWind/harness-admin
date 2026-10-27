@@ -276,12 +276,18 @@ func (s *Service) UpdateOverview(ctx context.Context, organizationID, ownerID, i
 			}
 		}
 	}
+	if style, ok := value["videoStyle"].(string); ok && utf8.RuneCountInString(style) > 80 {
+		return Project{}, ErrInvalidInput
+	}
+	if ratio, ok := value["aspectRatio"].(string); ok && ratio != "" && ratio != "9:16" && ratio != "16:9" {
+		return Project{}, ErrInvalidInput
+	}
 	return s.repository.UpdateOverview(ctx, organizationID, ownerID, id, overview)
 }
 
 // Analyze 在后台顺序运行三个独立的创作阶段；每一阶段完成后立即保存，供工作台刷新查看。
 func (s *Service) Analyze(project Project) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	if project.SourceMode == "generate" {
 		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", "script", nil); err != nil {
@@ -322,6 +328,10 @@ func (s *Service) Analyze(project Project) error {
 		{"episodes", "你是漫剧导演。根据提供的原文段落规划分集，返回严格 JSON 对象，键 episodes，值为对象数组；对象键 title、synopsis。最多 8 集，未覆盖的后续剧情不得编造。\n" + base},
 	}
 	for _, step := range steps {
+		// 上传项目重试时沿用已经保存的完整概览，避免再次支付故事理解调用。
+		if step.phase == "story" && project.SourceMode == "upload" && validateStage("story", project.Overview) == nil {
+			continue
+		}
 		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", step.phase, nil); err != nil {
 			return s.fail(project, err)
 		}

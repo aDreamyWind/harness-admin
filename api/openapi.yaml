@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.27.1
+  version: 0.27.2
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -111,7 +111,7 @@ paths:
   /ai-drama/projects/{id}/retry:
     post:
       summary: 重新解析本人上传且解析失败的漫剧项目
-      description: 复用数据库中保存的完整原文和当前用户的文本模型配置；重置旧解析结果并重新排队。AI 生成剧本项目暂不支持重试。
+      description: 复用数据库中保存的完整原文和当前用户的文本模型配置；保留已完成的故事概览，从后续阶段继续。AI 生成剧本项目暂不支持重试。
       operationId: retryDramaProject
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
@@ -2949,8 +2949,8 @@ components:
     DramaOverview:
       type: object
       properties:
-        videoStyle: { type: string }
-        aspectRatio: { type: string }
+        videoStyle: { type: string, maxLength: 80 }
+        aspectRatio: { type: string, enum: ['9:16', '16:9', ''] }
         protagonist: { type: string }
         genre: { type: string }
         synopsis: { type: string }

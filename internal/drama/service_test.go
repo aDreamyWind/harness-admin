@@ -38,7 +38,6 @@ func (r *fakeRepository) RetryFailed(_ context.Context, _, _, _, modelCode strin
 		return Project{}, ErrNotFound
 	}
 	r.project.Status, r.project.Phase, r.project.Error, r.project.ModelCode = "queued", "waiting", "", modelCode
-	r.project.Overview = json.RawMessage(`{}`)
 	r.project.Characters, r.project.Scenes, r.project.Props, r.project.Episodes = json.RawMessage(`[]`), json.RawMessage(`[]`), json.RawMessage(`[]`), json.RawMessage(`[]`)
 	return r.project, nil
 }
@@ -189,7 +188,7 @@ func TestSaveSettingsValidatesModelTypes(t *testing.T) {
 func TestRetryFailedUploadReusesSavedSource(t *testing.T) {
 	id := "b6e6da1c-7c27-4f72-babf-34a7c4e19617"
 	repo := &fakeRepository{
-		project:  Project{ID: id, Status: "failed", SourceMode: "upload", SourceText: "已保存的完整原文", Error: "旧错误", ModelCode: "old"},
+		project:  Project{ID: id, Status: "failed", SourceMode: "upload", SourceText: "已保存的完整原文", Error: "旧错误", ModelCode: "old", Overview: json.RawMessage(`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"阿青","genre":"奇幻","synopsis":"寻找故乡","background":"古代","setting":"画中世界"}`)},
 		settings: Settings{TextModelCode: "writer"},
 	}
 	service := NewService(repo, &fakeWriter{})
@@ -197,7 +196,7 @@ func TestRetryFailedUploadReusesSavedSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Status != "queued" || project.Phase != "waiting" || project.SourceText != "已保存的完整原文" || project.ModelCode != "writer" || project.Error != "" {
+	if project.Status != "queued" || project.Phase != "waiting" || project.SourceText != "已保存的完整原文" || project.ModelCode != "writer" || project.Error != "" || len(project.Overview) == 0 {
 		t.Fatalf("重新解析未复用原文或清除旧状态: %+v", project)
 	}
 	if _, err := service.Retry(context.Background(), "org", "user", id); !errors.Is(err, ErrRetryNotAllowed) {
@@ -206,5 +205,36 @@ func TestRetryFailedUploadReusesSavedSource(t *testing.T) {
 	repo.project.Status, repo.project.SourceMode = "failed", "generate"
 	if _, err := service.Retry(context.Background(), "org", "user", id); !errors.Is(err, ErrRetryNotAllowed) {
 		t.Fatalf("AI 生成剧本项目不应直接重新解析: %v", err)
+	}
+}
+
+func TestAnalyzeRetrySkipsCompletedOverview(t *testing.T) {
+	repo := &fakeRepository{project: Project{
+		ID: "b6e6da1c-7c27-4f72-babf-34a7c4e19617", OrganizationID: "org", OwnerID: "user",
+		Title: "画中人", SourceMode: "upload", SourceText: "完整原文", ModelCode: "writer",
+		Status: "queued", Overview: json.RawMessage(`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"阿青","genre":"奇幻","synopsis":"寻找故乡","background":"古代","setting":"画中世界"}`),
+	}}
+	writer := &fakeWriter{replies: []string{
+		`{"characters":[{"name":"阿青","description":"画师"}],"scenes":[],"props":[]}`,
+		`{"episodes":[{"title":"第一集","synopsis":"启程"}]}`,
+	}}
+	if err := NewService(repo, writer).Analyze(repo.project); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.prompts) != 2 || len(repo.stages) == 0 || repo.stages[0] != "assets" {
+		t.Fatalf("重试重复执行了故事概览阶段: 调用 %d 次，阶段 %v", len(writer.prompts), repo.stages)
+	}
+}
+
+func TestUpdateOverviewValidatesSelectionFields(t *testing.T) {
+	repo := &fakeRepository{project: Project{ID: "b6e6da1c-7c27-4f72-babf-34a7c4e19617"}}
+	service := NewService(repo, &fakeWriter{})
+	for _, value := range []json.RawMessage{
+		json.RawMessage(`{"aspectRatio":"1:1"}`),
+		json.RawMessage(`{"videoStyle":"` + strings.Repeat("风", 81) + `"}`),
+	} {
+		if _, err := service.UpdateOverview(context.Background(), "org", "user", repo.project.ID, value); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("无效选择项应被拒绝: %s %v", value, err)
+		}
 	}
 }
