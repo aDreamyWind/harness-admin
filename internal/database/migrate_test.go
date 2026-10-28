@@ -70,8 +70,8 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 	if err := freshPool.QueryRow(ctx, `SELECT COUNT(*) FROM goose_db_version WHERE is_applied AND version_id > 0`).Scan(&appliedCount); err != nil {
 		t.Fatalf("读取基线执行次数失败: %v", err)
 	}
-	if appliedCount != 14 {
-		t.Fatalf("全新数据库执行了 %d 个迁移，预期执行基线及 21～33 号增量迁移", appliedCount)
+	if appliedCount != 18 {
+		t.Fatalf("全新数据库执行了 %d 个迁移，预期执行基线及 21～37 号增量迁移", appliedCount)
 	}
 
 	legacyConfig, err := pgx.ParseConfig(legacyURL)

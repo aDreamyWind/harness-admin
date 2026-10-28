@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harness Admin API
-  version: 0.27.3
+  version: 0.28.0
   description: Harness 企业控制面 HTTP API。
 servers:
   - url: /api/v1
@@ -128,6 +128,119 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 项目状态不允许重试，或当前用户未配置可用文本模型。 }
+  /ai-drama/projects/{id}/source/range:
+    get:
+      summary: 按 Unicode 字符位置分页读取不可编辑的完整原文
+      operationId: getDramaSourceRange
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: start, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 12000, default: 12000 } }
+      responses:
+        '200':
+          description: 原文片段及全篇字符数；终点位置不包含在片段内。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaSourceRange' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/batches:
+    get:
+      summary: 查询当前用户项目的剧本解析批次
+      operationId: listDramaBatches
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 按批次编号升序排列。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DramaBatch' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: 根据起点方式创建待解析批次
+      description: 服务端自动建议不超过五万字的终点；也可提交手动终点。当前只保存原文区间，不启动 AI 剧集生成。
+      operationId: createDramaBatch
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaBatchSelection' }
+      responses:
+        '201':
+          description: 已保存的批次。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaBatch' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: 概览尚未完成。 }
+  /ai-drama/projects/{id}/batches/suggest:
+    get:
+      summary: 按选定起点建议五万字内的最近完整边界
+      operationId: suggestDramaBatch
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: mode, in: query, required: true, schema: { type: string, enum: [beginning, previous, manual] } }
+        - { name: previousBatchId, in: query, schema: { type: string, format: uuid } }
+        - { name: startOffset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: 起止位置及边界来源，终点不超过起点后五万字符。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaBatchSuggestion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 概览尚未完成。 }
+  /ai-drama/projects/{id}/batches/{batchId}/range:
+    patch:
+      summary: 修改批次的原文范围
+      description: 原文不会更改；基于 revision 乐观锁保存，依赖该批次的后续批次会标记为范围需核对。
+      operationId: updateDramaBatchRange
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaBatchRangeChange' }
+      responses:
+        '200':
+          description: 更新后的批次。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaBatch' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 批次版本已变化，请刷新后重试。 }
   /ai-drama/projects/{id}/overview:
     put:
       summary: 修改漫剧项目概览
@@ -2966,6 +3079,52 @@ components:
       properties:
         title: { type: string }
         synopsis: { type: string }
+    DramaSourceRange:
+      type: object
+      required: [startOffset, endOffset, totalLength, text]
+      properties:
+        startOffset: { type: integer, minimum: 0 }
+        endOffset: { type: integer, minimum: 0 }
+        totalLength: { type: integer, minimum: 1 }
+        text: { type: string }
+    DramaBatchSelection:
+      type: object
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [beginning, previous, manual] }
+        previousBatchId: { type: string, format: uuid, description: 承接已有批次时必填。 }
+        startOffset: { type: integer, minimum: 0, description: 手动选择起点时必填。 }
+        endOffset: { type: integer, minimum: 1, description: 可选的手动终点；不得超过起点后五万字符。 }
+    DramaBatchSuggestion:
+      type: object
+      required: [startOffset, endOffset, boundary]
+      properties:
+        startOffset: { type: integer, minimum: 0 }
+        endOffset: { type: integer, minimum: 1 }
+        boundary: { type: string, enum: [episode, chapter, paragraph, limit, end] }
+    DramaBatchRangeChange:
+      type: object
+      required: [startOffset, endOffset, revision]
+      properties:
+        startOffset: { type: integer, minimum: 0 }
+        endOffset: { type: integer, minimum: 1 }
+        revision: { type: integer, minimum: 1 }
+    DramaBatch:
+      type: object
+      required: [id, projectId, number, startOffset, endOffset, selectionMode, boundary, status, revision, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        number: { type: integer, minimum: 1 }
+        startOffset: { type: integer, minimum: 0 }
+        endOffset: { type: integer, minimum: 1 }
+        selectionMode: { type: string, enum: [beginning, previous, manual] }
+        previousBatchId: { type: string, format: uuid }
+        boundary: { type: string, enum: [episode, chapter, paragraph, limit, end, manual] }
+        status: { type: string, enum: [pending, stale, ready] }
+        revision: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     DramaProject:
       type: object
       required: [id, title, sourceLength, sourceMode, style, aspectRatio, modelCode, status, phase, overview, characters, scenes, props, episodes, createdAt, updatedAt]

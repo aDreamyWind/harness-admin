@@ -64,3 +64,49 @@ export const createDramaProject = (input: CreateDramaInput) => request<DramaProj
 export const updateDramaOverview = (id: string, overview: DramaOverview) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/overview`, {
   method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(overview),
 })
+
+export interface DramaSourceRange {
+  startOffset: number
+  endOffset: number
+  totalLength: number
+  text: string
+}
+export type DramaBatchMode = 'beginning' | 'previous' | 'manual'
+export interface DramaBatchSelection {
+  mode: DramaBatchMode
+  previousBatchId?: string
+  startOffset?: number
+  endOffset?: number
+}
+export interface DramaBatchSuggestion { startOffset: number; endOffset: number; boundary: 'episode' | 'chapter' | 'paragraph' | 'limit' | 'end' }
+export interface DramaBatch {
+  id: string
+  projectId: string
+  number: number
+  startOffset: number
+  endOffset: number
+  selectionMode: DramaBatchMode
+  previousBatchId?: string
+  boundary: DramaBatchSuggestion['boundary'] | 'manual'
+  status: 'pending' | 'stale' | 'ready'
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+export interface DramaBatchRangeChange { startOffset: number; endOffset: number; revision: number }
+
+export const getDramaSourceRange = (id: string, start: number, limit = 12000) =>
+  request<DramaSourceRange>(`/api/v1/ai-drama/projects/${id}/source/range?start=${start}&limit=${limit}`)
+export const listDramaBatches = (id: string) => request<DramaBatch[]>(`/api/v1/ai-drama/projects/${id}/batches`)
+export const suggestDramaBatch = (id: string, input: Omit<DramaBatchSelection, 'endOffset'>) => {
+  const query = new URLSearchParams({ mode: input.mode })
+  if (input.previousBatchId) query.set('previousBatchId', input.previousBatchId)
+  if (input.startOffset !== undefined) query.set('startOffset', String(input.startOffset))
+  return request<DramaBatchSuggestion>(`/api/v1/ai-drama/projects/${id}/batches/suggest?${query}`)
+}
+export const createDramaBatch = (id: string, input: DramaBatchSelection) => request<DramaBatch>(`/api/v1/ai-drama/projects/${id}/batches`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
+})
+export const updateDramaBatchRange = (id: string, batchId: string, input: DramaBatchRangeChange) => request<DramaBatch>(`/api/v1/ai-drama/projects/${id}/batches/${batchId}/range`, {
+  method: 'PATCH', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
+})

@@ -7,9 +7,10 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import {
-  getDramaProject, getDramaSource, retryDramaProject, updateDramaOverview,
-  type DramaAsset, type DramaOverview, type DramaProject,
+  getDramaProject, getDramaSource, listDramaBatches, retryDramaProject, updateDramaOverview,
+  type DramaAsset, type DramaBatch, type DramaOverview, type DramaProject,
 } from '../api/drama'
+import { DramaBatchWorkspace } from './DramaBatchWorkspace'
 import './drama.css'
 
 const phaseNames: Record<string, string> = {
@@ -43,6 +44,7 @@ export function DramaProjectPage() {
   const navigate = useNavigate()
   const [messageApi, contextHolder] = message.useMessage()
   const [project, setProject] = useState<DramaProject | null>(null)
+  const [batches, setBatches] = useState<DramaBatch[]>([])
   const [loading, setLoading] = useState(true)
   const [section, setSection] = useState<Section>('overview')
   const [assetSection, setAssetSection] = useState<AssetSection>('characters')
@@ -59,6 +61,12 @@ export function DramaProjectPage() {
     getDramaProject(id).then((item) => { if (alive) setProject(item) })
       .catch((error) => { if (alive) messageApi.error(error instanceof Error ? error.message : '读取项目失败') })
       .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [id, messageApi])
+  useEffect(() => {
+    let alive = true
+    listDramaBatches(id).then((items) => { if (alive) setBatches(items) })
+      .catch((error) => { if (alive) messageApi.error(error instanceof Error ? error.message : '读取剧本批次失败') })
     return () => { alive = false }
   }, [id, messageApi])
   useEffect(() => {
@@ -113,7 +121,7 @@ export function DramaProjectPage() {
   const styleOptions = Array.from(new Set([...stylePresets, project?.style, overview.videoStyle].filter((item): item is string => Boolean(item)))).map((item) => ({ value: item, label: item }))
   function sectionCount(item: Section): number {
     if (!project || item === 'overview') return 0
-    if (item === 'episodes') return project.episodes.length
+    if (item === 'episodes') return batches.length
     if (item === 'assets') return project.characters.length + project.scenes.length + project.props.length
     return 0
   }
@@ -170,7 +178,7 @@ export function DramaProjectPage() {
         <div className="drama-overview-panels">
           {([{ key: 'background', label: '故事背景' }, { key: 'setting', label: '故事设定' }] as const).map((field) => <article key={field.key} className="drama-overview-panel"><span className="drama-field-label">{field.label}</span>{editing ? <Input.TextArea autoSize={{ minRows: 5, maxRows: 12 }} value={draft[field.key] ?? ''} onChange={(event) => changeDraft(field.key, event.target.value)} /> : <p>{display(field.key)}</p>}</article>)}
         </div>
-      </section> : section === 'assets' ? <section aria-label="角色、场景、道具">
+      </section> : section === 'episodes' ? <DramaBatchWorkspace project={project} batches={batches} onBatchesChange={setBatches} /> : section === 'assets' ? <section aria-label="角色、场景、道具">
         <div className="drama-asset-tabs" role="tablist" aria-label="资产类型">
           {([{ key: 'characters', label: '角色', count: project.characters.length }, { key: 'scenes', label: '场景', count: project.scenes.length }, { key: 'props', label: '道具', count: project.props.length }] as const).map((item) =>
             <button key={item.key} type="button" role="tab" aria-selected={assetSection === item.key} className={assetSection === item.key ? 'active' : ''} onClick={() => setAssetSection(item.key)}>{item.label}<span>{item.count}</span></button>
@@ -181,7 +189,7 @@ export function DramaProjectPage() {
         </div>
       </section> : <section>
         <div className="drama-section-head"><h2>{navItems.find((item) => item.key === section)?.label}</h2></div>
-        {section === 'episodes' ? project.episodes.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，每集剧本会出现在这里" /></div> : <div className="drama-episode-list">{project.episodes.map((episode, index) => <Card key={`${episode.title}-${index}`}><span>第 {index + 1} 集</span><h3>{episode.title}</h3><p>{episode.synopsis}</p></Card>)}</div> : <div className="drama-empty"><Empty description="视频生成后，分集视频会出现在这里" /></div>}
+        <div className="drama-empty"><Empty description="视频生成后，分集视频会出现在这里" /></div>
       </section>}
     </>}</main>
     <Drawer title={project?.sourceMode === 'generate' ? '生成剧本' : '完整原文'} open={sourceOpen} onClose={() => setSourceOpen(false)} width={760}>{sourceLoading ? <Skeleton active /> : <pre className="drama-source-text">{sourceText}</pre>}</Drawer>

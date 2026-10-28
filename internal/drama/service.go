@@ -69,6 +69,11 @@ type Repository interface {
 	List(context.Context, string, string) ([]Project, error)
 	Get(context.Context, string, string, string) (Project, error)
 	GetSource(context.Context, string, string, string) (string, error)
+	GetSourceRange(context.Context, string, string, string, int, int) (SourceRange, error)
+	ListBatches(context.Context, string, string, string) ([]Batch, error)
+	GetBatch(context.Context, string, string, string, string) (Batch, error)
+	CreateBatch(context.Context, string, string, Batch) (Batch, error)
+	UpdateBatchRange(context.Context, string, string, string, string, BatchRangeChange) (Batch, error)
 	SaveAnalysis(context.Context, string, string, string, string, string, json.RawMessage) error
 	FailAnalysis(context.Context, string, string, string, string) error
 	UpdateOverview(context.Context, string, string, string, json.RawMessage) (Project, error)

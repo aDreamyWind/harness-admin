@@ -73,3 +73,68 @@
 @media (max-width: 1000px) { .drama-workflow { grid-template-columns: 1fr; } .drama-asset-grid, .drama-episode-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) { .drama-workspace { grid-template-columns: 1fr; } .drama-workspace-sidebar { min-height: auto; padding: 12px; } .drama-workspace-brand, .drama-sidebar-bottom { display: none; } .drama-workspace-nav { display: flex; overflow-x: auto; } .drama-workspace-nav button { width: auto; flex: none; } .drama-workspace-nav small { display: none; } .drama-workspace-main { padding: 25px 18px 60px; } .drama-workspace-header, .drama-overview-toolbar { align-items: flex-start; flex-direction: column; } .drama-overview-actions { align-self: flex-end; } .drama-synopsis-card { padding: 22px 20px 0; } .drama-overview-panel { padding: 22px 20px; } .drama-overview-panels, .drama-asset-grid, .drama-episode-list { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .drama-workspace * { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+.drama-batches-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.drama-batches-head p { margin: 8px 0 0; color: #7b8799; font-size: 13px; }
+.drama-batch-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.drama-batch-card { min-height: 180px; padding: 22px; border: 1px solid #dfe5ee; border-radius: 12px; background: #fff; color: #26324a; text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.drama-batch-card:hover, .drama-batch-card:focus-visible { border-color: #7391d4; box-shadow: 0 6px 20px #314e8014; outline: none; }
+.drama-batch-card > div { display: flex; align-items: center; justify-content: space-between; color: #52627e; font-size: 13px; }
+.drama-batch-card strong { display: block; margin-top: 19px; font-size: 23px; font-weight: 650; }
+.drama-batch-card p { margin: 7px 0 15px; color: #67758b; font-size: 13px; }
+.drama-batch-card small { color: #8a96a9; }
+.drama-batch-detail-head { display: flex; align-items: center; gap: 10px; margin-top: 22px; }
+.drama-batch-detail-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 13px 0 22px; }
+.drama-batch-detail-title h2 { margin: 0 0 7px; font-size: 24px; }
+.drama-batch-detail-title p { margin: 0; color: #75839a; font-size: 13px; }
+.drama-batch-result { margin-top: 18px; border-radius: 12px; }
+.drama-batch-result h3 { margin: 0 0 18px; font-size: 17px; }
+.drama-batch-result .ant-empty { padding: 28px 0 18px; }
+.drama-batch-choice-help { margin: 0 0 16px; color: #68768c; }
+.drama-batch-choices { display: grid; gap: 10px; }
+.drama-batch-choices button { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid #dfe5ee; border-radius: 9px; background: #fff; text-align: left; cursor: pointer; }
+.drama-batch-choices button:hover, .drama-batch-choices button.active { border-color: #567dcd; background: #f4f7ff; }
+.drama-batch-choices button:focus-visible { outline: 2px solid #315fbd; outline-offset: 2px; }
+.drama-batch-choices button strong { color: #293b5d; }
+.drama-batch-choices button span { color: #8590a2; font-size: 12px; }
+.drama-batch-previous { width: 100%; margin-top: 15px; }
+.drama-reader-shell { overflow: hidden; border-radius: 8px; background: #10141c; color: #dce3ef; }
+.drama-reader-topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 68px; padding: 14px 26px; border-bottom: 1px solid #ffffff16; background: #151a24; }
+.drama-reader-topbar > div { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.drama-reader-topbar strong { color: #fff; font-size: 14px; }
+.drama-reader-topbar span { color: #9da8b9; font-size: 12px; }
+.drama-reader-layout { display: grid; grid-template-columns: minmax(0, 1fr) 288px; min-height: 72vh; }
+.drama-reader-document { max-height: 76vh; padding: 0 clamp(22px, 5vw, 70px) 50px; overflow: auto; }
+.drama-reader-pagebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: 0; z-index: 3; max-width: 840px; margin: 0 auto 22px; padding: 15px 0; border-bottom: 1px solid #ffffff18; background: #10141c; color: #9eaabc; font-size: 12px; }
+.drama-reader-text { max-width: 840px; margin: auto; font-family: 'Songti SC', 'Noto Serif CJK SC', 'SimSun', serif; font-size: 16px; line-height: 2.15; }
+.drama-reader-line { position: relative; min-height: 1.6em; padding: 2px 8px 2px 58px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.drama-reader-line.selectable { cursor: text; }
+.drama-reader-line.selectable:hover { background: #ffffff0d; }
+.drama-reader-line:focus-visible { outline: 1px solid #8ba8e5; }
+.drama-reader-line mark { background: #bb814955; color: #fff0d7; }
+.drama-reader-marker { position: absolute; left: 0; top: 4px; padding: 0 5px; border-radius: 3px; font: 11px/20px 'PingFang SC', sans-serif; }
+.drama-reader-marker.start { background: #5479bd; color: #fff; }
+.drama-reader-marker.end { background: #b6794a; color: #fff; }
+.drama-reader-tools { display: flex; flex-direction: column; gap: 10px; padding: 28px 20px; border-left: 1px solid #ffffff17; background: #1b2230; }
+.drama-reader-tool-title { color: #f4f6fa; font-size: 16px; font-weight: 650; }
+.drama-reader-tools > p { margin: 0 0 10px; color: #a7b1c0; font-size: 12px; line-height: 1.6; }
+.drama-reader-tools .ant-btn { border-radius: 7px; }
+.drama-reader-range { display: grid; grid-template-columns: 55px minmax(0, 1fr); gap: 10px 7px; margin: 13px 0; padding: 15px 0; border-top: 1px solid #ffffff17; border-bottom: 1px solid #ffffff17; font-size: 12px; }
+.drama-reader-range span { color: #8e9aaa; }
+.drama-reader-range strong { color: #e7edf6; font-weight: 550; text-align: right; }
+.drama-reader-jump { display: flex; flex-wrap: wrap; gap: 8px; }
+.drama-reader-jump label { width: 100%; color: #a7b1c0; font-size: 12px; }
+.drama-reader-jump .ant-input-number { flex: 1; min-width: 110px; }
+.drama-reader-quick { display: flex; gap: 7px; }
+.drama-reader-quick .ant-btn { flex: 1; }
+.drama-reader-lock, .drama-reader-save { display: grid; gap: 13px; margin-top: auto; }
+.drama-reader-lock .ant-alert { background: #3a2d2c; border-color: #87504b; color: #ffd6cc; }
+.drama-reader-lock .ant-alert-message { color: #ffd6cc; font-size: 12px; line-height: 1.5; }
+.drama-reader-lock .ant-alert-icon { color: #e47969 !important; }
+.drama-reader-save > span { color: #96a2b4; font-size: 11px; text-align: center; }
+@media (max-width: 1100px) { .drama-batch-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .drama-batches-head, .drama-batch-detail-title { align-items: flex-start; flex-direction: column; } .drama-batch-grid { grid-template-columns: 1fr; } .drama-reader-layout { grid-template-columns: 1fr; } .drama-reader-document { max-height: 55vh; padding: 0 15px 25px; } .drama-reader-tools { border-top: 1px solid #ffffff17; border-left: 0; } .drama-reader-line { padding-left: 44px; } .drama-reader-text { font-size: 14px; } }
+
+.drama-reader-modal .ant-modal-container { padding: 0; border-radius: 10px; background: #10141c; box-shadow: 0 22px 80px #060c17a8; }
+.drama-reader-modal .ant-modal-body { padding: 0; }
+.drama-reader-pagebar .ant-btn:disabled { border-color: #ffffff2b; background: #18202e; color: #8e9aac; }

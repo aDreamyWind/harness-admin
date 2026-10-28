@@ -13,6 +13,7 @@ type fakeRepository struct {
 	settings Settings
 	stages   []string
 	failed   string
+	batches  []Batch
 }
 
 func (r *fakeRepository) GetSettings(_ context.Context, _, _ string) (Settings, error) {
@@ -43,6 +44,43 @@ func (r *fakeRepository) RetryFailed(_ context.Context, _, _, _, modelCode strin
 }
 func (r *fakeRepository) GetSource(_ context.Context, _, _, _ string) (string, error) {
 	return r.project.SourceText, nil
+}
+func (r *fakeRepository) GetSourceRange(_ context.Context, _, _, _ string, start, limit int) (SourceRange, error) {
+	source := []rune(r.project.SourceText)
+	if start > len(source) {
+		return SourceRange{}, ErrInvalidInput
+	}
+	end := min(start+limit, len(source))
+	return SourceRange{StartOffset: start, EndOffset: end, TotalLength: len(source), Text: string(source[start:end])}, nil
+}
+func (r *fakeRepository) ListBatches(_ context.Context, _, _, _ string) ([]Batch, error) {
+	return append([]Batch{}, r.batches...), nil
+}
+func (r *fakeRepository) GetBatch(_ context.Context, _, _, _, id string) (Batch, error) {
+	for _, item := range r.batches {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return Batch{}, ErrNotFound
+}
+func (r *fakeRepository) CreateBatch(_ context.Context, _, _ string, item Batch) (Batch, error) {
+	item.Number = len(r.batches) + 1
+	r.batches = append(r.batches, item)
+	return item, nil
+}
+func (r *fakeRepository) UpdateBatchRange(_ context.Context, _, _, _, id string, input BatchRangeChange) (Batch, error) {
+	for index, item := range r.batches {
+		if item.ID == id {
+			if item.Revision != input.Revision {
+				return Batch{}, ErrBatchConflict
+			}
+			item.StartOffset, item.EndOffset, item.Revision, item.Boundary = input.StartOffset, input.EndOffset, item.Revision+1, "manual"
+			r.batches[index] = item
+			return item, nil
+		}
+	}
+	return Batch{}, ErrNotFound
 }
 func (r *fakeRepository) UpdateOverview(_ context.Context, _, _, _ string, value json.RawMessage) (Project, error) {
 	r.project.Overview = value

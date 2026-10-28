@@ -45,6 +45,21 @@ func (s *dramaServiceStub) Get(context.Context, string, string, string) (drama.P
 func (s *dramaServiceStub) GetSource(context.Context, string, string, string) (string, error) {
 	return "完整原文", nil
 }
+func (s *dramaServiceStub) SourcePage(_ context.Context, _, _, _ string, start, limit int) (drama.SourceRange, error) {
+	return drama.SourceRange{StartOffset: start, EndOffset: start + 4, TotalLength: 4, Text: "完整原文"}, nil
+}
+func (s *dramaServiceStub) ListBatches(context.Context, string, string, string) ([]drama.Batch, error) {
+	return []drama.Batch{}, nil
+}
+func (s *dramaServiceStub) SuggestBatch(context.Context, string, string, string, drama.BatchSelection) (drama.BatchSuggestion, error) {
+	return drama.BatchSuggestion{StartOffset: 0, EndOffset: 4, Boundary: "end"}, nil
+}
+func (s *dramaServiceStub) CreateBatch(_ context.Context, _, _, _ string, input drama.BatchSelection) (drama.Batch, error) {
+	return drama.Batch{ID: "3a364763-e0df-4cb4-9c55-88ab0a11ff94", SelectionMode: input.Mode, StartOffset: 0, EndOffset: 4}, nil
+}
+func (s *dramaServiceStub) UpdateBatchRange(context.Context, string, string, string, string, drama.BatchRangeChange) (drama.Batch, error) {
+	return drama.Batch{ID: "3a364763-e0df-4cb4-9c55-88ab0a11ff94", Boundary: "manual"}, nil
+}
 func (s *dramaServiceStub) UpdateOverview(_ context.Context, _, _, _ string, overview json.RawMessage) (drama.Project, error) {
 	return drama.Project{Overview: overview}, nil
 }
@@ -158,4 +173,42 @@ func TestDramaRetryRequiresSessionAndCSRF(t *testing.T) {
 		t.Fatalf("重新解析失败: %d %s", response.Code, response.Body.String())
 	}
 	<-service.started
+}
+
+func TestDramaBatchEndpointsRequireSessionAndCSRF(t *testing.T) {
+	service := &dramaServiceStub{started: make(chan struct{}, 1)}
+	router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}}, Drama: service, SessionCookie: "test_session"})
+	base := "/api/v1/ai-drama/projects/b6e6da1c-7c27-4f72-babf-34a7c4e19617"
+	call := func(method, path, body string, cookie, csrf bool) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+		request.Header.Set("Content-Type", "application/json")
+		if cookie {
+			request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+		}
+		if csrf {
+			request.Header.Set("X-CSRF-Token", "csrf-token")
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	if got := call(http.MethodGet, base+"/source/range?start=0&limit=12000", "", false, false); got.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录仍可读取原文: %d", got.Code)
+	}
+	if got := call(http.MethodGet, base+"/source/range?start=bad", "", true, false); got.Code != http.StatusBadRequest {
+		t.Fatalf("无效分页参数未拒绝: %d", got.Code)
+	}
+	if got := call(http.MethodGet, base+"/source/range?start=0&limit=12000", "", true, false); got.Code != http.StatusOK {
+		t.Fatalf("分页读取失败: %d", got.Code)
+	}
+	if got := call(http.MethodPost, base+"/batches", `{"mode":"beginning"}`, true, false); got.Code != http.StatusForbidden {
+		t.Fatalf("缺少 CSRF 仍可创建批次: %d", got.Code)
+	}
+	if got := call(http.MethodPost, base+"/batches", `{"mode":"beginning"}`, true, true); got.Code != http.StatusCreated {
+		t.Fatalf("创建批次失败: %d %s", got.Code, got.Body.String())
+	}
+	if got := call(http.MethodPatch, base+"/batches/3a364763-e0df-4cb4-9c55-88ab0a11ff94/range", `{"startOffset":0,"endOffset":4,"revision":1}`, true, false); got.Code != http.StatusForbidden {
+		t.Fatalf("缺少 CSRF 仍可改批次: %d", got.Code)
+	}
 }

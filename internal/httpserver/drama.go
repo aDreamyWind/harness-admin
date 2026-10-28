@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -21,6 +22,11 @@ type DramaService interface {
 	List(context.Context, string, string) ([]drama.Project, error)
 	Get(context.Context, string, string, string) (drama.Project, error)
 	GetSource(context.Context, string, string, string) (string, error)
+	SourcePage(context.Context, string, string, string, int, int) (drama.SourceRange, error)
+	ListBatches(context.Context, string, string, string) ([]drama.Batch, error)
+	SuggestBatch(context.Context, string, string, string, drama.BatchSelection) (drama.BatchSuggestion, error)
+	CreateBatch(context.Context, string, string, string, drama.BatchSelection) (drama.Batch, error)
+	UpdateBatchRange(context.Context, string, string, string, string, drama.BatchRangeChange) (drama.Batch, error)
 	UpdateOverview(context.Context, string, string, string, json.RawMessage) (drama.Project, error)
 	Analyze(drama.Project) error
 }
@@ -122,6 +128,81 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 		ctx.Header("Cache-Control", "private, no-store")
 		httpx.OK(ctx, http.StatusOK, gin.H{"sourceText": source})
 	})
+	group.GET("/projects/:id/source/range", func(ctx *gin.Context) {
+		start, err := strconv.Atoi(ctx.DefaultQuery("start", "0"))
+		if err != nil {
+			handleDramaError(ctx, deps, drama.ErrInvalidInput)
+			return
+		}
+		limit, err := strconv.Atoi(ctx.DefaultQuery("limit", "12000"))
+		if err != nil {
+			handleDramaError(ctx, deps, drama.ErrInvalidInput)
+			return
+		}
+		session := currentSession(ctx)
+		page, err := deps.Drama.SourcePage(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), start, limit)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		ctx.Header("Cache-Control", "private, no-store")
+		httpx.OK(ctx, http.StatusOK, page)
+	})
+	group.GET("/projects/:id/batches", func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		items, err := deps.Drama.ListBatches(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, items)
+	})
+	group.GET("/projects/:id/batches/suggest", func(ctx *gin.Context) {
+		input := drama.BatchSelection{Mode: ctx.Query("mode"), PreviousBatchID: ctx.Query("previousBatchId")}
+		if raw, ok := ctx.GetQuery("startOffset"); ok {
+			start, err := strconv.Atoi(raw)
+			if err != nil {
+				handleDramaError(ctx, deps, drama.ErrInvalidInput)
+				return
+			}
+			input.StartOffset = &start
+		}
+		session := currentSession(ctx)
+		result, err := deps.Drama.SuggestBatch(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), input)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, result)
+	})
+	group.POST("/projects/:id/batches", requireCSRF(deps), func(ctx *gin.Context) {
+		var input drama.BatchSelection
+		if err := ctx.ShouldBindJSON(&input); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "批次范围格式无效")
+			return
+		}
+		session := currentSession(ctx)
+		item, err := deps.Drama.CreateBatch(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), input)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusCreated, item)
+	})
+	group.PATCH("/projects/:id/batches/:batchId/range", requireCSRF(deps), func(ctx *gin.Context) {
+		var input drama.BatchRangeChange
+		if err := ctx.ShouldBindJSON(&input); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "批次范围格式无效")
+			return
+		}
+		session := currentSession(ctx)
+		item, err := deps.Drama.UpdateBatchRange(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"), input)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, item)
+	})
 	group.PUT("/projects/:id/overview", requireCSRF(deps), func(ctx *gin.Context) {
 		var overview json.RawMessage
 		if err := ctx.ShouldBindJSON(&overview); err != nil {
@@ -144,6 +225,8 @@ func handleDramaError(ctx *gin.Context, deps Dependencies, err error) {
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_drama_project", err.Error())
 	case errors.Is(err, drama.ErrModelUnavailable):
 		httpx.Fail(ctx, http.StatusBadRequest, "drama_model_unavailable", err.Error())
+	case errors.Is(err, drama.ErrBatchNotReady), errors.Is(err, drama.ErrBatchConflict):
+		httpx.Fail(ctx, http.StatusConflict, "drama_batch_conflict", err.Error())
 	case errors.Is(err, drama.ErrRetryNotAllowed):
 		httpx.Fail(ctx, http.StatusConflict, "drama_retry_not_allowed", err.Error())
 	case errors.Is(err, drama.ErrNotFound):
