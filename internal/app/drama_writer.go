@@ -80,10 +80,13 @@ func (w *dramaWriter) Complete(ctx context.Context, organizationID, userID, mode
 		status = http.StatusBadGateway
 	}
 	var content []byte
+	responseTruncated := false
 	if callErr == nil {
 		defer response.Body.Close()
 		content, callErr = io.ReadAll(io.LimitReader(response.Body, 4*1024*1024+1))
 		if len(content) > 4*1024*1024 {
+			content = content[:4*1024*1024]
+			responseTruncated = true
 			callErr = errors.New("模型响应过大")
 		}
 	}
@@ -111,7 +114,13 @@ func (w *dramaWriter) Complete(ctx context.Context, organizationID, userID, mode
 		callErr = errors.New("模型返回的内容无法读取")
 		result = "failed"
 	}
-	recordCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	errorMessage := ""
+	if callErr != nil {
+		errorMessage = callErr.Error()
+	} else if status < 200 || status >= 300 {
+		errorMessage = fmt.Sprintf("模型供应商返回状态 %d", status)
+	}
+	recordCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	recordErr := w.gateway.RecordCall(recordCtx, modelgateway.RecordCallInput{
 		OrganizationID: organizationID, UserID: userID, DepartmentID: prepared.Caller.DepartmentID,
@@ -120,6 +129,8 @@ func (w *dramaWriter) Complete(ctx context.Context, organizationID, userID, mode
 		UpstreamModelID: prepared.Route.UpstreamModelID, Result: result, HTTPStatus: status,
 		LatencyMS: time.Since(started).Milliseconds(), PromptTokens: completion.Usage.PromptTokens,
 		CompletionTokens: completion.Usage.CompletionTokens, TotalTokens: completion.Usage.TotalTokens,
+		Source: "ai_drama", Operation: "chat", RequestBody: prepared.Body,
+		ResponseBody: content, ResponseTruncated: responseTruncated, ErrorMessage: errorMessage,
 	})
 	if recordErr != nil {
 		return "", fmt.Errorf("记录模型调用失败: %w", recordErr)

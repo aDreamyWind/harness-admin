@@ -379,6 +379,15 @@ func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
 		(input.ModelType != "chat" && input.ModelType != "image" && input.ModelType != "video") {
 		return ErrInvalidInput
 	}
+	if input.Source == "" {
+		input.Source = "model_gateway"
+	}
+	if input.Operation == "" {
+		input.Operation = input.ModelType
+	}
+	if input.Source != "model_gateway" && input.Source != "ai_drama" {
+		return ErrInvalidInput
+	}
 	if input.PromptTokens < 0 || input.CompletionTokens < 0 || input.TotalTokens < 0 {
 		return ErrInvalidInput
 	}

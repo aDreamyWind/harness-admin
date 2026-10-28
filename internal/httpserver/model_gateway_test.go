@@ -388,6 +388,10 @@ func TestChatCompletionsProxiesOpenAIResponseAndRecordsUsage(t *testing.T) {
 	if gateway.recorded.Result != "success" || gateway.recorded.TotalTokens != 8 || gateway.recorded.ModelCode != "main" {
 		t.Fatalf("调用记录不完整: %#v", gateway.recorded)
 	}
+	if gateway.recorded.Operation != "chat" || string(gateway.recorded.RequestBody) != gateway.requestBody ||
+		!strings.Contains(string(gateway.recorded.ResponseBody), `"usage"`) {
+		t.Fatal("聊天调用未记录原始请求和响应")
+	}
 }
 
 func TestChatCompletionsAcceptsOIDCUserAccessToken(t *testing.T) {
@@ -431,6 +435,10 @@ func TestChatCompletionsPreservesStreamingToolCallsAndUsage(t *testing.T) {
 	}
 	if !strings.Contains(gateway.requestBody, `"image_url"`) {
 		t.Fatalf("多模态请求未传入网关: %s", gateway.requestBody)
+	}
+	if !strings.Contains(string(gateway.recorded.ResponseBody), `"tool_calls"`) ||
+		!strings.Contains(string(gateway.recorded.ResponseBody), "data: [DONE]") {
+		t.Fatal("流式响应未完整写入调用日志")
 	}
 }
 
@@ -488,6 +496,9 @@ func TestMediaGatewayCreatesAndQueriesScopedVideoTask(t *testing.T) {
 		if response.Code != http.StatusOK || gateway.recorded.ModelType != test.operation {
 			t.Fatalf("%s 调用失败: status=%d type=%s body=%s", test.path, response.Code, gateway.recorded.ModelType, response.Body.String())
 		}
+		if gateway.recorded.Operation != test.operation || string(gateway.recorded.RequestBody) != test.body || len(gateway.recorded.ResponseBody) == 0 {
+			t.Fatalf("%s 缺少模型调用请求或响应日志", test.path)
+		}
 		if test.operation == "video" {
 			if gateway.videoTaskInput.UpstreamTaskID != "upstream-task" || strings.Contains(response.Body.String(), "upstream-task") ||
 				!strings.Contains(response.Body.String(), gateway.videoTask.ID) {
@@ -502,6 +513,11 @@ func TestMediaGatewayCreatesAndQueriesScopedVideoTask(t *testing.T) {
 	if response.Code != http.StatusOK || forwarder.queriedTaskID != "upstream-task" ||
 		strings.Contains(response.Body.String(), "upstream-task") || !strings.Contains(response.Body.String(), gateway.videoTask.ID) {
 		t.Fatalf("视频任务查询失败: status=%d upstream=%s body=%s", response.Code, forwarder.queriedTaskID, response.Body.String())
+	}
+	if gateway.recorded.Operation != "video_task_query" ||
+		!strings.Contains(string(gateway.recorded.RequestBody), "upstream-task") ||
+		!strings.Contains(string(gateway.recorded.ResponseBody), "upstream-task") {
+		t.Fatal("视频任务查询未记录原始请求和响应")
 	}
 }
 
@@ -521,7 +537,8 @@ func TestMediaGatewayNormalizesDashScopeEventError(t *testing.T) {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		if response.Code != http.StatusForbidden || !strings.HasPrefix(response.Header().Get("Content-Type"), "application/json") ||
-			!strings.Contains(response.Body.String(), `"code":"AccessDenied"`) || gateway.recorded.ErrorCode != "AccessDenied" {
+			!strings.Contains(response.Body.String(), `"code":"AccessDenied"`) || gateway.recorded.ErrorCode != "AccessDenied" ||
+			!strings.Contains(string(gateway.recorded.ResponseBody), "event:error") {
 			t.Fatalf("%s 错误未正确转换: status=%d contentType=%s body=%s record=%#v",
 				test.path, response.Code, response.Header().Get("Content-Type"), response.Body.String(), gateway.recorded)
 		}

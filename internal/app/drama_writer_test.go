@@ -57,6 +57,11 @@ func TestDramaWriterRecordsGatewayCall(t *testing.T) {
 	if gateway.record.RequestID == "" || gateway.record.TotalTokens != 20 || gateway.record.Result != "success" || gateway.record.UserID != "user" {
 		t.Fatalf("模型调用未正确计入网关: %+v", gateway.record)
 	}
+	if gateway.record.Source != "ai_drama" || gateway.record.Operation != "chat" ||
+		!strings.Contains(string(gateway.record.RequestBody), "请总结故事") ||
+		!strings.Contains(string(gateway.record.ResponseBody), `"prompt_tokens":12`) {
+		t.Fatal("漫剧调用没有保存发往供应商的请求和原始响应")
+	}
 }
 
 func TestDramaWriterReportsTimeoutClearly(t *testing.T) {
@@ -67,7 +72,8 @@ func TestDramaWriterReportsTimeoutClearly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "文本模型响应超时") {
 		t.Fatalf("超时应提示可继续解析: %v", err)
 	}
-	if gateway.record.Result != "failed" {
-		t.Fatalf("超时调用应记录失败: %+v", gateway.record)
+	if gateway.record.Result != "failed" || gateway.record.ErrorMessage != context.DeadlineExceeded.Error() ||
+		!strings.Contains(string(gateway.record.RequestBody), "请总结故事") {
+		t.Fatal("超时调用应记录完整请求和错误")
 	}
 }

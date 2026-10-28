@@ -187,27 +187,33 @@ type CallPage struct {
 }
 
 type RecordCallInput struct {
-	OrganizationID   string
-	APIKeyID         string
-	UserID           string
-	DepartmentID     string
-	AuthType         string
-	ModelID          string
-	ProviderID       string
-	RequestID        string
-	ModelCode        string
-	ModelType        string
-	UpstreamModelID  string
-	Streaming        bool
-	Result           string
-	HTTPStatus       int
-	LatencyMS        int64
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	UsageReported    bool
-	ErrorCode        string
-	SourceIP         string
+	OrganizationID    string
+	APIKeyID          string
+	UserID            string
+	DepartmentID      string
+	AuthType          string
+	ModelID           string
+	ProviderID        string
+	RequestID         string
+	ModelCode         string
+	ModelType         string
+	UpstreamModelID   string
+	Streaming         bool
+	Result            string
+	HTTPStatus        int
+	LatencyMS         int64
+	PromptTokens      int
+	CompletionTokens  int
+	TotalTokens       int
+	UsageReported     bool
+	ErrorCode         string
+	SourceIP          string
+	Source            string
+	Operation         string
+	RequestBody       []byte
+	ResponseBody      []byte
+	ResponseTruncated bool
+	ErrorMessage      string
 }
 
 type UsageQuery struct {

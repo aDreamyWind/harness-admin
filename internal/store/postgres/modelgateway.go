@@ -292,6 +292,9 @@ func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgate
 	if err != nil {
 		return err
 	}
+	if err := insertModelCallLog(ctx, tx, callID, input); err != nil {
+		return err
+	}
 	if input.AuthType == "api_key" {
 		_, err = tx.Exec(ctx, `
 		INSERT INTO model_gateway_monthly_usage (
@@ -388,6 +391,17 @@ func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgate
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func insertModelCallLog(ctx context.Context, tx pgx.Tx, callID string, input modelgateway.RecordCallInput) error {
+	_, err := tx.Exec(ctx, `INSERT INTO model_call_logs
+		(call_id, organization_id, source, operation, request_body, response_body, response_truncated, error_message)
+		VALUES ($1,$2,$3,$4,COALESCE($5::bytea,''::bytea),COALESCE($6::bytea,''::bytea),$7,$8)`, callID, input.OrganizationID, input.Source,
+		input.Operation, input.RequestBody, input.ResponseBody, input.ResponseTruncated, input.ErrorMessage)
+	if err != nil {
+		return fmt.Errorf("保存模型调用正文失败: %w", err)
+	}
+	return nil
 }
 
 func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgateway.CallQuery) (modelgateway.CallPage, error) {
