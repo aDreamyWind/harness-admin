@@ -7,10 +7,6 @@
 .drama-workspace-nav button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 43px; padding: 0 13px; border: 0; border-radius: 9px; background: transparent; color: #bbbdd0; text-align: left; cursor: pointer; }
 .drama-workspace-nav button.active { background: #ffffff19; color: #fff; }
 .drama-workspace-nav button:hover { background: #ffffff11; color: #fff; }
-.drama-workspace-nav small { margin-left: auto; color: #999bb6; }
-.drama-sidebar-bottom { margin-top: auto; padding: 21px 12px 0; border-top: 1px solid #ffffff1a; }
-.drama-sidebar-bottom span { color: #c9c9da; font-size: 12px; }
-.drama-sidebar-bottom p { color: #8587a5; font-size: 11px; line-height: 1.7; }
 .drama-workspace-main { width: 100%; min-width: 0; padding: 36px clamp(28px, 3vw, 56px) 80px; }
 .drama-workspace-header { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid #e2e7ef; }
 .drama-workspace-header h1 { margin: 0; font-size: 26px; letter-spacing: -.02em; line-height: 1.3; }
@@ -71,7 +67,7 @@
 .drama-episode-list .ant-card span { color: #5977b8; font-size: 12px; font-weight: 700; }
 .drama-episode-list h3 { margin: 16px 0 8px; }
 @media (max-width: 1000px) { .drama-workflow { grid-template-columns: 1fr; } .drama-asset-grid, .drama-episode-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 700px) { .drama-workspace { grid-template-columns: 1fr; } .drama-workspace-sidebar { min-height: auto; padding: 12px; } .drama-workspace-brand, .drama-sidebar-bottom { display: none; } .drama-workspace-nav { display: flex; overflow-x: auto; } .drama-workspace-nav button { width: auto; flex: none; } .drama-workspace-nav small { display: none; } .drama-workspace-main { padding: 25px 18px 60px; } .drama-workspace-header, .drama-overview-toolbar { align-items: flex-start; flex-direction: column; } .drama-overview-actions { align-self: flex-end; } .drama-synopsis-card { padding: 22px 20px 0; } .drama-overview-panel { padding: 22px 20px; } .drama-overview-panels, .drama-asset-grid, .drama-episode-list { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .drama-workspace { grid-template-columns: 1fr; } .drama-workspace-sidebar { min-height: auto; padding: 12px; } .drama-workspace-brand { display: none; } .drama-workspace-nav { display: flex; overflow-x: auto; } .drama-workspace-nav button { width: auto; flex: none; } .drama-workspace-main { padding: 25px 18px 60px; } .drama-workspace-header, .drama-overview-toolbar { align-items: flex-start; flex-direction: column; } .drama-overview-actions { align-self: flex-end; } .drama-synopsis-card { padding: 22px 20px 0; } .drama-overview-panel { padding: 22px 20px; } .drama-overview-panels, .drama-asset-grid, .drama-episode-list { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .drama-workspace * { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
 .drama-batches-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }

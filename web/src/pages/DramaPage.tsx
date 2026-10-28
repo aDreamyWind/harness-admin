@@ -127,13 +127,6 @@ export function DramaProjectPage() {
   const overview = project?.overview ?? {}
   const display = (key: keyof DramaOverview, fallback = '等待解析结果') => overview[key]?.trim() || fallback
   const styleOptions = Array.from(new Set([...stylePresets, project?.style, overview.videoStyle].filter((item): item is string => Boolean(item)))).map((item) => ({ value: item, label: item }))
-  function sectionCount(item: Section): number {
-    if (!project || item === 'overview') return 0
-    if (item === 'episodes') return batches.length
-    if (item === 'assets') return project.characters.length + project.scenes.length + project.props.length
-    return 0
-  }
-
   return <div className="drama-workspace">
     {contextHolder}
     <aside className="drama-workspace-sidebar">
@@ -141,10 +134,9 @@ export function DramaProjectPage() {
       <div className="drama-workspace-brand">漫剧创作台</div>
       <nav className="drama-workspace-nav" aria-label="漫剧项目内容">
         {navItems.map((item) => <button type="button" key={item.key} className={section === item.key ? 'active' : ''} onClick={() => { setSection(item.key); setEditing(false) }}>
-          {item.icon}<span>{item.label}</span>{project && item.key !== 'overview' && <small>{sectionCount(item.key)}</small>}
+          {item.icon}<span>{item.label}</span>
         </button>)}
       </nav>
-      <div className="drama-sidebar-bottom"><span>创作流程</span><p>概览解析 → 剧本解析 → 分镜创作</p></div>
     </aside>
     <main className="drama-workspace-main">{loading ? <Skeleton active /> : !project ? <Empty description="项目不存在" /> : <>
       <header className="drama-workspace-header">
