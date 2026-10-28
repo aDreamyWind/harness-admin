@@ -433,15 +433,27 @@ func (s *Service) overviewSourceContext(ctx context.Context, project Project, so
 		if err != nil {
 			return "", "", fmt.Errorf("概览第 %d 段事实格式无效: %w", len(extracts)+1, err)
 		}
-		var item struct {
-			Events          string `json:"events"`
-			Characters      string `json:"characters"`
-			BackgroundFacts string `json:"backgroundFacts"`
-			SettingFacts    string `json:"settingFacts"`
-			Unresolved      string `json:"unresolved"`
+		var facts map[string]json.RawMessage
+		if err := json.Unmarshal(data, &facts); err != nil {
+			return "", "", fmt.Errorf("概览第 %d 段事实格式无效: %w", len(extracts)+1, err)
 		}
-		if json.Unmarshal(data, &item) != nil || strings.TrimSpace(item.Events) == "" {
-			return "", "", fmt.Errorf("概览第 %d 段缺少事件事实", len(extracts)+1)
+		hasFact := false
+		for _, value := range facts {
+			fact := strings.TrimSpace(string(value))
+			if fact != "" && fact != `""` && fact != "null" && fact != "[]" && fact != "{}" {
+				hasFact = true
+				break
+			}
+		}
+		if !hasFact {
+			// 单段模型没有提取到事实时，保留该段首尾原文供最终概览参考，避免整项任务被空结果中断。
+			chunk := source[start:end]
+			excerpt := string(chunk[:min(len(chunk), 2000)])
+			if len(chunk) > 4000 {
+				excerpt += "\n……\n" + string(chunk[len(chunk)-2000:])
+			}
+			extracts = append(extracts, fmt.Sprintf("原文字符 %d—%d（事实提取为空，以下为原文节选）：%s", start+1, end, excerpt))
+			continue
 		}
 		extracts = append(extracts, fmt.Sprintf("原文字符 %d—%d：%s", start+1, end, string(data)))
 	}

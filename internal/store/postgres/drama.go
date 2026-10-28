@@ -51,18 +51,33 @@ func (r *DramaRepository) SaveSettings(ctx context.Context, item drama.Settings)
 }
 
 const dramaColumns = `id, organization_id, owner_id, title, source_name, source_text, source_length, source_mode,
- style, aspect_ratio, model_code, status, phase, error_message, overview, characters, scenes, props, episodes, created_at, updated_at`
+ style, aspect_ratio, model_code, status, phase, error_message, protagonist, genre, synopsis, background, setting, characters, scenes, props, episodes, created_at, updated_at`
 
 func scanDrama(row pgx.Row) (drama.Project, error) {
 	var item drama.Project
+	var protagonist, genre, synopsis, background, setting string
 	err := row.Scan(&item.ID, &item.OrganizationID, &item.OwnerID, &item.Title, &item.SourceName,
 		&item.SourceText, &item.SourceLength, &item.SourceMode, &item.Style, &item.AspectRatio, &item.ModelCode,
-		&item.Status, &item.Phase, &item.Error, &item.Overview, &item.Characters, &item.Scenes,
-		&item.Props, &item.Episodes, &item.CreatedAt, &item.UpdatedAt)
+		&item.Status, &item.Phase, &item.Error, &protagonist, &genre, &synopsis, &background, &setting,
+		&item.Characters, &item.Scenes, &item.Props, &item.Episodes, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return drama.Project{}, drama.ErrNotFound
 	}
-	return item, err
+	if err != nil {
+		return drama.Project{}, err
+	}
+	item.Overview = json.RawMessage(`{}`)
+	if protagonist != "" || genre != "" || synopsis != "" || background != "" || setting != "" {
+		item.Overview, err = json.Marshal(map[string]string{
+			"videoStyle": item.Style, "aspectRatio": item.AspectRatio,
+			"protagonist": protagonist, "genre": genre, "synopsis": synopsis,
+			"background": background, "setting": setting,
+		})
+		if err != nil {
+			return drama.Project{}, fmt.Errorf("构造漫剧概览失败: %w", err)
+		}
+	}
+	return item, nil
 }
 
 func (r *DramaRepository) Create(ctx context.Context, item drama.Project) (drama.Project, error) {
@@ -125,7 +140,11 @@ func (r *DramaRepository) GetSource(ctx context.Context, organizationID, ownerID
 }
 
 const saveDramaAnalysisSQL = `UPDATE drama_projects SET status=$4::text, phase=$5::text,
-		overview=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN overview || $6::jsonb ELSE overview END,
+		protagonist=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->>'protagonist','') ELSE protagonist END,
+		genre=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->>'genre','') ELSE genre END,
+		synopsis=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->>'synopsis','') ELSE synopsis END,
+		background=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->>'background','') ELSE background END,
+		setting=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->>'setting','') ELSE setting END,
 		characters=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'characters','[]'::jsonb) ELSE characters END,
 		scenes=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'scenes','[]'::jsonb) ELSE scenes END,
 		props=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'props','[]'::jsonb) ELSE props END,
@@ -160,7 +179,12 @@ func (r *DramaRepository) FailAnalysis(ctx context.Context, organizationID, owne
 }
 
 func (r *DramaRepository) UpdateOverview(ctx context.Context, organizationID, ownerID, id string, overview json.RawMessage) (drama.Project, error) {
-	return scanDrama(r.db.QueryRow(ctx, `UPDATE drama_projects SET overview=$4::jsonb,
+	return scanDrama(r.db.QueryRow(ctx, `UPDATE drama_projects SET
+		protagonist=COALESCE($4::jsonb->>'protagonist',''),
+		genre=COALESCE($4::jsonb->>'genre',''),
+		synopsis=COALESCE($4::jsonb->>'synopsis',''),
+		background=COALESCE($4::jsonb->>'background',''),
+		setting=COALESCE($4::jsonb->>'setting',''),
 		style=COALESCE(NULLIF($4::jsonb->>'videoStyle',''), style),
 		aspect_ratio=COALESCE(NULLIF($4::jsonb->>'aspectRatio',''), aspect_ratio),
 		updated_at=NOW()

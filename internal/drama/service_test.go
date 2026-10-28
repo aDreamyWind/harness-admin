@@ -309,6 +309,48 @@ func TestReanalyzeOverviewUsesSavedSourceAndReplacesResult(t *testing.T) {
 	}
 }
 
+func TestOverviewChunkWithoutEventsKeepsOtherFacts(t *testing.T) {
+	id := "b6e6da1c-7c27-4f72-babf-34a7c4e19617"
+	source := strings.Repeat("山", OverviewChunkRuneLimit*4)
+	repo := &fakeRepository{project: Project{
+		ID: id, OrganizationID: "org", OwnerID: "user", Status: "queued",
+		SourceMode: "upload", Title: "长篇", SourceText: source, SourceLength: len([]rune(source)),
+		Style: "国风", AspectRatio: "9:16", ModelCode: "writer", Overview: json.RawMessage(`{}`),
+	}}
+	replies := overviewChunkReplies(4)
+	replies[3] = `{"events":"","characters":"","backgroundFacts":"第四段交代城邦制度","settingFacts":"","unresolved":""}`
+	writer := &fakeWriter{replies: append(replies,
+		`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"主角","genre":"奇幻","synopsis":"故事梗概","background":"城邦制度","setting":"设定"}`)}
+	if err := NewService(repo, writer).Analyze(repo.project); err != nil {
+		t.Fatal(err)
+	}
+	if repo.project.Status != "ready" || repo.project.Phase != "overview_done" {
+		t.Fatalf("含背景事实的片段不应因 events 为空而失败: %+v", repo.project)
+	}
+	if !strings.Contains(writer.prompts[len(writer.prompts)-1], "第四段交代城邦制度") {
+		t.Fatal("最终概览应包含第四段提取到的事实")
+	}
+}
+
+func TestOverviewEmptyChunkFallsBackToSourceExcerpt(t *testing.T) {
+	repo := &fakeRepository{project: Project{
+		ID: "b6e6da1c-7c27-4f72-babf-34a7c4e19617", OrganizationID: "org", OwnerID: "user",
+		Status: "queued", SourceMode: "upload", Title: "长篇", SourceText: strings.Repeat("山", OverviewChunkRuneLimit+1),
+		SourceLength: OverviewChunkRuneLimit + 1, Style: "国风", AspectRatio: "9:16", ModelCode: "writer", Overview: json.RawMessage(`{}`),
+	}}
+	writer := &fakeWriter{replies: []string{
+		`{}`,
+		`{"events":"末尾出现新角色"}`,
+		`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"主角","genre":"奇幻","synopsis":"故事梗概","background":"背景","setting":"设定"}`,
+	}}
+	if err := NewService(repo, writer).Analyze(repo.project); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(writer.prompts[len(writer.prompts)-1], "事实提取为空，以下为原文节选") {
+		t.Fatal("空片段应使用原文节选继续解析")
+	}
+}
+
 func TestReanalyzeOverviewRejectsMissingOverviewAndModel(t *testing.T) {
 	id := "b6e6da1c-7c27-4f72-babf-34a7c4e19617"
 	repo := &fakeRepository{project: Project{ID: id, Status: "ready", SourceLength: 3, Overview: json.RawMessage(`{}`)}}

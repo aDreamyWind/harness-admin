@@ -2,12 +2,14 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"harness-admin/internal/drama"
@@ -73,5 +75,52 @@ func TestDramaOverviewAndRetryQueriesAcceptParameters(t *testing.T) {
 	_, err = repository.RetryFailed(ctx, missingID, missingID, missingID, "writer")
 	if !errors.Is(err, drama.ErrNotFound) {
 		t.Fatalf("重试更新语句未正确执行: %v", err)
+	}
+}
+
+func TestDramaOverviewColumnsReplaceWithoutMerge(t *testing.T) {
+	url := os.Getenv("HARNESS_TEST_WRITE_DATABASE_URL")
+	if url == "" {
+		t.Skip("设置 HARNESS_TEST_WRITE_DATABASE_URL 后验证概览字段覆盖")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	var organizationID, ownerID string
+	if err := tx.QueryRow(ctx, `SELECT o.id, u.id FROM organizations o CROSS JOIN users u LIMIT 1`).Scan(&organizationID, &ownerID); err != nil {
+		t.Skipf("测试数据库没有企业或用户: %v", err)
+	}
+	id := uuid.NewString()
+	_, err = tx.Exec(ctx, `INSERT INTO drama_projects
+		(id, organization_id, owner_id, title, source_text, source_length, source_mode, style, aspect_ratio, model_code, status, phase,
+		 protagonist, genre, synopsis, background, setting)
+		VALUES ($1,$2,$3,'覆盖测试','原文',2,'upload','国风','9:16','writer','ready','overview_done',
+		'旧主角','旧类型','旧梗概','旧背景','旧设定')`, id, organizationID, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newResult := sql.NullString{String: `{"protagonist":"新主角","genre":"新类型","synopsis":"新梗概","background":"新背景"}`, Valid: true}
+	if _, err := tx.Exec(ctx, saveDramaAnalysisSQL, organizationID, ownerID, id, "running", "story", newResult); err != nil {
+		t.Fatal(err)
+	}
+	item, err := scanDrama(tx.QueryRow(ctx, `SELECT `+dramaColumns+` FROM drama_projects WHERE id=$1`, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var overview map[string]string
+	if err := json.Unmarshal(item.Overview, &overview); err != nil {
+		t.Fatal(err)
+	}
+	if overview["protagonist"] != "新主角" || overview["synopsis"] != "新梗概" || overview["setting"] != "" {
+		t.Fatalf("新概览应完整覆盖旧字段: %+v", overview)
 	}
 }
