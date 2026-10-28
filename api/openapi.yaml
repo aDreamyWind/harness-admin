@@ -189,7 +189,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       summary: 根据起点方式创建待解析批次
-      description: 服务端自动建议不超过十万字的终点；也可提交手动终点。当前只保存原文区间，不启动 AI 剧集生成。
+      description: 服务端自动建议不超过十万字的终点；也可提交手动终点。创建时只保存原文区间；之后可在批次详情中启动 AI 解析。
       operationId: createDramaBatch
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
@@ -261,6 +261,86 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 批次版本已变化，请刷新后重试。 }
+  /ai-drama/projects/{id}/batches/{batchId}/analyze:
+    post:
+      summary: 异步启动或重新启动一个批次的 AI 剧本解析
+      operationId: analyzeDramaBatch
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202':
+          description: 已启动，返回解析中的批次。
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DramaBatch' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 批次正在解析，或项目尚未完成概览解析。 }
+  /ai-drama/projects/{id}/batches/{batchId}/result:
+    get:
+      summary: 查询批次资产和逐集完整剧本
+      operationId: getDramaBatchResult
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 批次解析结果，解析前返回空数组。
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DramaBatchResult' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/assets:
+    get:
+      summary: 按类型和名称搜索项目角色、场景或道具
+      operationId: listDramaAssets
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [character, scene, prop] } }
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: 匹配的项目资产。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DramaCatalogAsset' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /ai-drama/projects/{id}/episodes/{episodeId}/assets:
+    post:
+      summary: 将项目已有资产关联到一集剧本
+      operationId: addDramaEpisodeAsset
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [assetId], properties: { assetId: { type: string, format: uuid }, stateLabel: { type: string } } } } }
+      responses:
+        '201':
+          description: 已创建的剧集资产关联。
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DramaEpisodeAsset' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/episodes/{episodeId}/assets/{linkId}:
+    delete:
+      summary: 删除某集的资产关联
+      operationId: removeDramaEpisodeAsset
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: linkId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 删除成功。 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/overview:
     put:
       summary: 修改漫剧项目概览
@@ -3107,6 +3187,47 @@ components:
         endOffset: { type: integer, minimum: 0 }
         totalLength: { type: integer, minimum: 1 }
         text: { type: string }
+    DramaCatalogAsset:
+      type: object
+      required: [id, kind, name, description]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [character, scene, prop] }
+        name: { type: string }
+        description: { type: string }
+    DramaEpisodeAsset:
+      allOf:
+        - { $ref: '#/components/schemas/DramaCatalogAsset' }
+        - type: object
+          required: [assetId, stateLabel]
+          properties:
+            assetId: { type: string, format: uuid }
+            stateLabel: { type: string }
+    DramaScriptEpisode:
+      type: object
+      required: [id, number, title, synopsis, scriptText, characters, scenes, props]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: integer }
+        title: { type: string }
+        synopsis: { type: string }
+        scriptText: { type: string }
+        characters: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+        scenes: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+        props: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+    DramaBatchResult:
+      type: object
+      required: [batch, assets, episodes]
+      properties:
+        batch: { $ref: '#/components/schemas/DramaBatch' }
+        assets:
+          type: object
+          required: [characters, scenes, props]
+          properties:
+            characters: { type: array, items: { $ref: '#/components/schemas/DramaCatalogAsset' } }
+            scenes: { type: array, items: { $ref: '#/components/schemas/DramaCatalogAsset' } }
+            props: { type: array, items: { $ref: '#/components/schemas/DramaCatalogAsset' } }
+        episodes: { type: array, items: { $ref: '#/components/schemas/DramaScriptEpisode' } }
     DramaBatchSelection:
       type: object
       required: [mode]
@@ -3141,7 +3262,9 @@ components:
         selectionMode: { type: string, enum: [beginning, previous, manual] }
         previousBatchId: { type: string, format: uuid }
         boundary: { type: string, enum: [episode, chapter, paragraph, limit, end, manual] }
-        status: { type: string, enum: [pending, stale, ready] }
+        status: { type: string, enum: [pending, running, failed, stale, ready] }
+        errorMessage: { type: string, description: 解析失败时的错误说明 }
+        analysisRevision: { type: integer, description: 解析时使用的范围版本 }
         revision: { type: integer, minimum: 1 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

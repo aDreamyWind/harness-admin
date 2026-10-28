@@ -63,6 +63,22 @@ func (s *dramaServiceStub) CreateBatch(_ context.Context, _, _, _ string, input 
 func (s *dramaServiceStub) UpdateBatchRange(context.Context, string, string, string, string, drama.BatchRangeChange) (drama.Batch, error) {
 	return drama.Batch{ID: "3a364763-e0df-4cb4-9c55-88ab0a11ff94", Boundary: "manual"}, nil
 }
+func (s *dramaServiceStub) StartBatchAnalysis(context.Context, string, string, string, string) (drama.BatchAnalysisJob, error) {
+	return drama.BatchAnalysisJob{Batch: drama.Batch{ID: "3a364763-e0df-4cb4-9c55-88ab0a11ff94", Status: "running"}}, nil
+}
+func (s *dramaServiceStub) AnalyzeBatch(drama.BatchAnalysisJob) error { return nil }
+func (s *dramaServiceStub) BatchResult(context.Context, string, string, string, string) (drama.BatchResult, error) {
+	return drama.BatchResult{}, nil
+}
+func (s *dramaServiceStub) ProjectAssets(context.Context, string, string, string, string, string) ([]drama.Asset, error) {
+	return []drama.Asset{}, nil
+}
+func (s *dramaServiceStub) AddEpisodeAsset(context.Context, string, string, string, string, string, string) (drama.EpisodeAsset, error) {
+	return drama.EpisodeAsset{}, nil
+}
+func (s *dramaServiceStub) RemoveEpisodeAsset(context.Context, string, string, string, string, string) error {
+	return nil
+}
 func (s *dramaServiceStub) UpdateOverview(_ context.Context, _, _, _ string, overview json.RawMessage) (drama.Project, error) {
 	return drama.Project{Overview: overview}, nil
 }
@@ -213,6 +229,51 @@ func TestDramaBatchEndpointsRequireSessionAndCSRF(t *testing.T) {
 	}
 	if got := call(http.MethodPatch, base+"/batches/3a364763-e0df-4cb4-9c55-88ab0a11ff94/range", `{"startOffset":0,"endOffset":4,"revision":1}`, true, false); got.Code != http.StatusForbidden {
 		t.Fatalf("缺少 CSRF 仍可改批次: %d", got.Code)
+	}
+}
+
+func TestDramaBatchAnalysisAndAssetRoutes(t *testing.T) {
+	service := &dramaServiceStub{started: make(chan struct{}, 1)}
+	router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}}, Drama: service, SessionCookie: "test_session"})
+	base := "/api/v1/ai-drama/projects/b6e6da1c-7c27-4f72-babf-34a7c4e19617"
+	call := func(method, path, body string, session, csrf bool) int {
+		req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		if session {
+			req.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+		}
+		if csrf {
+			req.Header.Set("X-CSRF-Token", "csrf-token")
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response.Code
+	}
+	batch := base + "/batches/3a364763-e0df-4cb4-9c55-88ab0a11ff94"
+	if got := call(http.MethodPost, batch+"/analyze", "", false, false); got != 401 {
+		t.Fatalf("未登录解析状态 %d", got)
+	}
+	if got := call(http.MethodPost, batch+"/analyze", "", true, false); got != 403 {
+		t.Fatalf("无 CSRF 解析状态 %d", got)
+	}
+	if got := call(http.MethodPost, batch+"/analyze", "", true, true); got != 202 {
+		t.Fatalf("解析状态 %d", got)
+	}
+	if got := call(http.MethodGet, batch+"/result", "", true, false); got != 200 {
+		t.Fatalf("结果状态 %d", got)
+	}
+	if got := call(http.MethodGet, base+"/assets?kind=scene&q=test", "", true, false); got != 200 {
+		t.Fatalf("资产搜索状态 %d", got)
+	}
+	episode := base + "/episodes/3a364763-e0df-4cb4-9c55-88ab0a11ff94/assets"
+	if got := call(http.MethodPost, episode, `{"assetId":"3a364763-e0df-4cb4-9c55-88ab0a11ff94"}`, true, false); got != 403 {
+		t.Fatalf("关联无 CSRF 状态 %d", got)
+	}
+	if got := call(http.MethodPost, episode, `{"assetId":"3a364763-e0df-4cb4-9c55-88ab0a11ff94"}`, true, true); got != 201 {
+		t.Fatalf("关联状态 %d", got)
+	}
+	if got := call(http.MethodDelete, episode+"/3a364763-e0df-4cb4-9c55-88ab0a11ff94", "", true, true); got != 200 {
+		t.Fatalf("移除状态 %d", got)
 	}
 }
 

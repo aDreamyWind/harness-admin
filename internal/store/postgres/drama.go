@@ -51,7 +51,12 @@ func (r *DramaRepository) SaveSettings(ctx context.Context, item drama.Settings)
 }
 
 const dramaColumns = `id, organization_id, owner_id, title, source_name, source_text, source_length, source_mode,
- style, aspect_ratio, model_code, status, phase, error_message, protagonist, genre, synopsis, background, setting, characters, scenes, props, episodes, created_at, updated_at`
+ style, aspect_ratio, model_code, status, phase, error_message, protagonist, genre, synopsis, background, setting,
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('name', a.name, 'description', a.description) ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='character'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('name', a.name, 'description', a.description) ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='scene'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('name', a.name, 'description', a.description) ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='prop'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('title', e.title, 'synopsis', e.synopsis) ORDER BY b.batch_number NULLS FIRST, e.number, e.created_at) FROM drama_script_episodes e LEFT JOIN drama_batches b ON b.id=e.batch_id WHERE e.project_id=drama_projects.id), '[]'::jsonb),
+ created_at, updated_at`
 
 func scanDrama(row pgx.Row) (drama.Project, error) {
 	var item drama.Project
@@ -117,8 +122,7 @@ func (r *DramaRepository) Get(ctx context.Context, organizationID, ownerID, id s
 
 func (r *DramaRepository) RetryFailed(ctx context.Context, organizationID, ownerID, id, modelCode string) (drama.Project, error) {
 	return scanDrama(r.db.QueryRow(ctx, `UPDATE drama_projects SET status='queued', phase='waiting',
-		error_message='', model_code=$4, characters='[]'::jsonb,
-		scenes='[]'::jsonb, props='[]'::jsonb, episodes='[]'::jsonb, updated_at=NOW()
+		error_message='', model_code=$4, updated_at=NOW()
 		WHERE organization_id=$1 AND owner_id=$2 AND id=$3 AND status='failed' AND source_mode='upload'
 		RETURNING `+dramaColumns, organizationID, ownerID, id, modelCode))
 }
@@ -145,10 +149,6 @@ const saveDramaAnalysisSQL = `UPDATE drama_projects SET status=$4::text, phase=$
 		synopsis=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->>'synopsis','') ELSE synopsis END,
 		background=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->>'background','') ELSE background END,
 		setting=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->>'setting','') ELSE setting END,
-		characters=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'characters','[]'::jsonb) ELSE characters END,
-		scenes=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'scenes','[]'::jsonb) ELSE scenes END,
-		props=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'props','[]'::jsonb) ELSE props END,
-		episodes=CASE WHEN $5::text='episodes' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'episodes','[]'::jsonb) ELSE episodes END,
 		updated_at=NOW() WHERE organization_id=$1 AND owner_id=$2 AND id=$3`
 
 func (r *DramaRepository) SaveAnalysis(ctx context.Context, organizationID, ownerID, id, status, phase string, data json.RawMessage) error {

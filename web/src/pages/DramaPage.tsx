@@ -178,7 +178,7 @@ export function DramaProjectPage() {
         <div className="drama-overview-panels">
           {([{ key: 'background', label: '故事背景' }, { key: 'setting', label: '故事设定' }] as const).map((field) => <article key={field.key} className="drama-overview-panel"><span className="drama-field-label">{field.label}</span>{editing ? <Input.TextArea autoSize={{ minRows: 5, maxRows: 12 }} value={draft[field.key] ?? ''} onChange={(event) => changeDraft(field.key, event.target.value)} /> : <p>{display(field.key)}</p>}</article>)}
         </div>
-      </section> : section === 'episodes' ? <DramaBatchWorkspace project={project} batches={batches} onBatchesChange={setBatches} /> : section === 'assets' ? <section aria-label="角色、场景、道具">
+      </section> : section === 'episodes' ? <DramaBatchWorkspace project={project} batches={batches} onBatchesChange={(items) => { setBatches(items); void getDramaProject(project.id).then(setProject).catch(() => {}) }} /> : section === 'assets' ? <section aria-label="角色、场景、道具">
         <div className="drama-asset-tabs" role="tablist" aria-label="资产类型">
           {([{ key: 'characters', label: '角色', count: project.characters.length }, { key: 'scenes', label: '场景', count: project.scenes.length }, { key: 'props', label: '道具', count: project.props.length }] as const).map((item) =>
             <button key={item.key} type="button" role="tab" aria-selected={assetSection === item.key} className={assetSection === item.key ? 'active' : ''} onClick={() => setAssetSection(item.key)}>{item.label}<span>{item.count}</span></button>

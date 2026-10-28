@@ -1,10 +1,10 @@
 import { ArrowLeftOutlined, ExclamationCircleFilled, FileSearchOutlined, PlusOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Empty, Modal, Select, Tag, Tooltip, message } from 'antd'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
-  createDramaBatch, listDramaBatches, suggestDramaBatch, updateDramaBatchRange,
-  type DramaBatch, type DramaBatchMode, type DramaProject,
+  createDramaBatch, listDramaBatches, suggestDramaBatch, updateDramaBatchRange, analyzeDramaBatch, getDramaBatchResult, listDramaAssets, addDramaEpisodeAsset, removeDramaEpisodeAsset,
+  type DramaBatch, type DramaBatchMode, type DramaProject, type DramaBatchResult, type DramaAssetKind, type DramaCatalogAsset,
 } from '../api/drama'
 import { DramaSourceReader } from './DramaSourceReader'
 
@@ -17,10 +17,18 @@ interface Props {
 const boundaryNames: Record<DramaBatch['boundary'], string> = {
   episode: '完整分集', chapter: '章节结尾', paragraph: '段落结尾', limit: '10 万字上限', end: '原文末尾', manual: '手动标记',
 }
-const statusNames: Record<DramaBatch['status'], string> = { pending: '待解析', stale: '范围需核对', ready: '已解析' }
+const statusNames: Record<DramaBatch['status'], string> = { pending: '待解析', running: '解析中', failed: '解析失败', stale: '范围需核对', ready: '已解析' }
+const assetSections = [{ key: 'character', field: 'characters', title: '角色' }, { key: 'scene', field: 'scenes', title: '场景' }, { key: 'prop', field: 'props', title: '道具' }] as const
 
 export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props) {
   const [messageApi, contextHolder] = message.useMessage()
+  const [result, setResult] = useState<DramaBatchResult | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [assetPicker, setAssetPicker] = useState<{ episodeId: string; kind: DramaAssetKind } | null>(null)
+  const [assetQuery, setAssetQuery] = useState('')
+  const [assetOptions, setAssetOptions] = useState<DramaCatalogAsset[]>([])
+  const [pickedAssets, setPickedAssets] = useState<string[]>([])
+  const [savingAssets, setSavingAssets] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [choiceOpen, setChoiceOpen] = useState(false)
   const [mode, setMode] = useState<DramaBatchMode>('beginning')
@@ -34,6 +42,60 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
   const [opening, setOpening] = useState(false)
   const requestedStart = useRef<number | null>(null)
   const selected = batches.find((item) => item.id === selectedId) ?? null
+  useEffect(() => {
+    if (!selectedId) { setResult(null); return }
+    let active = true
+    const refresh = async () => {
+      try {
+        const value = await getDramaBatchResult(project.id, selectedId)
+        if (active) setResult(value)
+      } catch (error) { if (active) messageApi.error(error instanceof Error ? error.message : '读取解析结果失败') }
+    }
+    void refresh()
+    return () => { active = false }
+  }, [project.id, selectedId, selected?.status, messageApi])
+  useEffect(() => {
+    if (!selectedId || selected?.status !== 'running') return
+    const timer = window.setInterval(async () => {
+      try { onBatchesChange(await listDramaBatches(project.id)) } catch { /* 下一轮继续查询 */ }
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [project.id, selectedId, selected?.status, onBatchesChange])
+  useEffect(() => {
+    if (!assetPicker) return
+    let active = true
+    const timer = window.setTimeout(() => { void listDramaAssets(project.id, assetPicker.kind, assetQuery).then((items) => { if (active) setAssetOptions(items) }).catch((error) => { if (active) messageApi.error(error instanceof Error ? error.message : '搜索项目资产失败') }) }, 180)
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [project.id, assetPicker, assetQuery, messageApi])
+  async function startAnalysis() {
+    if (!selected) return
+    setAnalyzing(true)
+    try {
+      await analyzeDramaBatch(project.id, selected.id)
+      onBatchesChange(await listDramaBatches(project.id))
+      messageApi.success('已开始解析本批剧本')
+    } catch (error) { messageApi.error(error instanceof Error ? error.message : '无法启动解析') }
+    finally { setAnalyzing(false) }
+  }
+  function openAssetPicker(episodeId: string, kind: DramaAssetKind) {
+    setAssetQuery(''); setAssetOptions([]); setPickedAssets([]); setAssetPicker({ episodeId, kind })
+  }
+  async function saveEpisodeAssets() {
+    if (!assetPicker || pickedAssets.length === 0) return
+    setSavingAssets(true)
+    try {
+      for (const assetId of pickedAssets) await addDramaEpisodeAsset(project.id, assetPicker.episodeId, assetId)
+      if (selectedId) setResult(await getDramaBatchResult(project.id, selectedId))
+      setAssetPicker(null); messageApi.success('已关联到本集')
+    } catch (error) { messageApi.error(error instanceof Error ? error.message : '保存资产关联失败') }
+    finally { setSavingAssets(false) }
+  }
+  async function removeAsset(episodeId: string, linkId: string) {
+    try {
+      await removeDramaEpisodeAsset(project.id, episodeId, linkId)
+      if (selectedId) setResult(await getDramaBatchResult(project.id, selectedId))
+    } catch (error) { messageApi.error(error instanceof Error ? error.message : '移除关联失败') }
+  }
 
   async function openCreateReader() {
     setOpening(true)
@@ -127,18 +189,32 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
     {!selected ? <>
       <div className="drama-section-head drama-batches-head"><div><h2>剧本分集</h2><p>按原文范围建立批次，确认每一批的开头和结尾。</p></div><Tooltip title={project.status !== 'ready' ? '请先完成剧本概览解析' : ''}><span><Button type="primary" icon={<PlusOutlined />} disabled={project.status !== 'ready'} onClick={() => { setMode('beginning'); setPreviousBatchId(undefined); setChoiceOpen(true) }}>新建批次</Button></span></Tooltip></div>
       {batches.length === 0 ? <div className="drama-empty"><Empty description="还没有批次，点击右上角新建批次" /></div> : <div className="drama-batch-grid">{batches.map((batch) => <button type="button" key={batch.id} className="drama-batch-card" onClick={() => setSelectedId(batch.id)}>
-        <div><span>第 {batch.number} 批</span><Tag color={batch.status === 'stale' ? 'warning' : batch.status === 'ready' ? 'success' : 'default'}>{statusNames[batch.status]}</Tag></div>
+        <div><span>第 {batch.number} 批</span><Tag color={batch.status === 'stale' ? 'warning' : batch.status === 'ready' ? 'success' : batch.status === 'failed' ? 'error' : batch.status === 'running' ? 'processing' : 'default'}>{statusNames[batch.status]}</Tag></div>
         <strong>{(batch.endOffset - batch.startOffset).toLocaleString()} 字符</strong>
         <p>原文 {(batch.startOffset + 1).toLocaleString()}—{batch.endOffset.toLocaleString()} 字符</p>
         <small>终点：{boundaryNames[batch.boundary]}</small>
       </button>)}</div>}
     </> : <>
-      <div className="drama-batch-detail-head"><Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setSelectedId(null)}>返回批次</Button><Tag color={selected.status === 'stale' ? 'warning' : 'default'}>{statusNames[selected.status]}</Tag></div>
-      <div className="drama-batch-detail-title"><div><h2>第 {selected.number} 批</h2><p>原文 {(selected.startOffset + 1).toLocaleString()}—{selected.endOffset.toLocaleString()} 字符 · 共 {(selected.endOffset - selected.startOffset).toLocaleString()} 字符 · {boundaryNames[selected.boundary]}</p></div><Button icon={<FileSearchOutlined />} onClick={() => openExistingReader(selected)}>查看在剧本中的位置</Button></div>
+      <div className="drama-batch-detail-head"><Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setSelectedId(null)}>返回批次</Button><Tag color={selected.status === 'stale' ? 'warning' : selected.status === 'ready' ? 'success' : selected.status === 'failed' ? 'error' : selected.status === 'running' ? 'processing' : 'default'}>{statusNames[selected.status]}</Tag></div>
+      <div className="drama-batch-detail-title"><div><h2>第 {selected.number} 批</h2><p>原文 {(selected.startOffset + 1).toLocaleString()}—{selected.endOffset.toLocaleString()} 字符 · 共 {(selected.endOffset - selected.startOffset).toLocaleString()} 字符 · {boundaryNames[selected.boundary]}</p></div><div className="drama-batch-detail-actions"><Button icon={<FileSearchOutlined />} onClick={() => openExistingReader(selected)}>查看在剧本中的位置</Button><Button type="primary" loading={analyzing || selected.status === 'running'} disabled={selected.status === 'running' || project.status !== 'ready'} onClick={() => void startAnalysis()}>{selected.status === 'ready' ? 'AI重新解析' : 'AI解析'}</Button></div></div>
       {selected.status === 'stale' && <Alert type="warning" showIcon message="上游批次范围已调整，请核对本批次起止位置" />}
-      <Card className="drama-batch-result"><h3>角色、场景、道具</h3><Empty description="已保存原文范围；确定剧集生成规则后，这里会展示本批次提取的角色、场景、道具" /></Card>
-      <Card className="drama-batch-result"><h3>剧本内容</h3><Empty description="确定剧集生成规则后，这里会按集展示完整剧本" /></Card>
+      {selected.status === 'failed' && <Alert type="error" showIcon message="本批解析失败" description={selected.errorMessage || '请重试'} />}
+      {selected.status === 'running' && <Alert type="info" showIcon message="正在解析本批原文，完成后会自动显示结果" />}
+      <Card className="drama-batch-result"><h3>角色、场景、道具</h3>
+        {result && assetSections.map((section) => <div className="drama-batch-asset-group" key={section.key}><h4>{section.title}列表（{result.assets[section.field].length}）</h4>
+          {result.assets[section.field].length ? <div className="drama-batch-asset-list">{result.assets[section.field].map((asset) => <div key={asset.id} className="drama-batch-asset-row"><strong>{asset.name}</strong><span>{asset.description}</span></div>)}</div> : <p className="drama-batch-muted">暂无{section.title}</p>}</div>)}
+      </Card>
+      <Card className="drama-batch-result"><h3>剧本内容</h3>
+        {result?.episodes.length ? result.episodes.map((episode) => <details className="drama-batch-episode" key={episode.id} open={episode.number === 1}><summary>第{episode.number}集：{episode.title}</summary>
+          <div className="drama-batch-episode-body">{assetSections.map((section) => <div className="drama-batch-episode-assets" key={section.key}><span className="drama-batch-episode-kind">{section.title}</span><div>{episode[section.field].map((asset) => <Tag key={asset.id} closable onClose={(event) => { event.preventDefault(); void removeAsset(episode.id, asset.id) }}>{asset.name}{asset.stateLabel ? `—${asset.stateLabel}` : ''}</Tag>)}<Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => openAssetPicker(episode.id, section.key)}>添加</Button></div></div>)}
+          <div className="drama-batch-script"><h4>剧本内容</h4><pre>{episode.scriptText}</pre></div></div>
+        </details>) : <Empty description={selected.status === 'running' ? '正在生成分集剧本' : '暂无分集剧本，点击 AI解析 开始'} />}
+      </Card>
     </>}
+    <Modal title={`添加${assetPicker ? assetSections.find((item) => item.key === assetPicker.kind)?.title : ''}`} open={!!assetPicker} onCancel={() => setAssetPicker(null)} onOk={() => void saveEpisodeAssets()} okText="保存" okButtonProps={{ loading: savingAssets, disabled: pickedAssets.length === 0 }}>
+      <input className="drama-asset-search" placeholder="搜索项目资产名称" value={assetQuery} onChange={(event) => setAssetQuery(event.target.value)} />
+      <div className="drama-asset-picker-list">{assetOptions.map((asset) => <label key={asset.id} className="drama-asset-picker-item"><input type="checkbox" checked={pickedAssets.includes(asset.id)} onChange={(event) => setPickedAssets(event.target.checked ? [...pickedAssets, asset.id] : pickedAssets.filter((id) => id !== asset.id))} /><span><strong>{asset.name}</strong><small>{asset.description}</small></span></label>)}{assetOptions.length === 0 && <Empty description="项目资产库暂无匹配项" />}</div>
+    </Modal>
     <Modal title="新建批次" open={choiceOpen} onCancel={() => setChoiceOpen(false)} onOk={() => void openCreateReader()} okText="选择原文范围" okButtonProps={{ loading: opening, disabled: mode === 'previous' && !previousBatchId }}>
       <p className="drama-batch-choice-help">选择本批从哪里开始。下一步可在原文中检查和调整终点。</p>
       <div className="drama-batch-choices" role="radiogroup" aria-label="批次起点方式">

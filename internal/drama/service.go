@@ -76,6 +76,14 @@ type Repository interface {
 	GetBatch(context.Context, string, string, string, string) (Batch, error)
 	CreateBatch(context.Context, string, string, Batch) (Batch, error)
 	UpdateBatchRange(context.Context, string, string, string, string, BatchRangeChange) (Batch, error)
+	QueueBatchAnalysis(context.Context, string, string, string, string) (Batch, error)
+	SaveBatchResult(context.Context, string, string, string, string, int, BatchDraft) error
+	FailBatchAnalysis(context.Context, string, string, string, string, int, string) error
+	GetBatchResult(context.Context, string, string, string, string) (BatchResult, error)
+	ListProjectAssets(context.Context, string, string, string, string, string) ([]Asset, error)
+	AddEpisodeAsset(context.Context, string, string, string, string, string, string) (EpisodeAsset, error)
+	RemoveEpisodeAsset(context.Context, string, string, string, string, string) error
+	FailInterruptedBatches(context.Context) error
 	SaveAnalysis(context.Context, string, string, string, string, string, json.RawMessage) error
 	FailAnalysis(context.Context, string, string, string, string) error
 	UpdateOverview(context.Context, string, string, string, json.RawMessage) (Project, error)
@@ -107,7 +115,12 @@ func NewService(repository Repository, writer Writer) *Service {
 	return &Service{repository: repository, writer: writer}
 }
 
-func (s *Service) Recover(ctx context.Context) error { return s.repository.FailInterrupted(ctx) }
+func (s *Service) Recover(ctx context.Context) error {
+	if err := s.repository.FailInterrupted(ctx); err != nil {
+		return err
+	}
+	return s.repository.FailInterruptedBatches(ctx)
+}
 
 func (s *Service) AvailableModels(ctx context.Context, organizationID, userID string) ([]Model, error) {
 	models, err := s.writer.AvailableModels(ctx, organizationID, userID)

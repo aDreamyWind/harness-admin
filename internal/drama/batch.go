@@ -19,18 +19,20 @@ var ErrBatchNotReady = errors.New("请先完成剧本概览解析")
 var ErrBatchConflict = errors.New("批次已被修改，请刷新后重试")
 
 type Batch struct {
-	ID              string    `json:"id"`
-	ProjectID       string    `json:"projectId"`
-	Number          int       `json:"number"`
-	StartOffset     int       `json:"startOffset"`
-	EndOffset       int       `json:"endOffset"`
-	SelectionMode   string    `json:"selectionMode"`
-	PreviousBatchID string    `json:"previousBatchId,omitempty"`
-	Boundary        string    `json:"boundary"`
-	Status          string    `json:"status"`
-	Revision        int       `json:"revision"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID               string    `json:"id"`
+	ProjectID        string    `json:"projectId"`
+	Number           int       `json:"number"`
+	StartOffset      int       `json:"startOffset"`
+	EndOffset        int       `json:"endOffset"`
+	SelectionMode    string    `json:"selectionMode"`
+	PreviousBatchID  string    `json:"previousBatchId,omitempty"`
+	Boundary         string    `json:"boundary"`
+	Status           string    `json:"status"`
+	ErrorMessage     string    `json:"errorMessage,omitempty"`
+	Revision         int       `json:"revision"`
+	AnalysisRevision int       `json:"analysisRevision"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 type SourceRange struct {

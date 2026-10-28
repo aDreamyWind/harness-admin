@@ -28,6 +28,12 @@ type DramaService interface {
 	SuggestBatch(context.Context, string, string, string, drama.BatchSelection) (drama.BatchSuggestion, error)
 	CreateBatch(context.Context, string, string, string, drama.BatchSelection) (drama.Batch, error)
 	UpdateBatchRange(context.Context, string, string, string, string, drama.BatchRangeChange) (drama.Batch, error)
+	StartBatchAnalysis(context.Context, string, string, string, string) (drama.BatchAnalysisJob, error)
+	AnalyzeBatch(drama.BatchAnalysisJob) error
+	BatchResult(context.Context, string, string, string, string) (drama.BatchResult, error)
+	ProjectAssets(context.Context, string, string, string, string, string) ([]drama.Asset, error)
+	AddEpisodeAsset(context.Context, string, string, string, string, string, string) (drama.EpisodeAsset, error)
+	RemoveEpisodeAsset(context.Context, string, string, string, string, string) error
 	UpdateOverview(context.Context, string, string, string, json.RawMessage) (drama.Project, error)
 	Analyze(drama.Project) error
 }
@@ -218,6 +224,63 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 		}
 		httpx.OK(ctx, http.StatusOK, item)
 	})
+	group.POST("/projects/:id/batches/:batchId/analyze", requireCSRF(deps), func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		job, err := deps.Drama.StartBatchAnalysis(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		go func() {
+			if err := deps.Drama.AnalyzeBatch(job); err != nil {
+				deps.Logger.Error("剧本批次 AI 解析失败", "batch_id", job.Batch.ID, "error", err)
+			}
+		}()
+		httpx.OK(ctx, http.StatusAccepted, job.Batch)
+	})
+	group.GET("/projects/:id/batches/:batchId/result", func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		result, err := deps.Drama.BatchResult(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, result)
+	})
+	group.GET("/projects/:id/assets", func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		items, err := deps.Drama.ProjectAssets(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Query("kind"), ctx.Query("q"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, items)
+	})
+	group.POST("/projects/:id/episodes/:episodeId/assets", requireCSRF(deps), func(ctx *gin.Context) {
+		var input struct {
+			AssetID    string `json:"assetId" binding:"required"`
+			StateLabel string `json:"stateLabel"`
+		}
+		if err := ctx.ShouldBindJSON(&input); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "请选择项目资产")
+			return
+		}
+		session := currentSession(ctx)
+		item, err := deps.Drama.AddEpisodeAsset(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("episodeId"), input.AssetID, input.StateLabel)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusCreated, item)
+	})
+	group.DELETE("/projects/:id/episodes/:episodeId/assets/:linkId", requireCSRF(deps), func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		if err := deps.Drama.RemoveEpisodeAsset(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("episodeId"), ctx.Param("linkId")); err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, gin.H{"removed": true})
+	})
 	group.PUT("/projects/:id/overview", requireCSRF(deps), func(ctx *gin.Context) {
 		var overview json.RawMessage
 		if err := ctx.ShouldBindJSON(&overview); err != nil {
@@ -240,7 +303,7 @@ func handleDramaError(ctx *gin.Context, deps Dependencies, err error) {
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_drama_project", err.Error())
 	case errors.Is(err, drama.ErrModelUnavailable):
 		httpx.Fail(ctx, http.StatusBadRequest, "drama_model_unavailable", err.Error())
-	case errors.Is(err, drama.ErrBatchNotReady), errors.Is(err, drama.ErrBatchConflict):
+	case errors.Is(err, drama.ErrBatchNotReady), errors.Is(err, drama.ErrBatchConflict), errors.Is(err, drama.ErrBatchRunning):
 		httpx.Fail(ctx, http.StatusConflict, "drama_batch_conflict", err.Error())
 	case errors.Is(err, drama.ErrRetryNotAllowed):
 		httpx.Fail(ctx, http.StatusConflict, "drama_retry_not_allowed", err.Error())

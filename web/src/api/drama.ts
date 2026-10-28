@@ -91,7 +91,9 @@ export interface DramaBatch {
   selectionMode: DramaBatchMode
   previousBatchId?: string
   boundary: DramaBatchSuggestion['boundary'] | 'manual'
-  status: 'pending' | 'stale' | 'ready'
+  status: 'pending' | 'running' | 'failed' | 'stale' | 'ready'
+  errorMessage: string
+  analysisRevision: number
   revision: number
   createdAt: string
   updatedAt: string
@@ -113,3 +115,21 @@ export const createDramaBatch = (id: string, input: DramaBatchSelection) => requ
 export const updateDramaBatchRange = (id: string, batchId: string, input: DramaBatchRangeChange) => request<DramaBatch>(`/api/v1/ai-drama/projects/${id}/batches/${batchId}/range`, {
   method: 'PATCH', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })
+
+export type DramaAssetKind = 'character' | 'scene' | 'prop'
+export interface DramaCatalogAsset { id: string; kind: DramaAssetKind; name: string; description: string }
+export interface DramaEpisodeAsset extends DramaCatalogAsset { assetId: string; stateLabel: string }
+export interface DramaScriptEpisode {
+  id: string; number: number; title: string; synopsis: string; scriptText: string
+  characters: DramaEpisodeAsset[]; scenes: DramaEpisodeAsset[]; props: DramaEpisodeAsset[]
+}
+export interface DramaBatchResult {
+  batch: DramaBatch
+  assets: { characters: DramaCatalogAsset[]; scenes: DramaCatalogAsset[]; props: DramaCatalogAsset[] }
+  episodes: DramaScriptEpisode[]
+}
+export const analyzeDramaBatch = (projectId: string, batchId: string) => request<DramaBatch>(`/api/v1/ai-drama/projects/${projectId}/batches/${batchId}/analyze`, { method: 'POST', headers: csrfHeaders() })
+export const getDramaBatchResult = (projectId: string, batchId: string) => request<DramaBatchResult>(`/api/v1/ai-drama/projects/${projectId}/batches/${batchId}/result`)
+export const listDramaAssets = (projectId: string, kind: DramaAssetKind, q = '') => request<DramaCatalogAsset[]>(`/api/v1/ai-drama/projects/${projectId}/assets?kind=${kind}&q=${encodeURIComponent(q)}`)
+export const addDramaEpisodeAsset = (projectId: string, episodeId: string, assetId: string, stateLabel = '') => request<DramaEpisodeAsset>(`/api/v1/ai-drama/projects/${projectId}/episodes/${episodeId}/assets`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ assetId, stateLabel }) })
+export const removeDramaEpisodeAsset = (projectId: string, episodeId: string, linkId: string) => request<{ removed: boolean }>(`/api/v1/ai-drama/projects/${projectId}/episodes/${episodeId}/assets/${linkId}`, { method: 'DELETE', headers: csrfHeaders() })

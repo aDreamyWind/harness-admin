@@ -12,13 +12,13 @@ import (
 )
 
 const dramaBatchColumns = `b.id, b.project_id, b.batch_number, b.start_offset, b.end_offset,
- b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.revision, b.created_at, b.updated_at`
+ b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at`
 
 func scanDramaBatch(row pgx.Row) (drama.Batch, error) {
 	var item drama.Batch
 	var previous sql.NullString
 	err := row.Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-		&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.Revision, &item.CreatedAt, &item.UpdatedAt)
+		&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return drama.Batch{}, drama.ErrNotFound
 	}
@@ -115,10 +115,10 @@ func (r *DramaRepository) CreateBatch(ctx context.Context, organizationID, owner
 		(id, project_id, batch_number, start_offset, end_offset, selection_mode, previous_batch_id, boundary, status)
 		VALUES ($1, $2, (SELECT COALESCE(MAX(batch_number), 0) + 1 FROM drama_batches WHERE project_id=$2), $3, $4, $5, $6, $7, 'pending')
 		RETURNING id, project_id, batch_number, start_offset, end_offset, selection_mode,
-		previous_batch_id, boundary, status, revision, created_at, updated_at`,
+		previous_batch_id, boundary, status, error_message, revision, analysis_revision, created_at, updated_at`,
 		item.ID, item.ProjectID, item.StartOffset, item.EndOffset, item.SelectionMode, previous, item.Boundary).
 		Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-			&item.SelectionMode, &previousID, &item.Boundary, &item.Status, &item.Revision, &item.CreatedAt, &item.UpdatedAt)
+			&item.SelectionMode, &previousID, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return drama.Batch{}, fmt.Errorf("创建剧本批次失败: %w", err)
 	}
@@ -137,17 +137,17 @@ func (r *DramaRepository) UpdateBatchRange(ctx context.Context, organizationID, 
 	var item drama.Batch
 	var previous sql.NullString
 	err = tx.QueryRow(ctx, `UPDATE drama_batches b SET start_offset=$5, end_offset=$6, boundary='manual',
-		status=CASE WHEN b.status='ready' THEN 'stale' ELSE b.status END,
+		status=CASE WHEN b.status IN ('ready','running','failed') THEN 'stale' ELSE b.status END,
 		selection_mode=CASE WHEN b.start_offset<>$5 THEN 'manual' ELSE b.selection_mode END,
 		previous_batch_id=CASE WHEN b.start_offset<>$5 THEN NULL ELSE b.previous_batch_id END,
 		revision=b.revision+1, updated_at=NOW()
 		FROM drama_projects p WHERE p.id=b.project_id AND p.organization_id=$1 AND p.owner_id=$2
 		AND p.id=$3 AND b.id=$4 AND b.revision=$7
 		RETURNING b.id, b.project_id, b.batch_number, b.start_offset, b.end_offset,
-		b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.revision, b.created_at, b.updated_at`,
+		b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at`,
 		organizationID, ownerID, projectID, batchID, change.StartOffset, change.EndOffset, change.Revision).
 		Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-			&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.Revision, &item.CreatedAt, &item.UpdatedAt)
+			&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, lookupErr := r.GetBatch(ctx, organizationID, ownerID, projectID, batchID); lookupErr != nil {
 			return drama.Batch{}, lookupErr

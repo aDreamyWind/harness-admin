@@ -9,11 +9,12 @@ import (
 )
 
 type fakeRepository struct {
-	project  Project
-	settings Settings
-	stages   []string
-	failed   string
-	batches  []Batch
+	project    Project
+	settings   Settings
+	stages     []string
+	failed     string
+	batches    []Batch
+	batchDraft BatchDraft
 }
 
 func (r *fakeRepository) GetSettings(_ context.Context, _, _ string) (Settings, error) {
@@ -89,6 +90,55 @@ func (r *fakeRepository) UpdateBatchRange(_ context.Context, _, _, _, id string,
 	}
 	return Batch{}, ErrNotFound
 }
+func (r *fakeRepository) QueueBatchAnalysis(_ context.Context, _, _, _, id string) (Batch, error) {
+	for i, item := range r.batches {
+		if item.ID == id {
+			item.Status = "running"
+			item.AnalysisRevision = item.Revision
+			r.batches[i] = item
+			return item, nil
+		}
+	}
+	return Batch{}, ErrNotFound
+}
+func (r *fakeRepository) SaveBatchResult(_ context.Context, _, _, _, id string, revision int, draft BatchDraft) error {
+	for i, item := range r.batches {
+		if item.ID == id {
+			if item.Revision != revision {
+				return ErrBatchConflict
+			}
+			item.Status = "ready"
+			r.batches[i] = item
+			r.batchDraft = draft
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+func (r *fakeRepository) FailBatchAnalysis(_ context.Context, _, _, _, id string, _ int, reason string) error {
+	for i, item := range r.batches {
+		if item.ID == id {
+			item.Status = "failed"
+			item.ErrorMessage = reason
+			r.batches[i] = item
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+func (r *fakeRepository) GetBatchResult(_ context.Context, _, _, _, _ string) (BatchResult, error) {
+	return BatchResult{}, nil
+}
+func (r *fakeRepository) ListProjectAssets(_ context.Context, _, _, _, _, _ string) ([]Asset, error) {
+	return []Asset{}, nil
+}
+func (r *fakeRepository) AddEpisodeAsset(_ context.Context, _, _, _, _, _, _ string) (EpisodeAsset, error) {
+	return EpisodeAsset{}, nil
+}
+func (r *fakeRepository) RemoveEpisodeAsset(_ context.Context, _, _, _, _, _ string) error {
+	return nil
+}
+func (r *fakeRepository) FailInterruptedBatches(context.Context) error { return nil }
 func (r *fakeRepository) UpdateOverview(_ context.Context, _, _, _ string, value json.RawMessage) (Project, error) {
 	r.project.Overview = value
 	return r.project, nil
@@ -370,4 +420,22 @@ func overviewChunkReplies(count int) []string {
 		replies[i] = `{"events":"主角采取行动，处境发生变化","characters":"主角","backgroundFacts":"","settingFacts":"","unresolved":""}`
 	}
 	return replies
+}
+
+func TestAnalyzeBatchStoresEpisodesAndAssets(t *testing.T) {
+	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
+	repo := &fakeRepository{project: Project{ID: id, Title: "测试剧", Status: "ready", SourceText: "第一章\n张三走入竹林。", Overview: json.RawMessage(`{"synopsis":"寻找竹林"}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, EndOffset: 13, Revision: 1}}}
+	repo.batches[0].EndOffset = len([]rune(repo.project.SourceText))
+	writer := &fakeWriter{replies: []string{`{"characters":[{"name":"张三","description":"主角"}],"scenes":[{"name":"竹林","description":"夜晚的竹林"}],"props":[],"episodes":[{"title":"入林","synopsis":"张三进入竹林","scriptText":"【竹林 外 夜】\n张三走入竹林。","characters":[{"name":"张三","stateLabel":"默认形象"}],"scenes":[{"name":"竹林","stateLabel":"夜晚"}],"props":[]}]}`}}
+	service := NewService(repo, writer)
+	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.AnalyzeBatch(job); err != nil {
+		t.Fatal(err)
+	}
+	if repo.batches[0].Status != "ready" || len(repo.batchDraft.Episodes) != 1 || len(repo.batchDraft.Characters) != 1 {
+		t.Fatalf("批次结果未保存: %+v", repo.batchDraft)
+	}
 }
