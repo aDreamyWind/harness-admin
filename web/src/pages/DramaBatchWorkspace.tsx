@@ -1,6 +1,7 @@
 import { ArrowLeftOutlined, ExclamationCircleFilled, FileSearchOutlined, PlusOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Empty, Modal, Select, Tag, Tooltip, message } from 'antd'
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import {
   createDramaBatch, listDramaBatches, suggestDramaBatch, updateDramaBatchRange, analyzeDramaBatch, getDramaBatchResult, listDramaAssets, addDramaEpisodeAsset, removeDramaEpisodeAsset,
@@ -22,6 +23,7 @@ const assetSections = [{ key: 'character', field: 'characters', title: '角色' 
 
 export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props) {
   const [messageApi, contextHolder] = message.useMessage()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [result, setResult] = useState<DramaBatchResult | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [assetPicker, setAssetPicker] = useState<{ episodeId: string; kind: DramaAssetKind } | null>(null)
@@ -29,7 +31,6 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
   const [assetOptions, setAssetOptions] = useState<DramaCatalogAsset[]>([])
   const [pickedAssets, setPickedAssets] = useState<string[]>([])
   const [savingAssets, setSavingAssets] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [choiceOpen, setChoiceOpen] = useState(false)
   const [mode, setMode] = useState<DramaBatchMode>('beginning')
   const [previousBatchId, setPreviousBatchId] = useState<string>()
@@ -41,7 +42,17 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
   const [saving, setSaving] = useState(false)
   const [opening, setOpening] = useState(false)
   const requestedStart = useRef<number | null>(null)
-  const selected = batches.find((item) => item.id === selectedId) ?? null
+  const requestedBatchId = searchParams.get('batch')
+  const selected = batches.find((item) => item.id === requestedBatchId) ?? null
+  const selectedId = selected?.id ?? null
+  function selectBatch(value: string | null) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (value) next.set('batch', value)
+      else next.delete('batch')
+      return next
+    })
+  }
   useEffect(() => {
     if (!selectedId) { setResult(null); return }
     let active = true
@@ -119,7 +130,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
     }
   }
   function openExistingReader(batch: DramaBatch) {
-    setSelectedId(batch.id)
+    selectBatch(batch.id)
     setStartOffset(batch.startOffset)
     setEndOffset(batch.endOffset)
     setLocked(true)
@@ -159,7 +170,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
           endOffset: manualEnd ? endOffset : undefined,
         })
         onBatchesChange(await listDramaBatches(project.id))
-        setSelectedId(item.id)
+        selectBatch(item.id)
         messageApi.success(`第 ${item.number} 批已创建`)
       } else if (selected) {
         const item = await updateDramaBatchRange(project.id, selected.id, { startOffset, endOffset, revision: selected.revision })
@@ -188,14 +199,14 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
     {contextHolder}
     {!selected ? <>
       <div className="drama-section-head drama-batches-head"><div><h2>剧本分集</h2><p>按原文范围建立批次，确认每一批的开头和结尾。</p></div><Tooltip title={project.status !== 'ready' ? '请先完成剧本概览解析' : ''}><span><Button type="primary" icon={<PlusOutlined />} disabled={project.status !== 'ready'} onClick={() => { setMode('beginning'); setPreviousBatchId(undefined); setChoiceOpen(true) }}>新建批次</Button></span></Tooltip></div>
-      {batches.length === 0 ? <div className="drama-empty"><Empty description="还没有批次，点击右上角新建批次" /></div> : <div className="drama-batch-grid">{batches.map((batch) => <button type="button" key={batch.id} className="drama-batch-card" onClick={() => setSelectedId(batch.id)}>
+      {batches.length === 0 ? <div className="drama-empty"><Empty description="还没有批次，点击右上角新建批次" /></div> : <div className="drama-batch-grid">{batches.map((batch) => <button type="button" key={batch.id} className="drama-batch-card" onClick={() => selectBatch(batch.id)}>
         <div><span>第 {batch.number} 批</span><Tag color={batch.status === 'stale' ? 'warning' : batch.status === 'ready' ? 'success' : batch.status === 'failed' ? 'error' : batch.status === 'running' ? 'processing' : 'default'}>{statusNames[batch.status]}</Tag></div>
         <strong>{(batch.endOffset - batch.startOffset).toLocaleString()} 字符</strong>
         <p>原文 {(batch.startOffset + 1).toLocaleString()}—{batch.endOffset.toLocaleString()} 字符</p>
         <small>终点：{boundaryNames[batch.boundary]}</small>
       </button>)}</div>}
     </> : <>
-      <div className="drama-batch-detail-head"><Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setSelectedId(null)}>返回批次</Button><Tag color={selected.status === 'stale' ? 'warning' : selected.status === 'ready' ? 'success' : selected.status === 'failed' ? 'error' : selected.status === 'running' ? 'processing' : 'default'}>{statusNames[selected.status]}</Tag></div>
+      <div className="drama-batch-detail-head"><Button type="text" icon={<ArrowLeftOutlined />} onClick={() => selectBatch(null)}>返回批次</Button><Tag color={selected.status === 'stale' ? 'warning' : selected.status === 'ready' ? 'success' : selected.status === 'failed' ? 'error' : selected.status === 'running' ? 'processing' : 'default'}>{statusNames[selected.status]}</Tag></div>
       <div className="drama-batch-detail-title"><div><h2>第 {selected.number} 批</h2><p>原文 {(selected.startOffset + 1).toLocaleString()}—{selected.endOffset.toLocaleString()} 字符 · 共 {(selected.endOffset - selected.startOffset).toLocaleString()} 字符 · {boundaryNames[selected.boundary]}</p></div><div className="drama-batch-detail-actions"><Button icon={<FileSearchOutlined />} onClick={() => openExistingReader(selected)}>查看在剧本中的位置</Button><Button type="primary" loading={analyzing || selected.status === 'running'} disabled={selected.status === 'running' || project.status !== 'ready'} onClick={() => void startAnalysis()}>{selected.status === 'ready' ? 'AI重新解析' : 'AI解析'}</Button></div></div>
       {selected.status === 'stale' && <Alert type="warning" showIcon message="上游批次范围已调整，请核对本批次起止位置" />}
       {selected.status === 'failed' && <Alert type="error" showIcon message="本批解析失败" description={selected.errorMessage?.includes('文本模型响应超时') ? '文本模型在等待时间内没有返回结果。这次解析没有产生新剧集，请点击 AI解析 重试。' : selected.errorMessage || '请重试'} />}

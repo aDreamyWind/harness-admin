@@ -4,7 +4,7 @@ import {
 } from '@ant-design/icons'
 import { Button, Card, Drawer, Empty, Input, Select, Skeleton, Tag, Typography, message } from 'antd'
 import { useEffect, useState, type ReactNode } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import {
   getDramaProject, getDramaSource, listDramaBatches, reanalyzeDramaOverview, retryDramaProject, updateDramaOverview,
@@ -42,12 +42,32 @@ function statusTag(project: DramaProject) {
 export function DramaProjectPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [messageApi, contextHolder] = message.useMessage()
   const [project, setProject] = useState<DramaProject | null>(null)
   const [batches, setBatches] = useState<DramaBatch[]>([])
   const [loading, setLoading] = useState(true)
-  const [section, setSection] = useState<Section>('overview')
-  const [assetSection, setAssetSection] = useState<AssetSection>('characters')
+  const requestedSection = searchParams.get('section')
+  const section: Section = navItems.some((item) => item.key === requestedSection) ? requestedSection as Section : 'overview'
+  const requestedAssetSection = searchParams.get('asset')
+  const assetSection: AssetSection = requestedAssetSection === 'scenes' || requestedAssetSection === 'props' ? requestedAssetSection : 'characters'
+  function selectSection(value: Section) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (value === 'overview') next.delete('section')
+      else next.set('section', value)
+      return next
+    })
+    setEditing(false)
+  }
+  function selectAssetSection(value: AssetSection) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (value === 'characters') next.delete('asset')
+      else next.set('asset', value)
+      return next
+    })
+  }
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<DramaOverview>({})
   const [saving, setSaving] = useState(false)
@@ -133,7 +153,7 @@ export function DramaProjectPage() {
       <button type="button" className="drama-back" onClick={() => navigate('/ai-apps/drama')}><ArrowLeftOutlined /> 返回 AI 漫剧</button>
       <div className="drama-workspace-brand">漫剧创作台</div>
       <nav className="drama-workspace-nav" aria-label="漫剧项目内容">
-        {navItems.map((item) => <button type="button" key={item.key} className={section === item.key ? 'active' : ''} onClick={() => { setSection(item.key); setEditing(false) }}>
+        {navItems.map((item) => <button type="button" key={item.key} className={section === item.key ? 'active' : ''} onClick={() => selectSection(item.key)}>
           {item.icon}<span>{item.label}</span>
         </button>)}
       </nav>
@@ -181,7 +201,7 @@ export function DramaProjectPage() {
       </section> : section === 'episodes' ? <DramaBatchWorkspace project={project} batches={batches} onBatchesChange={(items) => { setBatches(items); void getDramaProject(project.id).then(setProject).catch(() => {}) }} /> : section === 'assets' ? <section aria-label="角色、场景、道具">
         <div className="drama-asset-tabs" role="tablist" aria-label="资产类型">
           {([{ key: 'characters', label: '角色', count: project.characters.length }, { key: 'scenes', label: '场景', count: project.scenes.length }, { key: 'props', label: '道具', count: project.props.length }] as const).map((item) =>
-            <button key={item.key} type="button" role="tab" aria-selected={assetSection === item.key} className={assetSection === item.key ? 'active' : ''} onClick={() => setAssetSection(item.key)}>{item.label}<span>{item.count}</span></button>
+            <button key={item.key} type="button" role="tab" aria-selected={assetSection === item.key} className={assetSection === item.key ? 'active' : ''} onClick={() => selectAssetSection(item.key)}>{item.label}<span>{item.count}</span></button>
           )}
         </div>
         <div role="tabpanel" aria-label={assetSection === 'characters' ? '角色' : assetSection === 'scenes' ? '场景' : '道具'}>
