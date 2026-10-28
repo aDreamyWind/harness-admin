@@ -1,5 +1,5 @@
 import {
-  ArrowLeftOutlined, BgColorsOutlined, FileTextOutlined,
+  ArrowLeftOutlined, BgColorsOutlined, FileTextOutlined, OrderedListOutlined,
   SettingOutlined, TeamOutlined, VideoCameraOutlined,
 } from '@ant-design/icons'
 import { Button, Card, Drawer, Empty, Input, Select, Skeleton, Tag, Typography, message } from 'antd'
@@ -19,13 +19,13 @@ const phaseNames: Record<string, string> = {
 const stylePresets = ['电影写实', '国风水墨', '日系动漫', '三维动画', '暗黑漫画', '奇幻绘本', '美式漫画', '怀旧动画', '赛博霓虹']
 const ratioOptions = [{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }]
 
-type Section = 'overview' | 'characters' | 'scenes' | 'props' | 'episodes'
+type Section = 'overview' | 'episodes' | 'assets' | 'videoEpisodes'
+type AssetSection = 'characters' | 'scenes' | 'props'
 const navItems: { key: Section; label: string; icon: ReactNode }[] = [
   { key: 'overview', label: '剧本概览', icon: <FileTextOutlined /> },
-  { key: 'episodes', label: '剧本分集', icon: <VideoCameraOutlined /> },
-  { key: 'characters', label: '角色', icon: <TeamOutlined /> },
-  { key: 'scenes', label: '场景', icon: <BgColorsOutlined /> },
-  { key: 'props', label: '道具', icon: <SettingOutlined /> },
+  { key: 'episodes', label: '剧本分集', icon: <OrderedListOutlined /> },
+  { key: 'assets', label: '角色、场景、道具', icon: <TeamOutlined /> },
+  { key: 'videoEpisodes', label: '视频分集', icon: <VideoCameraOutlined /> },
 ]
 
 function selectedAspectRatio(project: DramaProject) {
@@ -45,6 +45,7 @@ export function DramaProjectPage() {
   const [project, setProject] = useState<DramaProject | null>(null)
   const [loading, setLoading] = useState(true)
   const [section, setSection] = useState<Section>('overview')
+  const [assetSection, setAssetSection] = useState<AssetSection>('characters')
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<DramaOverview>({})
   const [saving, setSaving] = useState(false)
@@ -106,14 +107,15 @@ export function DramaProjectPage() {
     finally { setSourceLoading(false) }
   }
 
-  const assets: DramaAsset[] = project ? project[section === 'characters' || section === 'scenes' || section === 'props' ? section : 'characters'] : []
+  const assets: DramaAsset[] = project ? project[assetSection] : []
   const overview = project?.overview ?? {}
   const display = (key: keyof DramaOverview, fallback = '等待解析结果') => overview[key]?.trim() || fallback
   const styleOptions = Array.from(new Set([...stylePresets, project?.style, overview.videoStyle].filter((item): item is string => Boolean(item)))).map((item) => ({ value: item, label: item }))
   function sectionCount(item: Section): number {
     if (!project || item === 'overview') return 0
     if (item === 'episodes') return project.episodes.length
-    return project[item].length
+    if (item === 'assets') return project.characters.length + project.scenes.length + project.props.length
+    return 0
   }
 
   return <div className="drama-workspace">
@@ -168,10 +170,19 @@ export function DramaProjectPage() {
         <div className="drama-overview-panels">
           {([{ key: 'background', label: '故事背景' }, { key: 'setting', label: '故事设定' }] as const).map((field) => <article key={field.key} className="drama-overview-panel"><span className="drama-field-label">{field.label}</span>{editing ? <Input.TextArea autoSize={{ minRows: 5, maxRows: 12 }} value={draft[field.key] ?? ''} onChange={(event) => changeDraft(field.key, event.target.value)} /> : <p>{display(field.key)}</p>}</article>)}
         </div>
-      </section> : <>
+      </section> : section === 'assets' ? <section aria-label="角色、场景、道具">
+        <div className="drama-asset-tabs" role="tablist" aria-label="资产类型">
+          {([{ key: 'characters', label: '角色', count: project.characters.length }, { key: 'scenes', label: '场景', count: project.scenes.length }, { key: 'props', label: '道具', count: project.props.length }] as const).map((item) =>
+            <button key={item.key} type="button" role="tab" aria-selected={assetSection === item.key} className={assetSection === item.key ? 'active' : ''} onClick={() => setAssetSection(item.key)}>{item.label}<span>{item.count}</span></button>
+          )}
+        </div>
+        <div role="tabpanel" aria-label={assetSection === 'characters' ? '角色' : assetSection === 'scenes' ? '场景' : '道具'}>
+          {assets.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，内容会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={`${item.name}-${index}`}><div className="drama-asset-icon">{assetSection === 'characters' ? <TeamOutlined /> : assetSection === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p></Card>)}</div>}
+        </div>
+      </section> : <section>
         <div className="drama-section-head"><h2>{navItems.find((item) => item.key === section)?.label}</h2></div>
-        {section === 'episodes' ? project.episodes.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，每集剧本会出现在这里" /></div> : <div className="drama-episode-list">{project.episodes.map((episode, index) => <Card key={`${episode.title}-${index}`}><span>第 {index + 1} 集</span><h3>{episode.title}</h3><p>{episode.synopsis}</p></Card>)}</div> : assets.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，内容会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={`${item.name}-${index}`}><div className="drama-asset-icon">{section === 'characters' ? <TeamOutlined /> : section === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p></Card>)}</div>}
-      </>}
+        {section === 'episodes' ? project.episodes.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，每集剧本会出现在这里" /></div> : <div className="drama-episode-list">{project.episodes.map((episode, index) => <Card key={`${episode.title}-${index}`}><span>第 {index + 1} 集</span><h3>{episode.title}</h3><p>{episode.synopsis}</p></Card>)}</div> : <div className="drama-empty"><Empty description="视频生成后，分集视频会出现在这里" /></div>}
+      </section>}
     </>}</main>
     <Drawer title={project?.sourceMode === 'generate' ? '生成剧本' : '完整原文'} open={sourceOpen} onClose={() => setSourceOpen(false)} width={760}>{sourceLoading ? <Skeleton active /> : <pre className="drama-source-text">{sourceText}</pre>}</Drawer>
   </div>

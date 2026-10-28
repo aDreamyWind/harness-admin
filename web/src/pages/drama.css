@@ -54,6 +54,12 @@
 .drama-overview-panel { min-height: 190px; padding: 26px 30px; border: 1px solid #e2e7ee; border-radius: 12px; background: #fff; }
 .drama-overview-panel p { margin: 0; white-space: pre-wrap; color: #3d4d65; font-size: 14px; line-height: 1.85; }
 .drama-overview .ant-input, .drama-overview .ant-input-affix-wrapper { border-radius: 8px; }
+.drama-asset-tabs { display: flex; gap: 4px; margin: 28px 0 20px; border-bottom: 1px solid #dfe5ee; }
+.drama-asset-tabs button { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 18px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #7b8799; font: inherit; font-size: 14px; cursor: pointer; }
+.drama-asset-tabs button:hover { color: #315fbd; }
+.drama-asset-tabs button.active { border-bottom-color: #315fbd; color: #263a62; font-weight: 600; }
+.drama-asset-tabs button span { color: #9aa5b5; font-size: 12px; }
+.drama-asset-tabs button:focus-visible { outline: 2px solid #315fbd; outline-offset: -2px; }
 .drama-section-head { margin: 28px 0 18px; }
 .drama-section-head h2 { margin: 0; font-size: 20px; }
 .drama-workspace .drama-empty { display: grid; place-items: center; min-height: 220px; border: 1px dashed #d7dfea; border-radius: 12px; background: #fff; }
