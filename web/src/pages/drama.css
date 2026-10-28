@@ -14,10 +14,10 @@
 .drama-project-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 12px; color: #7f8a9c; font-size: 13px; }
 .drama-source-text { white-space: pre-wrap; word-break: break-word; color: #30354b; font: 14px/1.9 "PingFang SC", "Microsoft YaHei", sans-serif; }
 .drama-workflow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 24px 0; }
-.drama-workflow-step { display: flex; gap: 16px; min-height: 134px; padding: 21px 23px; border: 1px solid #e0e6ee; border-radius: 12px; background: #fff; }
-.drama-workflow-step.complete { border-color: #c9e6d5; }
-.drama-workflow-step.failed { border-color: #f2d7d5; }
-.drama-workflow-step.pending { background: #fbfcfe; }
+.drama-workflow-step { display: flex; gap: 16px; min-height: 134px; padding: 21px 23px; border: 1px solid #d5e2fb; border-radius: 12px; background: #eef4ff; }
+.drama-workflow-step.complete { border-color: #c7e7d2; background: #eff9f2; }
+.drama-workflow-step.failed { border-color: #f2d0cc; background: #fff2f0; }
+.drama-workflow-step.pending { border-color: #e1e5eb; background: #f5f7fa; }
 .drama-workflow-number { display: grid; flex: none; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: #eaf0ff; color: #315fbd; font-size: 12px; font-weight: 700; }
 .drama-workflow-step.complete .drama-workflow-number { background: #e9f6ee; color: #27815a; }
 .drama-workflow-step.failed .drama-workflow-number { background: #fff0ed; color: #c4564c; }
@@ -25,9 +25,10 @@
 .drama-workflow-body { min-width: 0; }
 .drama-workflow-title { display: flex; align-items: center; gap: 11px; margin: 4px 0 11px; }
 .drama-workflow-title strong { color: #26324a; font-size: 15px; }
-.drama-workflow-title span { color: #6d7e98; font-size: 12px; }
-.drama-workflow-step.complete .drama-workflow-title span { color: #27815a; }
-.drama-workflow-step.failed .drama-workflow-title span { color: #c4564c; }
+.drama-workflow-title span { padding: 3px 8px; border-radius: 999px; background: #dce9ff; color: #315fbd; font-size: 12px; font-weight: 600; }
+.drama-workflow-step.complete .drama-workflow-title span { background: #d9f0e1; color: #27815a; }
+.drama-workflow-step.failed .drama-workflow-title span { background: #ffe0dc; color: #b84740; }
+.drama-workflow-step.pending .drama-workflow-title span { background: #e9edf2; color: #758197; }
 .drama-workflow-body p { margin: 0; color: #7b8799; font-size: 13px; line-height: 1.7; }
 .drama-workflow-error { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 10px; color: #bd5049; font-size: 12px; overflow-wrap: anywhere; }
 .drama-overview { margin-top: 24px; }
