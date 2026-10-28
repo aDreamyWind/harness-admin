@@ -365,7 +365,7 @@ const overviewAnalysisPrompt = `你是漫剧项目的原文分析员。只分析
 
 // Analyze 在后台完成剧本概览。完整原文入库，模型只读取前 ParseRuneLimit 个字符。
 func (s *Service) Analyze(project Project) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	if project.SourceMode == "generate" && !project.ForceOverview {
 		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", "script", nil); err != nil {

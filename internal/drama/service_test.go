@@ -432,9 +432,11 @@ func overviewChunkReplies(count int) []string {
 
 func TestAnalyzeBatchStoresEpisodesAndAssets(t *testing.T) {
 	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
-	repo := &fakeRepository{project: Project{ID: id, Title: "测试剧", Status: "ready", SourceText: "第一章\n张三走入竹林。", Overview: json.RawMessage(`{"synopsis":"寻找竹林"}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, EndOffset: 13, Revision: 1}}}
+	repo := &fakeRepository{project: Project{ID: id, Title: "测试剧", Status: "ready", SourceText: "第一章\n张三走入竹林。", Overview: json.RawMessage(`{"synopsis":"寻找竹林"}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, Revision: 1}}}
 	repo.batches[0].EndOffset = len([]rune(repo.project.SourceText))
-	writer := &fakeWriter{replies: []string{`{"characters":[{"name":"张三","description":"主角"}],"scenes":[{"name":"竹林","description":"夜晚的竹林"}],"props":[],"episodes":[{"title":"入林","synopsis":"张三进入竹林","scriptText":"【竹林 外 夜】\n张三走入竹林。","characters":[{"name":"张三","stateLabel":"默认形象"}],"scenes":[{"name":"竹林","stateLabel":"夜晚"}],"props":[]}]}`}}
+	art := `{"characters":[{"name":"张三","description":"主角","appearanceDescription":"黑发青衣","voiceDescription":"低沉清亮"}],"scenes":[{"name":"竹林","description":"夜晚的竹林"}],"props":[]}`
+	director := `{"episodes":[{"title":"入林","synopsis":"张三进入竹林","scriptText":"【竹林 外 夜】\n张三走入竹林。","characters":[{"name":"张三","stateLabel":"默认形象"}],"scenes":[{"name":"竹林","stateLabel":"夜晚"}],"props":[]}]}`
+	writer := &fakeWriter{replies: []string{art, director}}
 	service := NewService(repo, writer)
 	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
 	if err != nil {
@@ -443,16 +445,21 @@ func TestAnalyzeBatchStoresEpisodesAndAssets(t *testing.T) {
 	if err = service.AnalyzeBatch(job); err != nil {
 		t.Fatal(err)
 	}
-	if repo.batches[0].Status != "ready" || len(repo.batchDraft.Episodes) != 1 || len(repo.batchDraft.Characters) != 1 {
-		t.Fatalf("批次结果未保存: %+v", repo.batchDraft)
+	if repo.batches[0].Status != "ready" || len(repo.batchDraft.Episodes) != 1 || len(repo.batchDraft.Characters) != 1 || repo.batchDraft.Characters[0].VoiceDescription != "低沉清亮" {
+		t.Fatalf("两阶段结果未保存: %+v", repo.batchDraft)
+	}
+	if len(writer.prompts) != 2 || !strings.Contains(writer.prompts[0], "美术指导") || !strings.Contains(writer.prompts[1], "漫剧导演") || !strings.Contains(writer.prompts[1], "黑发青衣") {
+		t.Fatal("应先提取角色形象与音色，再提供给导演拆集")
 	}
 }
 
-func TestAnalyzeBatchRetriesTimedOutSegment(t *testing.T) {
+func TestAnalyzeBatchRetriesTimedOutArtSegment(t *testing.T) {
 	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
 	repo := &fakeRepository{project: Project{ID: id, Title: "短剧", Status: "ready", SourceText: "第一章\n张三走入竹林。", Overview: json.RawMessage(`{}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, Revision: 1}}}
 	repo.batches[0].EndOffset = len([]rune(repo.project.SourceText))
-	writer := &fakeWriter{errors: []error{ErrModelTimeout}, replies: []string{`{"characters":[],"scenes":[],"props":[],"episodes":[{"title":"入林","scriptText":"【竹林 外 日】\n张三走入竹林。"}]}`}}
+	art := `{"characters":[],"scenes":[],"props":[]}`
+	director := `{"episodes":[{"title":"入林","scriptText":"【竹林 外 日】\n张三走入竹林。"}]}`
+	writer := &fakeWriter{errors: []error{ErrModelTimeout}, replies: []string{art, director}}
 	service := NewService(repo, writer)
 	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
 	if err != nil {
@@ -461,17 +468,18 @@ func TestAnalyzeBatchRetriesTimedOutSegment(t *testing.T) {
 	if err = service.AnalyzeBatch(job); err != nil {
 		t.Fatal(err)
 	}
-	if len(writer.prompts) != 2 || repo.batches[0].Status != "ready" {
-		t.Fatalf("超时后未只重试当前段: %d 次，状态 %s", len(writer.prompts), repo.batches[0].Status)
+	if len(writer.prompts) != 3 || writer.prompts[0] != writer.prompts[1] || repo.batches[0].Status != "ready" {
+		t.Fatalf("美术指导超时后未重试当前段: %d 次，状态 %s", len(writer.prompts), repo.batches[0].Status)
 	}
 }
 
-func TestAnalyzeBatchRetriesOnlyCurrentSegment(t *testing.T) {
+func TestAnalyzeBatchRetriesOnlyCurrentDirectorSegment(t *testing.T) {
 	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
 	source := strings.Repeat("甲", BatchAnalysisChunkLimit+100)
 	repo := &fakeRepository{project: Project{ID: id, Title: "长剧", Status: "ready", SourceText: source, Overview: json.RawMessage(`{}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, EndOffset: len([]rune(source)), Revision: 1}}}
-	reply := `{"characters":[],"scenes":[],"props":[],"episodes":[{"title":"片段","scriptText":"【场景 外 日】\n人物行动。"}]}`
-	writer := &fakeWriter{errors: []error{nil, ErrModelTimeout}, replies: []string{reply, reply}}
+	art := `{"characters":[],"scenes":[],"props":[]}`
+	director := `{"episodes":[{"title":"片段","scriptText":"【场景 外 日】\n人物行动。"}]}`
+	writer := &fakeWriter{errors: []error{nil, nil, nil, ErrModelTimeout}, replies: []string{art, art, director, director}}
 	service := NewService(repo, writer)
 	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
 	if err != nil {
@@ -480,7 +488,24 @@ func TestAnalyzeBatchRetriesOnlyCurrentSegment(t *testing.T) {
 	if err = service.AnalyzeBatch(job); err != nil {
 		t.Fatal(err)
 	}
-	if len(writer.prompts) != 3 || writer.prompts[0] == writer.prompts[1] || writer.prompts[1] != writer.prompts[2] || len(repo.batchDraft.Episodes) != 2 {
-		t.Fatalf("应只重试超时的第二段，调用 %d 次、剧集 %d 集", len(writer.prompts), len(repo.batchDraft.Episodes))
+	if len(writer.prompts) != 5 || writer.prompts[0] == writer.prompts[2] || writer.prompts[3] != writer.prompts[4] || len(repo.batchDraft.Episodes) != 2 {
+		t.Fatalf("应只重试超时的导演片段，调用 %d 次、剧集 %d 集", len(writer.prompts), len(repo.batchDraft.Episodes))
+	}
+}
+
+func TestAnalyzeBatchRejectsMissingArtLists(t *testing.T) {
+	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
+	repo := &fakeRepository{project: Project{ID: id, Title: "短剧", Status: "ready", SourceText: "原文", Overview: json.RawMessage(`{}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, EndOffset: 2, Revision: 1}}}
+	writer := &fakeWriter{replies: []string{`{}`}}
+	service := NewService(repo, writer)
+	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.AnalyzeBatch(job); err == nil || !strings.Contains(err.Error(), "美术指导第 1 段") {
+		t.Fatalf("应指出美术指导结果格式错误: %v", err)
+	}
+	if repo.batches[0].Status != "failed" || len(writer.prompts) != 1 {
+		t.Fatal("无效资产结果不应进入导演阶段")
 	}
 }

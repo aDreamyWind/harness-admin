@@ -203,7 +203,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
       {result?.episodes.length ? <>
       <Card className="drama-batch-result"><h3>角色、场景、道具</h3>
         {result && assetSections.map((section) => <div className="drama-batch-asset-group" key={section.key}><h4>{section.title}列表（{result.assets[section.field].length}）</h4>
-          {result.assets[section.field].length ? <div className="drama-batch-asset-list">{result.assets[section.field].map((asset) => <div key={asset.id} className="drama-batch-asset-row"><strong>{asset.name}</strong><span>{asset.description}</span></div>)}</div> : <p className="drama-batch-muted">暂无{section.title}</p>}</div>)}
+          {result.assets[section.field].length ? <div className="drama-batch-asset-list">{result.assets[section.field].map((asset) => <div key={asset.id} className="drama-batch-asset-row"><strong>{asset.name}</strong><div className="drama-batch-asset-copy"><span>{asset.description}</span>{section.key === 'character' && asset.appearanceDescription && <small>外貌：{asset.appearanceDescription}</small>}{section.key === 'character' && asset.voiceDescription && <small>音色：{asset.voiceDescription}</small>}</div></div>)}</div> : <p className="drama-batch-muted">暂无{section.title}</p>}</div>)}
       </Card>
       <Card className="drama-batch-result"><h3>剧本内容</h3>
         {result?.episodes.length ? result.episodes.map((episode) => <details className="drama-batch-episode" key={episode.id} open={episode.number === 1}><summary>第{episode.number}集：{episode.title}</summary>

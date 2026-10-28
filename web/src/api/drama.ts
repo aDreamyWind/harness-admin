@@ -7,7 +7,7 @@ export interface DramaSettings {
   videoModelCode: string
   updatedAt?: string
 }
-export interface DramaAsset { name: string; description: string }
+export interface DramaAsset { name: string; description: string; appearanceDescription?: string; voiceDescription?: string }
 export interface DramaEpisode { title: string; synopsis: string }
 export interface DramaOverview {
   videoStyle?: string
@@ -117,7 +117,7 @@ export const updateDramaBatchRange = (id: string, batchId: string, input: DramaB
 })
 
 export type DramaAssetKind = 'character' | 'scene' | 'prop'
-export interface DramaCatalogAsset { id: string; kind: DramaAssetKind; name: string; description: string }
+export interface DramaCatalogAsset { id: string; kind: DramaAssetKind; name: string; description: string; appearanceDescription: string; voiceDescription: string }
 export interface DramaEpisodeAsset extends DramaCatalogAsset { assetId: string; stateLabel: string }
 export interface DramaScriptEpisode {
   id: string; number: number; title: string; synopsis: string; scriptText: string

@@ -25,7 +25,7 @@ type dramaForwarder interface {
 	Forward(context.Context, modelgateway.Route, []byte, bool) (*http.Response, error)
 }
 
-const dramaRequestTimeoutMS = 120000
+const dramaRequestTimeoutMS = 10 * 60 * 1000
 
 type dramaWriter struct {
 	gateway   dramaModelGateway

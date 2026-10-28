@@ -40,6 +40,12 @@ func (f *dramaForwarderStub) Forward(_ context.Context, route modelgateway.Route
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"{\"synopsis\":\"故事\"}"}}],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}`))}, nil
 }
 
+func TestDramaWriterUsesTenMinuteTimeout(t *testing.T) {
+	if dramaRequestTimeoutMS != 600000 {
+		t.Fatalf("漫剧单次模型调用应等待 10 分钟，实际 %d 毫秒", dramaRequestTimeoutMS)
+	}
+}
+
 func TestDramaWriterRecordsGatewayCall(t *testing.T) {
 	gateway := &dramaGatewayStub{}
 	forwarder := &dramaForwarderStub{}

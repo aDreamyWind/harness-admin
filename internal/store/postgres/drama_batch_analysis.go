@@ -75,19 +75,31 @@ func (r *DramaRepository) SaveBatchResult(ctx context.Context, org, owner, proje
 		return err
 	}
 	assetIDs := map[string]string{}
-	upsert := func(kind, name, description string) (string, error) {
+	upsert := func(kind, name, description, appearance, voice string) (string, error) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return "", nil
 		}
 		key := kind + "\x00" + name
 		if id := assetIDs[key]; id != "" {
+			if description != "" || appearance != "" || voice != "" {
+				_, err := tx.Exec(ctx, `UPDATE drama_assets SET
+				 description=CASE WHEN $2<>'' THEN $2 ELSE description END,
+				 appearance_description=CASE WHEN $3<>'' THEN $3 ELSE appearance_description END,
+				 voice_description=CASE WHEN $4<>'' THEN $4 ELSE voice_description END,
+				 updated_at=NOW() WHERE id=$1`, id, description, appearance, voice)
+				return id, err
+			}
 			return id, nil
 		}
 		id := uuid.NewString()
-		err := tx.QueryRow(ctx, `INSERT INTO drama_assets (id,project_id,kind,name,description) VALUES ($1,$2,$3,$4,$5)
-   ON CONFLICT (project_id,kind,name) DO UPDATE SET description=CASE WHEN EXCLUDED.description<>'' THEN EXCLUDED.description ELSE drama_assets.description END, updated_at=NOW()
-   RETURNING id`, id, project, kind, name, description).Scan(&id)
+		err := tx.QueryRow(ctx, `INSERT INTO drama_assets (id,project_id,kind,name,description,appearance_description,voice_description) VALUES ($1,$2,$3,$4,$5,$6,$7)
+   ON CONFLICT (project_id,kind,name) DO UPDATE SET
+    description=CASE WHEN EXCLUDED.description<>'' THEN EXCLUDED.description ELSE drama_assets.description END,
+    appearance_description=CASE WHEN EXCLUDED.appearance_description<>'' THEN EXCLUDED.appearance_description ELSE drama_assets.appearance_description END,
+    voice_description=CASE WHEN EXCLUDED.voice_description<>'' THEN EXCLUDED.voice_description ELSE drama_assets.voice_description END,
+    updated_at=NOW()
+   RETURNING id`, id, project, kind, name, description, appearance, voice).Scan(&id)
 		if err != nil {
 			return "", fmt.Errorf("保存%s资产失败: %w", kind, err)
 		}
@@ -100,7 +112,7 @@ func (r *DramaRepository) SaveBatchResult(ctx context.Context, org, owner, proje
 		items []drama.AssetDraft
 	}{{"character", draft.Characters}, {"scene", draft.Scenes}, {"prop", draft.Props}} {
 		for _, a := range group.items {
-			if _, err = upsert(group.kind, a.Name, a.Description); err != nil {
+			if _, err = upsert(group.kind, a.Name, a.Description, a.AppearanceDescription, a.VoiceDescription); err != nil {
 				return err
 			}
 		}
@@ -116,7 +128,7 @@ func (r *DramaRepository) SaveBatchResult(ctx context.Context, org, owner, proje
 			items []drama.EpisodeAssetDraft
 		}{{"character", episode.Characters}, {"scene", episode.Scenes}, {"prop", episode.Props}} {
 			for _, a := range group.items {
-				id, e := upsert(group.kind, a.Name, "")
+				id, e := upsert(group.kind, a.Name, "", "", "")
 				if e != nil {
 					return e
 				}
@@ -139,7 +151,7 @@ func (r *DramaRepository) SaveBatchResult(ctx context.Context, org, owner, proje
 
 func scanAsset(row pgx.Row) (drama.Asset, error) {
 	var a drama.Asset
-	err := row.Scan(&a.ID, &a.Kind, &a.Name, &a.Description)
+	err := row.Scan(&a.ID, &a.Kind, &a.Name, &a.Description, &a.AppearanceDescription, &a.VoiceDescription)
 	return a, err
 }
 func (r *DramaRepository) ListProjectAssets(ctx context.Context, org, owner, project, kind, query string) ([]drama.Asset, error) {
@@ -151,7 +163,7 @@ func (r *DramaRepository) ListProjectAssets(ctx context.Context, org, owner, pro
 	if !exists {
 		return nil, drama.ErrNotFound
 	}
-	rows, err := r.db.Query(ctx, `SELECT id,kind,name,description FROM drama_assets WHERE project_id=$1 AND kind=$2 AND name ILIKE '%'||$3||'%' ORDER BY name LIMIT 200`, project, kind, query)
+	rows, err := r.db.Query(ctx, `SELECT id,kind,name,description,appearance_description,voice_description FROM drama_assets WHERE project_id=$1 AND kind=$2 AND name ILIKE '%'||$3||'%' ORDER BY name LIMIT 200`, project, kind, query)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +184,7 @@ func (r *DramaRepository) GetBatchResult(ctx context.Context, org, owner, projec
 		return drama.BatchResult{}, err
 	}
 	result := drama.BatchResult{Batch: batch, Assets: drama.BatchAssets{Characters: []drama.Asset{}, Scenes: []drama.Asset{}, Props: []drama.Asset{}}, Episodes: []drama.ScriptEpisode{}}
-	rows, err := r.db.Query(ctx, `SELECT a.id,a.kind,a.name,a.description FROM drama_assets a JOIN drama_batch_assets ba ON ba.asset_id=a.id WHERE ba.batch_id=$1 ORDER BY a.kind,a.name`, batchID)
+	rows, err := r.db.Query(ctx, `SELECT a.id,a.kind,a.name,a.description,a.appearance_description,a.voice_description FROM drama_assets a JOIN drama_batch_assets ba ON ba.asset_id=a.id WHERE ba.batch_id=$1 ORDER BY a.kind,a.name`, batchID)
 	if err != nil {
 		return result, err
 	}
@@ -217,13 +229,13 @@ func (r *DramaRepository) GetBatchResult(ctx context.Context, org, owner, projec
 		return result, err
 	}
 	for i := range result.Episodes {
-		links, e := r.db.Query(ctx, `SELECT l.id,l.asset_id,a.kind,a.name,a.description,l.state_label FROM drama_episode_asset_links l JOIN drama_assets a ON a.id=l.asset_id WHERE l.episode_id=$1 ORDER BY a.kind,a.name,l.state_label`, result.Episodes[i].ID)
+		links, e := r.db.Query(ctx, `SELECT l.id,l.asset_id,a.kind,a.name,a.description,a.appearance_description,a.voice_description,l.state_label FROM drama_episode_asset_links l JOIN drama_assets a ON a.id=l.asset_id WHERE l.episode_id=$1 ORDER BY a.kind,a.name,l.state_label`, result.Episodes[i].ID)
 		if e != nil {
 			return result, e
 		}
 		for links.Next() {
 			var a drama.EpisodeAsset
-			if e = links.Scan(&a.ID, &a.AssetID, &a.Kind, &a.Name, &a.Description, &a.StateLabel); e != nil {
+			if e = links.Scan(&a.ID, &a.AssetID, &a.Kind, &a.Name, &a.Description, &a.AppearanceDescription, &a.VoiceDescription, &a.StateLabel); e != nil {
 				links.Close()
 				return result, e
 			}
@@ -257,7 +269,7 @@ func (r *DramaRepository) AddEpisodeAsset(ctx context.Context, org, owner, proje
 	if err != nil {
 		return a, err
 	}
-	err = r.db.QueryRow(ctx, `SELECT kind,name,description FROM drama_assets WHERE id=$1`, a.AssetID).Scan(&a.Kind, &a.Name, &a.Description)
+	err = r.db.QueryRow(ctx, `SELECT kind,name,description,appearance_description,voice_description FROM drama_assets WHERE id=$1`, a.AssetID).Scan(&a.Kind, &a.Name, &a.Description, &a.AppearanceDescription, &a.VoiceDescription)
 	return a, err
 }
 func (r *DramaRepository) RemoveEpisodeAsset(ctx context.Context, org, owner, project, episode, link string) error {

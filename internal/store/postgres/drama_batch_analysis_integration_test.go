@@ -45,7 +45,7 @@ func TestDramaBatchResultDatabaseRoundTrip(t *testing.T) {
 	if batch.Status != "running" {
 		t.Fatalf("批次状态 %s", batch.Status)
 	}
-	draft := drama.BatchDraft{Characters: []drama.AssetDraft{{Name: "张三", Description: "主角"}}, Scenes: []drama.AssetDraft{{Name: "竹林", Description: "林间"}}, Episodes: []drama.EpisodeDraft{{Title: "入林", Synopsis: "张三走入竹林", ScriptText: "【竹林 外 日】\n张三走入竹林。", Characters: []drama.EpisodeAssetDraft{{Name: "张三", StateLabel: "默认形象"}}, Scenes: []drama.EpisodeAssetDraft{{Name: "竹林", StateLabel: "白天"}}}}}
+	draft := drama.BatchDraft{Characters: []drama.AssetDraft{{Name: "张三", Description: "主角", AppearanceDescription: "黑发青衣", VoiceDescription: "低沉清亮"}}, Scenes: []drama.AssetDraft{{Name: "竹林", Description: "林间"}}, Episodes: []drama.EpisodeDraft{{Title: "入林", Synopsis: "张三走入竹林", ScriptText: "【竹林 外 日】\n张三走入竹林。", Characters: []drama.EpisodeAssetDraft{{Name: "张三", StateLabel: "默认形象"}}, Scenes: []drama.EpisodeAssetDraft{{Name: "竹林", StateLabel: "白天"}}}}}
 	if err = repo.SaveBatchResult(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, draft); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestDramaBatchResultDatabaseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Batch.Status != "ready" || len(result.Assets.Characters) != 1 || len(result.Episodes) != 1 || len(result.Episodes[0].Scenes) != 1 {
+	if result.Batch.Status != "ready" || len(result.Assets.Characters) != 1 || len(result.Episodes) != 1 || len(result.Episodes[0].Scenes) != 1 || result.Assets.Characters[0].AppearanceDescription != "黑发青衣" || result.Episodes[0].Characters[0].VoiceDescription != "低沉清亮" {
 		t.Fatalf("批次结果不完整: %+v", result)
 	}
 	assets, err := repo.ListProjectAssets(ctx, org, owner, id, "character", "张")

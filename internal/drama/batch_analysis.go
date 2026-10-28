@@ -17,19 +17,23 @@ const BatchAnalysisChunkLimit = 5000
 var ErrBatchRunning = errors.New("当前批次正在解析")
 
 type Asset struct {
-	ID          string `json:"id"`
-	Kind        string `json:"kind"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID                    string `json:"id"`
+	Kind                  string `json:"kind"`
+	Name                  string `json:"name"`
+	Description           string `json:"description"`
+	AppearanceDescription string `json:"appearanceDescription"`
+	VoiceDescription      string `json:"voiceDescription"`
 }
 
 type EpisodeAsset struct {
-	ID          string `json:"id"`
-	AssetID     string `json:"assetId"`
-	Kind        string `json:"kind"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	StateLabel  string `json:"stateLabel"`
+	ID                    string `json:"id"`
+	AssetID               string `json:"assetId"`
+	Kind                  string `json:"kind"`
+	Name                  string `json:"name"`
+	Description           string `json:"description"`
+	AppearanceDescription string `json:"appearanceDescription"`
+	VoiceDescription      string `json:"voiceDescription"`
+	StateLabel            string `json:"stateLabel"`
 }
 
 type ScriptEpisode struct {
@@ -56,8 +60,10 @@ type BatchResult struct {
 }
 
 type AssetDraft struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name                  string `json:"name"`
+	Description           string `json:"description"`
+	AppearanceDescription string `json:"appearanceDescription"`
+	VoiceDescription      string `json:"voiceDescription"`
 }
 
 type EpisodeAssetDraft struct {
@@ -120,7 +126,7 @@ func (s *Service) StartBatchAnalysis(ctx context.Context, organizationID, ownerI
 }
 
 func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Hour)
 	defer cancel()
 	batch := job.Batch
 	length := batch.EndOffset - batch.StartOffset
@@ -134,53 +140,113 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 	}
 	chunks := splitBatchSource(runes)
 	result := BatchDraft{Characters: []AssetDraft{}, Scenes: []AssetDraft{}, Props: []AssetDraft{}, Episodes: []EpisodeDraft{}}
-	previousSynopsis := ""
+	artResults := make([]BatchDraft, len(chunks))
 	for index, chunk := range chunks {
-		prompt := fmt.Sprintf(`你是漫剧编剧与剧本解析员。只改编提供的原文，不添加原文没有的事件或结局。原文已有“第N集”时尊重原有集界；没有分集时按这一段的完整剧情弧拆成一至数集。将小说叙述改成可拍摄的剧本，包含场景标题、动作和对白，保留关键因果与人物关系。不要把上一段的剧情重复写进本段。人物、场景、道具只能来自这段原文。
-返回严格 JSON 对象，键为 characters、scenes、props、episodes。前三项均为对象数组，每项含 name、description；episodes 为非空数组，每项含 title、synopsis、scriptText、characters、scenes、props，其中后三项为对象数组，每项含 name、stateLabel，名称要和上面资产列表一致。scriptText 必须是完整的中文剧本正文，不是大纲。每个片段尽量按剧情自然拆集，不要固定集数。不要输出 Markdown。
+		prompt := fmt.Sprintf(`你是漫剧美术指导。只依据当前原文和已确认的项目概览，提取后续绘制与配音需要保持一致的角色、场景和关键道具。不要编造原文没有的身份、外貌、音色或物件；原文没有明确线索的字段填空字符串。不要生成剧集或剧本。
+返回严格 JSON 对象，仅有 characters、scenes、props 三个数组。角色每项含 name、description、appearanceDescription、voiceDescription：description 写身份、性格和人物关系；appearanceDescription 写原文可证实的年龄感、身形、面貌、发型、服装等视觉特征；voiceDescription 写原文可证实的音色、语气及说话习惯，不能把性格猜成音色。场景和道具每项含 name、description，场景描述地点、时代、光线及可见环境，道具描述外观和剧情用途。名称要简短且前后一致；仅收录确实出现、对剧情或制作有用的资产，不列泛泛提到的物品。缺失的数组返回空数组，不要输出 Markdown。
 作品：%s
 项目概览：%s
-上一段末集梗概（仅用于衔接）：%s
 本批原文片段 %d/%d：
-%s`,
-			job.ProjectTitle, string(job.Overview), previousSynopsis, index+1, len(chunks), string(chunk))
-		response, callErr := s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
-		if errors.Is(callErr, ErrModelTimeout) && ctx.Err() == nil {
-			// 超时由供应商在响应头前耗尽等待时间引起；短暂退避后仅重试当前段。
-			timer := time.NewTimer(2 * time.Second)
-			select {
-			case <-timer.C:
-				response, callErr = s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
-			case <-ctx.Done():
-				timer.Stop()
-				callErr = ctx.Err()
-			}
-		}
+%s`, job.ProjectTitle, string(job.Overview), index+1, len(chunks), string(chunk))
+		response, callErr := s.completeBatchPrompt(ctx, job, prompt)
 		if callErr != nil {
-			return s.failBatch(job, fmt.Errorf("第 %d 段模型调用失败: %w", index+1, callErr))
+			return s.failBatch(job, fmt.Errorf("美术指导第 %d 段模型调用失败: %w", index+1, callErr))
 		}
 		data, parseErr := parseObject(response)
 		if parseErr != nil {
-			return s.failBatch(job, fmt.Errorf("第 %d 段返回格式无效: %w", index+1, parseErr))
+			return s.failBatch(job, fmt.Errorf("美术指导第 %d 段返回格式无效: %w", index+1, parseErr))
 		}
-		var part BatchDraft
-		if parseErr := json.Unmarshal(data, &part); parseErr != nil {
-			return s.failBatch(job, fmt.Errorf("第 %d 段剧本结构无效: %w", index+1, parseErr))
+		var art BatchDraft
+		if parseErr := json.Unmarshal(data, &art); parseErr != nil {
+			return s.failBatch(job, fmt.Errorf("美术指导第 %d 段资产结构无效: %w", index+1, parseErr))
 		}
+		if parseErr := validateArtDraft(data, art); parseErr != nil {
+			return s.failBatch(job, fmt.Errorf("美术指导第 %d 段资产结果不完整: %w", index+1, parseErr))
+		}
+		artResults[index] = art
+		result.Characters = append(result.Characters, art.Characters...)
+		result.Scenes = append(result.Scenes, art.Scenes...)
+		result.Props = append(result.Props, art.Props...)
+	}
+	previousSynopsis := ""
+	for index, chunk := range chunks {
+		assetsJSON, marshalErr := json.Marshal(struct {
+			Characters []AssetDraft `json:"characters"`
+			Scenes     []AssetDraft `json:"scenes"`
+			Props      []AssetDraft `json:"props"`
+		}{artResults[index].Characters, artResults[index].Scenes, artResults[index].Props})
+		if marshalErr != nil {
+			return s.failBatch(job, fmt.Errorf("整理第 %d 段美术资产失败: %w", index+1, marshalErr))
+		}
+		prompt := fmt.Sprintf(`你是漫剧导演兼短剧编剧。根据当前原文片段进行分集拆分，并写出可以拍摄的完整中文剧本。只改编原文已经发生的事件，不增加新人物、因果或结局。原文有“第N集”时尊重原集界；没有时按完整剧情弧自然拆集，不按固定字数或固定集数机械拆分。短剧节奏要求：开场迅速建立人物目标或悬念，每场推动冲突与信息变化，结尾尽量留下转折、悬念或下一步行动；不要为制造反转而编造原文事实。剧本文本包含清楚的场景标题（地点、内外、时间）、可视化动作和对白，少用无法拍摄的心理叙述。
+返回严格 JSON 对象，仅有 episodes 数组。每集包含 title、synopsis、scriptText、characters、scenes、props；后三项是关联资产数组，每项含 name、stateLabel。名称只能从下方美术资产清单选择；stateLabel 记录本集形象、时段或状态，无法确定时填空字符串。scriptText 必须是完整剧本正文，不是大纲或剧情摘要。不要重复改写上一段已经完成的剧情，不要输出 Markdown。
+作品：%s
+项目概览：%s
+上一段末集梗概（仅用于衔接）：%s
+本段美术资产清单：%s
+本批原文片段 %d/%d：
+%s`, job.ProjectTitle, string(job.Overview), previousSynopsis, string(assetsJSON), index+1, len(chunks), string(chunk))
+		response, callErr := s.completeBatchPrompt(ctx, job, prompt)
+		if callErr != nil {
+			return s.failBatch(job, fmt.Errorf("导演第 %d 段模型调用失败: %w", index+1, callErr))
+		}
+		data, parseErr := parseObject(response)
+		if parseErr != nil {
+			return s.failBatch(job, fmt.Errorf("导演第 %d 段返回格式无效: %w", index+1, parseErr))
+		}
+		var directed struct {
+			Episodes []EpisodeDraft `json:"episodes"`
+		}
+		if parseErr := json.Unmarshal(data, &directed); parseErr != nil {
+			return s.failBatch(job, fmt.Errorf("导演第 %d 段剧本结构无效: %w", index+1, parseErr))
+		}
+		part := BatchDraft{Characters: artResults[index].Characters, Scenes: artResults[index].Scenes, Props: artResults[index].Props, Episodes: directed.Episodes}
 		if parseErr := validateBatchDraft(part); parseErr != nil {
-			return s.failBatch(job, fmt.Errorf("第 %d 段解析结果不完整: %w", index+1, parseErr))
+			return s.failBatch(job, fmt.Errorf("导演第 %d 段解析结果不完整: %w", index+1, parseErr))
 		}
-		result.Characters = append(result.Characters, part.Characters...)
-		result.Scenes = append(result.Scenes, part.Scenes...)
-		result.Props = append(result.Props, part.Props...)
-		result.Episodes = append(result.Episodes, part.Episodes...)
-		previousSynopsis = part.Episodes[len(part.Episodes)-1].Synopsis
+		result.Episodes = append(result.Episodes, directed.Episodes...)
+		previousSynopsis = directed.Episodes[len(directed.Episodes)-1].Synopsis
 		if utf8.RuneCountInString(previousSynopsis) > 500 {
 			previousSynopsis = string([]rune(previousSynopsis)[:500])
 		}
 	}
 	if err := s.repository.SaveBatchResult(ctx, job.OrganizationID, job.OwnerID, batch.ProjectID, batch.ID, batch.AnalysisRevision, result); err != nil {
 		return s.failBatch(job, err)
+	}
+	return nil
+}
+
+func (s *Service) completeBatchPrompt(ctx context.Context, job BatchAnalysisJob, prompt string) (string, error) {
+	response, callErr := s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
+	if errors.Is(callErr, ErrModelTimeout) && ctx.Err() == nil {
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-timer.C:
+			response, callErr = s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
+		case <-ctx.Done():
+			timer.Stop()
+			callErr = ctx.Err()
+		}
+	}
+	return response, callErr
+}
+
+func validateArtDraft(raw json.RawMessage, art BatchDraft) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	for _, key := range []string{"characters", "scenes", "props"} {
+		if _, ok := fields[key]; !ok {
+			return fmt.Errorf("缺少 %s 列表", key)
+		}
+	}
+	for _, group := range [][]AssetDraft{art.Characters, art.Scenes, art.Props} {
+		for _, asset := range group {
+			if strings.TrimSpace(asset.Name) == "" || utf8.RuneCountInString(asset.Name) > 120 {
+				return errors.New("资产名称无效")
+			}
+		}
 	}
 	return nil
 }

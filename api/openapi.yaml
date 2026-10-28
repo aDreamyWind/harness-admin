@@ -3174,6 +3174,8 @@ components:
       properties:
         name: { type: string }
         description: { type: string }
+        appearanceDescription: { type: string, description: 角色外貌与服饰描述。 }
+        voiceDescription: { type: string, description: 角色音色与说话特征描述。 }
     DramaEpisode:
       type: object
       properties:
@@ -3189,12 +3191,14 @@ components:
         text: { type: string }
     DramaCatalogAsset:
       type: object
-      required: [id, kind, name, description]
+      required: [id, kind, name, description, appearanceDescription, voiceDescription]
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, enum: [character, scene, prop] }
         name: { type: string }
         description: { type: string }
+        appearanceDescription: { type: string, description: 角色外貌与服饰描述，非角色为空字符串。 }
+        voiceDescription: { type: string, description: 角色音色与说话特征描述，非角色为空字符串。 }
     DramaEpisodeAsset:
       allOf:
         - { $ref: '#/components/schemas/DramaCatalogAsset' }

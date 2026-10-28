@@ -153,8 +153,8 @@ export function DramaProjectPage() {
         </div>
         <div className="drama-workflow-step pending">
           <span className="drama-workflow-number">02</span>
-          <div className="drama-workflow-body"><div className="drama-workflow-title"><strong>剧本解析</strong><span>规则待补充</span></div>
-            <p>每批最多 10 万字，终点取范围内最接近上限的下一章或下一集开头；若没有标题，再找段落结尾。后续将生成剧本分集并提取角色、场景、道具。</p>
+          <div className="drama-workflow-body"><div className="drama-workflow-title"><strong>剧本解析</strong><span>美术指导与导演</span></div>
+            <p>每批最多 10 万字，终点取范围内最接近上限的下一章或下一集开头；若没有标题，再找段落结尾。AI先提取角色、场景、道具，再拆分剧集并生成剧本。</p>
           </div>
         </div>
       </section>
@@ -185,7 +185,7 @@ export function DramaProjectPage() {
           )}
         </div>
         <div role="tabpanel" aria-label={assetSection === 'characters' ? '角色' : assetSection === 'scenes' ? '场景' : '道具'}>
-          {assets.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，内容会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={`${item.name}-${index}`}><div className="drama-asset-icon">{assetSection === 'characters' ? <TeamOutlined /> : assetSection === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p></Card>)}</div>}
+          {assets.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，内容会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={`${item.name}-${index}`}><div className="drama-asset-icon">{assetSection === 'characters' ? <TeamOutlined /> : assetSection === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p>{assetSection === 'characters' && item.appearanceDescription && <p>外貌：{item.appearanceDescription}</p>}{assetSection === 'characters' && item.voiceDescription && <p>音色：{item.voiceDescription}</p>}</Card>)}</div>}
         </div>
       </section> : <section>
         <div className="drama-section-head"><h2>{navItems.find((item) => item.key === section)?.label}</h2></div>
