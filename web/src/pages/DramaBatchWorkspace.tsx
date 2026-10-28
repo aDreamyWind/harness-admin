@@ -148,7 +148,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
       </div>
       {mode === 'previous' && <Select className="drama-batch-previous" placeholder="选择已有批次" value={previousBatchId} onChange={setPreviousBatchId} options={batches.filter((item) => item.endOffset < project.sourceLength).map((item) => ({ value: item.id, label: `第 ${item.number} 批 · 结束于 ${item.endOffset.toLocaleString()} 字符` }))} />}
     </Modal>
-    <Modal open={readerMode !== null} footer={null} onCancel={() => { setReaderMode(null); setLocked(true) }} width="min(92vw, 1500px)" className="drama-reader-modal" title={null} closable={false} destroyOnHidden styles={{ container: { padding: 0, background: '#10141c' }, body: { padding: 0 } }}>
+    <Modal open={readerMode !== null} footer={null} onCancel={() => { setReaderMode(null); setLocked(true) }} width="min(92vw, 1500px)" className="drama-reader-modal" title={null} closable={false} destroyOnHidden styles={{ container: { padding: 0, background: '#fff' }, body: { padding: 0 } }}>
       {readerMode && <DramaSourceReader project={project} startOffset={startOffset} endOffset={endOffset} locked={locked}
         onStartChange={(value) => void changeStart(value)} onEndChange={(value) => { requestedStart.current = null; setEndOffset(value); setManualEnd(true) }} onUnlock={unlock}
         onSave={() => void saveRange()} onClose={() => { setReaderMode(null); setLocked(true) }} saving={saving} saveLabel={readerMode === 'create' ? '保存批次' : '保存范围'} />}
