@@ -58,6 +58,9 @@ export const getDramaSource = (id: string) => request<{ sourceText: string }>(`/
 export const retryDramaProject = (id: string) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/retry`, {
   method: 'POST', headers: csrfHeaders(),
 })
+export const reanalyzeDramaOverview = (id: string) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/reanalyze-overview`, {
+  method: 'POST', headers: csrfHeaders(),
+})
 export const createDramaProject = (input: CreateDramaInput) => request<DramaProject>('/api/v1/ai-drama/projects', {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })

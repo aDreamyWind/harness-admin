@@ -19,6 +19,7 @@ type DramaService interface {
 	SaveSettings(context.Context, drama.Settings) (drama.Settings, error)
 	Create(context.Context, drama.CreateInput) (drama.Project, error)
 	Retry(context.Context, string, string, string) (drama.Project, error)
+	ReanalyzeOverview(context.Context, string, string, string) (drama.Project, error)
 	List(context.Context, string, string) ([]drama.Project, error)
 	Get(context.Context, string, string, string) (drama.Project, error)
 	GetSource(context.Context, string, string, string) (string, error)
@@ -114,6 +115,20 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 		go func() {
 			if err := deps.Drama.Analyze(project); err != nil {
 				deps.Logger.Error("AI 漫剧重新解析失败", "project_id", project.ID, "error", err)
+			}
+		}()
+		httpx.OK(ctx, http.StatusAccepted, project)
+	})
+	group.POST("/projects/:id/reanalyze-overview", requireCSRF(deps), func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		project, err := deps.Drama.ReanalyzeOverview(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		go func() {
+			if err := deps.Drama.Analyze(project); err != nil {
+				deps.Logger.Error("AI 漫剧概览重新解析失败", "project_id", project.ID, "error", err)
 			}
 		}()
 		httpx.OK(ctx, http.StatusAccepted, project)

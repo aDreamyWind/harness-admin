@@ -36,6 +36,9 @@ func (s *dramaServiceStub) Create(_ context.Context, input drama.CreateInput) (d
 func (s *dramaServiceStub) Retry(_ context.Context, organizationID, ownerID, id string) (drama.Project, error) {
 	return drama.Project{ID: id, OrganizationID: organizationID, OwnerID: ownerID, Status: "queued", SourceText: "已保存原文"}, nil
 }
+func (s *dramaServiceStub) ReanalyzeOverview(_ context.Context, organizationID, ownerID, id string) (drama.Project, error) {
+	return drama.Project{ID: id, OrganizationID: organizationID, OwnerID: ownerID, Status: "queued", SourceText: "已保存原文"}, nil
+}
 func (s *dramaServiceStub) List(context.Context, string, string) ([]drama.Project, error) {
 	return []drama.Project{}, nil
 }
@@ -211,4 +214,33 @@ func TestDramaBatchEndpointsRequireSessionAndCSRF(t *testing.T) {
 	if got := call(http.MethodPatch, base+"/batches/3a364763-e0df-4cb4-9c55-88ab0a11ff94/range", `{"startOffset":0,"endOffset":4,"revision":1}`, true, false); got.Code != http.StatusForbidden {
 		t.Fatalf("缺少 CSRF 仍可改批次: %d", got.Code)
 	}
+}
+
+func TestDramaReanalyzeOverviewRequiresSessionAndCSRF(t *testing.T) {
+	service := &dramaServiceStub{started: make(chan struct{}, 1)}
+	router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}}, Drama: service, SessionCookie: "test_session"})
+	path := "/api/v1/ai-drama/projects/b6e6da1c-7c27-4f72-babf-34a7c4e19617/reanalyze-overview"
+	call := func(cookie, csrf bool) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, path, nil)
+		if cookie {
+			request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+		}
+		if csrf {
+			request.Header.Set("X-CSRF-Token", "csrf-token")
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	if response := call(false, false); response.Code != http.StatusUnauthorized {
+		t.Fatalf("未登录仍可重新解析: %d", response.Code)
+	}
+	if response := call(true, false); response.Code != http.StatusForbidden {
+		t.Fatalf("缺少 CSRF 仍可重新解析: %d", response.Code)
+	}
+	if response := call(true, true); response.Code != http.StatusAccepted {
+		t.Fatalf("重新解析未排队: %d %s", response.Code, response.Body.String())
+	}
+	<-service.started
 }

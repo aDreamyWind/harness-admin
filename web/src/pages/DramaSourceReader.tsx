@@ -67,7 +67,7 @@ export function DramaSourceReader({ project, startOffset, endOffset, locked, onS
   const pageNumber = Math.floor(pageStart / PAGE_SIZE) + 1
   const pageCount = Math.max(1, Math.ceil(project.sourceLength / PAGE_SIZE))
   const selectedLength = startOffset !== null && endOffset !== null && endOffset > startOffset ? endOffset - startOffset : 0
-  const invalidRange = startOffset === null || endOffset === null || endOffset <= startOffset || endOffset - startOffset > 50000
+  const invalidRange = startOffset === null || endOffset === null || endOffset <= startOffset || endOffset - startOffset > 100000
 
   useEffect(() => {
     if (!navigation || loading || !page || navigation.offset < page.startOffset || navigation.offset >= page.endOffset) return
@@ -128,8 +128,8 @@ export function DramaSourceReader({ project, startOffset, endOffset, locked, onS
         <p>点击工具，再点击正文中的位置。重复标记会替换原位置。</p>
         <Tooltip title={locked ? '点击解锁后修改' : ''}><span><Button block disabled={locked} type={tool === 'start' && !locked ? 'primary' : 'default'} onClick={() => setTool('start')}>标记开头</Button></span></Tooltip>
         <Tooltip title={locked ? '点击解锁后修改' : ''}><span><Button block disabled={locked} type={tool === 'end' && !locked ? 'primary' : 'default'} onClick={() => setTool('end')}>标记结尾</Button></span></Tooltip>
-        <div className="drama-reader-range"><span>开头</span><strong>{startOffset === null ? '未标记' : `${(startOffset + 1).toLocaleString()} 字符`}</strong><span>结尾</span><strong>{endOffset === null ? '未标记' : `${endOffset.toLocaleString()} 字符`}</strong><span>已选</span><strong>{selectedLength.toLocaleString()} / 50,000 字符</strong></div>
-        {selectedLength > 50000 && <Alert type="error" showIcon message="单批不得超过 5 万字，请调整标记" />}
+        <div className="drama-reader-range"><span>开头</span><strong>{startOffset === null ? '未标记' : `${(startOffset + 1).toLocaleString()} 字符`}</strong><span>结尾</span><strong>{endOffset === null ? '未标记' : `${endOffset.toLocaleString()} 字符`}</strong><span>已选</span><strong>{selectedLength.toLocaleString()} / 100,000 字符</strong></div>
+        {selectedLength > 100000 && <Alert type="error" showIcon message="单批不得超过 10 万字，请调整标记" />}
         {(startOffset !== null || endOffset !== null) && <div className="drama-reader-quick">{startOffset !== null && <Button size="small" onClick={() => goTo(startOffset)}>查看开头标记</Button>}{endOffset !== null && <Button size="small" onClick={() => goTo(Math.max(0, endOffset - 1))}>查看结尾标记</Button>}</div>}
         {locked ? <div className="drama-reader-lock"><Alert type="warning" showIcon icon={<ExclamationCircleFilled />} message="解锁修改可能影响已解析的剧本、视频等内容" /><Button icon={<UnlockOutlined />} onClick={onUnlock}>解锁范围</Button></div> : <div className="drama-reader-save"><Button type="primary" block disabled={invalidRange} loading={saving} onClick={onSave}>{saveLabel}</Button><span>{invalidRange ? '请先标记有效的开头和结尾' : <><LockOutlined /> 原文只读，仅保存起止位置</>}</span></div>}
       </aside>

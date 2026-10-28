@@ -42,6 +42,13 @@ func (r *fakeRepository) RetryFailed(_ context.Context, _, _, _, modelCode strin
 	r.project.Characters, r.project.Scenes, r.project.Props, r.project.Episodes = json.RawMessage(`[]`), json.RawMessage(`[]`), json.RawMessage(`[]`), json.RawMessage(`[]`)
 	return r.project, nil
 }
+func (r *fakeRepository) QueueOverviewReparse(_ context.Context, _, _, _, modelCode string) (Project, error) {
+	if r.project.Status != "ready" && r.project.Status != "failed" {
+		return Project{}, ErrNotFound
+	}
+	r.project.Status, r.project.Phase, r.project.Error, r.project.ModelCode = "queued", "waiting", "", modelCode
+	return r.project, nil
+}
 func (r *fakeRepository) GetSource(_ context.Context, _, _, _ string) (string, error) {
 	return r.project.SourceText, nil
 }
@@ -143,11 +150,10 @@ func (w *fakeWriter) Complete(_ context.Context, _, _, _ string, prompt string) 
 }
 
 func TestCreateAndAnalyzePreservesFullSource(t *testing.T) {
-	source := strings.Repeat("山", ParseRuneLimit+456)
+	source := strings.Repeat("山", ParseRuneLimit-1) + "界" + strings.Repeat("海", 456)
 	repo := &fakeRepository{settings: Settings{TextModelCode: "writer"}}
-	writer := &fakeWriter{replies: []string{
-		`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"阿青","genre":"奇幻","synopsis":"寻找故乡","background":"古代","setting":"画中世界"}`,
-	}}
+	writer := &fakeWriter{replies: append(overviewChunkReplies((ParseRuneLimit+OverviewChunkRuneLimit-1)/OverviewChunkRuneLimit),
+		`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"阿青","genre":"奇幻","synopsis":"寻找故乡","background":"古代","setting":"画中世界"}`)}
 	service := NewService(repo, writer)
 	project, err := service.Create(context.Background(), CreateInput{OrganizationID: "org", OwnerID: "user", Title: "画中人", SourceText: source, Style: "国风", AspectRatio: "9:16"})
 	if err != nil {
@@ -159,11 +165,11 @@ func TestCreateAndAnalyzePreservesFullSource(t *testing.T) {
 	if err := service.Analyze(project); err != nil {
 		t.Fatal(err)
 	}
-	if repo.project.Status != "ready" || repo.project.Phase != "overview_done" || len(writer.prompts) != 1 {
+	if repo.project.Status != "ready" || repo.project.Phase != "overview_done" || len(writer.prompts) != 1+(ParseRuneLimit+OverviewChunkRuneLimit-1)/OverviewChunkRuneLimit {
 		t.Fatalf("概览解析阶段错误: %+v, 调用次数 %d", repo.project, len(writer.prompts))
 	}
-	if strings.Contains(writer.prompts[0], strings.Repeat("山", ParseRuneLimit+1)) {
-		t.Fatal("解析传入了超出三万字的原文")
+	if !strings.Contains(writer.prompts[len(writer.prompts)-2], "界") || strings.Contains(strings.Join(writer.prompts, ""), "海") {
+		t.Fatal("事实提取没有准确覆盖原文前十万字")
 	}
 	if validateStage("story", repo.project.Overview) != nil || string(repo.project.Characters) != "[]" || string(repo.project.Episodes) != "[]" {
 		t.Fatal("上传后应只保存概览，资产和分集留到剧本解析阶段")
@@ -268,4 +274,58 @@ func TestUpdateOverviewValidatesSelectionFields(t *testing.T) {
 			t.Fatalf("无效选择项应被拒绝: %s %v", value, err)
 		}
 	}
+}
+
+func TestReanalyzeOverviewUsesSavedSourceAndReplacesResult(t *testing.T) {
+	id := "b6e6da1c-7c27-4f72-babf-34a7c4e19617"
+	old := json.RawMessage(`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"旧主角","genre":"奇幻","synopsis":"旧梗概","background":"旧背景","setting":"旧设定"}`)
+	source := strings.Repeat("山", ParseRuneLimit) + "末尾不应传给模型"
+	repo := &fakeRepository{project: Project{ID: id, OrganizationID: "org", OwnerID: "user", Status: "ready", SourceMode: "upload", Title: "长篇", SourceText: source, SourceLength: len([]rune(source)), ModelCode: "old", Overview: old}, settings: Settings{TextModelCode: "writer"}}
+	writer := &fakeWriter{replies: append(overviewChunkReplies((ParseRuneLimit+OverviewChunkRuneLimit-1)/OverviewChunkRuneLimit),
+		`{"videoStyle":"电影写实","aspectRatio":"9:16","protagonist":"新主角","genre":"冒险","synopsis":"新梗概","background":"新背景","setting":"新设定"}`)}
+	service := NewService(repo, writer)
+	queued, err := service.ReanalyzeOverview(context.Background(), "org", "user", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued.ForceOverview || queued.Status != "queued" || queued.ModelCode != "writer" || string(repo.project.Overview) != string(old) {
+		t.Fatalf("重新解析排队时应保留旧概览并使用当前模型: %+v", queued)
+	}
+	if _, err := service.ReanalyzeOverview(context.Background(), "org", "user", id); !errors.Is(err, ErrRetryNotAllowed) {
+		t.Fatalf("排队中不能重复解析: %v", err)
+	}
+	if err := service.Analyze(queued); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.prompts) != 1+(ParseRuneLimit+OverviewChunkRuneLimit-1)/OverviewChunkRuneLimit || !strings.Contains(writer.prompts[len(writer.prompts)-2], strings.Repeat("山", OverviewChunkRuneLimit)) || strings.Contains(strings.Join(writer.prompts, ""), "末尾不应传给模型") {
+		t.Fatal("概览应读取原文前十万字")
+	}
+	var result map[string]string
+	if err := json.Unmarshal(repo.project.Overview, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["protagonist"] != "新主角" || result["synopsis"] != "新梗概" || repo.project.Status != "ready" {
+		t.Fatalf("旧结果没有被替换: %+v", repo.project)
+	}
+}
+
+func TestReanalyzeOverviewRejectsMissingOverviewAndModel(t *testing.T) {
+	id := "b6e6da1c-7c27-4f72-babf-34a7c4e19617"
+	repo := &fakeRepository{project: Project{ID: id, Status: "ready", SourceLength: 3, Overview: json.RawMessage(`{}`)}}
+	service := NewService(repo, &fakeWriter{})
+	if _, err := service.ReanalyzeOverview(context.Background(), "org", "user", id); !errors.Is(err, ErrRetryNotAllowed) {
+		t.Fatalf("无完整概览不应重新解析: %v", err)
+	}
+	repo.project.Overview = json.RawMessage(`{"videoStyle":"国风","aspectRatio":"9:16","protagonist":"甲","genre":"奇幻","synopsis":"梗概","background":"背景","setting":"设定"}`)
+	if _, err := service.ReanalyzeOverview(context.Background(), "org", "user", id); !errors.Is(err, ErrModelNotConfigured) {
+		t.Fatalf("未配置模型应拒绝: %v", err)
+	}
+}
+
+func overviewChunkReplies(count int) []string {
+	replies := make([]string, count)
+	for i := range replies {
+		replies[i] = `{"events":"主角采取行动，处境发生变化","characters":"主角","backgroundFacts":"","settingFacts":"","unresolved":""}`
+	}
+	return replies
 }

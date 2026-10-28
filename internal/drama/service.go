@@ -18,7 +18,8 @@ var ErrModelNotConfigured = errors.New("请先在漫剧设置中配置可用的�
 var ErrModelUnavailable = errors.New("所选模型未启用或当前账号无权使用")
 var ErrRetryNotAllowed = errors.New("当前项目不能重新解析")
 
-const ParseRuneLimit = 30000
+const ParseRuneLimit = 100000
+const OverviewChunkRuneLimit = 20000
 
 type Project struct {
 	ID             string          `json:"id"`
@@ -27,6 +28,7 @@ type Project struct {
 	Title          string          `json:"title"`
 	SourceName     string          `json:"sourceName"`
 	SourceText     string          `json:"-"`
+	ForceOverview  bool            `json:"-"`
 	SourceLength   int             `json:"sourceLength"`
 	SourceMode     string          `json:"sourceMode"`
 	Style          string          `json:"style"`
@@ -80,6 +82,7 @@ type Repository interface {
 	FailInterrupted(context.Context) error
 	SaveGeneratedScript(context.Context, string, string, string, string) error
 	RetryFailed(context.Context, string, string, string, string) (Project, error)
+	QueueOverviewReparse(context.Context, string, string, string, string) (Project, error)
 	GetSettings(context.Context, string, string) (Settings, error)
 	SaveSettings(context.Context, Settings) (Settings, error)
 }
@@ -259,6 +262,50 @@ func (s *Service) Retry(ctx context.Context, organizationID, ownerID, id string)
 	return project, nil
 }
 
+// ReanalyzeOverview 使用当前用户的文本模型重新解析已完成的概览，保留旧结果直到新结果写入。
+func (s *Service) ReanalyzeOverview(ctx context.Context, organizationID, ownerID, id string) (Project, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return Project{}, ErrInvalidInput
+	}
+	project, err := s.repository.Get(ctx, organizationID, ownerID, id)
+	if err != nil {
+		return Project{}, err
+	}
+	if (project.Status != "ready" && project.Status != "failed") || project.SourceLength == 0 || validateStage("story", project.Overview) != nil {
+		return Project{}, ErrRetryNotAllowed
+	}
+	settings, err := s.GetSettings(ctx, organizationID, ownerID)
+	if err != nil {
+		return Project{}, err
+	}
+	if settings.TextModelCode == "" {
+		return Project{}, ErrModelNotConfigured
+	}
+	models, err := s.AvailableModels(ctx, organizationID, ownerID)
+	if err != nil {
+		return Project{}, err
+	}
+	available := false
+	for _, item := range models {
+		if item.Code == settings.TextModelCode && item.ModelType == "chat" {
+			available = true
+			break
+		}
+	}
+	if !available {
+		return Project{}, ErrModelNotConfigured
+	}
+	project, err = s.repository.QueueOverviewReparse(ctx, organizationID, ownerID, id, settings.TextModelCode)
+	if errors.Is(err, ErrNotFound) {
+		return Project{}, ErrRetryNotAllowed
+	}
+	if err != nil {
+		return Project{}, fmt.Errorf("重新解析漫剧概览失败: %w", err)
+	}
+	project.ForceOverview = true
+	return project, nil
+}
+
 func (s *Service) GetSource(ctx context.Context, organizationID, ownerID, id string) (string, error) {
 	if _, err := uuid.Parse(id); err != nil {
 		return "", ErrInvalidInput
@@ -290,11 +337,23 @@ func (s *Service) UpdateOverview(ctx context.Context, organizationID, ownerID, i
 	return s.repository.UpdateOverview(ctx, organizationID, ownerID, id, overview)
 }
 
+const overviewAnalysisPrompt = `你是漫剧项目的原文分析员。只分析给出的原文范围，不续写、不补造后续剧情；把角色推测、传闻与已证实的事实区分开。
+请返回严格 JSON 对象，且只包含 videoStyle、aspectRatio、protagonist、genre、synopsis、background、setting 七个键，值全部为中文字符串。
+字段要求：
+- videoStyle：沿用输入的视频风格；aspectRatio：沿用输入的画面比例。
+- protagonist：写原文中的主角姓名或稳定称谓；不要把重要配角误当主角。
+- genre：用一个主类型加必要的子类型概括，不用空泛的“剧情”。
+- synopsis：用连贯叙述写清已出现的起因、主角目标、阻碍、关键人物关系、已发生的转折和当前悬念。重视因果和具体事件，不写模板化赞美或未出现的结局。
+- background：说明原文已交代的时代、地点、社会环境、势力或历史背景；不把人物行动重复成背景。
+- setting：按一条一行列出影响剧情的世界规则、能力限制、重要物件和组织关系；只写原文有依据的规则，不把猜测写成设定。
+某项缺乏依据时写“原文前段未明确”，不要猜测。梗概、背景、设定应有足够细节，让后续编剧能据此继续工作。
+`
+
 // Analyze 在后台完成剧本概览。完整原文入库，模型只读取前 ParseRuneLimit 个字符。
 func (s *Service) Analyze(project Project) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	if project.SourceMode == "generate" {
+	if project.SourceMode == "generate" && !project.ForceOverview {
 		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", "script", nil); err != nil {
 			return s.fail(project, err)
 		}
@@ -322,16 +381,20 @@ func (s *Service) Analyze(project Project) error {
 		}
 		project.SourceText = script.Script
 	}
-	if validateStage("story", project.Overview) != nil {
+	if project.ForceOverview || validateStage("story", project.Overview) != nil {
 		source := []rune(project.SourceText)
 		if len(source) > ParseRuneLimit {
 			source = source[:ParseRuneLimit]
 		}
-		base := fmt.Sprintf("作品名：%s\n视频风格：%s\n画面比例：%s\n请仅依据以下剧本/小说内容工作，不要臆造后续剧情。\n原文：\n%s", project.Title, project.Style, project.AspectRatio, string(source))
 		if err := s.repository.SaveAnalysis(ctx, project.OrganizationID, project.OwnerID, project.ID, "running", "story", nil); err != nil {
 			return s.fail(project, err)
 		}
-		result, err := s.writer.Complete(ctx, project.OrganizationID, project.OwnerID, project.ModelCode, "你是漫剧编剧。提取项目概览，返回严格 JSON 对象，键为 videoStyle、aspectRatio、protagonist、genre、synopsis、background、setting，值全部为中文字符串。\n"+base)
+		contextText, contextLabel, err := s.overviewSourceContext(ctx, project, source)
+		if err != nil {
+			return s.fail(project, err)
+		}
+		base := fmt.Sprintf("作品名：%s\n视频风格：%s\n画面比例：%s\n请仅依据以下%s工作，不要臆造后续剧情。\n%s：\n%s", project.Title, project.Style, project.AspectRatio, contextLabel, contextLabel, contextText)
+		result, err := s.writer.Complete(ctx, project.OrganizationID, project.OwnerID, project.ModelCode, overviewAnalysisPrompt+base)
 		if err != nil {
 			return s.fail(project, err)
 		}
@@ -350,6 +413,39 @@ func (s *Service) Analyze(project Project) error {
 		return s.fail(project, err)
 	}
 	return nil
+}
+
+// overviewSourceContext 对长原文分段提取事实，再交给最终概览汇总。
+func (s *Service) overviewSourceContext(ctx context.Context, project Project, source []rune) (string, string, error) {
+	if len(source) <= OverviewChunkRuneLimit {
+		return string(source), "原文", nil
+	}
+	count := (len(source) + OverviewChunkRuneLimit - 1) / OverviewChunkRuneLimit
+	extracts := make([]string, 0, count)
+	for start := 0; start < len(source); start += OverviewChunkRuneLimit {
+		end := min(start+OverviewChunkRuneLimit, len(source))
+		prompt := fmt.Sprintf("你是小说与剧本的事实提取员。只处理当前片段，不预测后文，不写总体概览。返回严格 JSON 对象，键为 events、characters、backgroundFacts、settingFacts、unresolved，值均为中文字符串。events 按“谁做了什么→结果与变化”记录关键事件及因果；characters 记录人物姓名/别名、目标与关系；backgroundFacts 记录时代地点与势力；settingFacts 记录已证实的规则和限制；unresolved 记录尚未证实的传闻、伏笔和疑问。每项尽量简洁，整份不超过 1200 个汉字。缺乏依据的字段填空字符串。原文片段 %d/%d（字符 %d—%d）：\n%s", len(extracts)+1, count, start+1, end, string(source[start:end]))
+		result, err := s.writer.Complete(ctx, project.OrganizationID, project.OwnerID, project.ModelCode, prompt)
+		if err != nil {
+			return "", "", fmt.Errorf("概览第 %d 段事实提取失败: %w", len(extracts)+1, err)
+		}
+		data, err := parseObject(result)
+		if err != nil {
+			return "", "", fmt.Errorf("概览第 %d 段事实格式无效: %w", len(extracts)+1, err)
+		}
+		var item struct {
+			Events          string `json:"events"`
+			Characters      string `json:"characters"`
+			BackgroundFacts string `json:"backgroundFacts"`
+			SettingFacts    string `json:"settingFacts"`
+			Unresolved      string `json:"unresolved"`
+		}
+		if json.Unmarshal(data, &item) != nil || strings.TrimSpace(item.Events) == "" {
+			return "", "", fmt.Errorf("概览第 %d 段缺少事件事实", len(extracts)+1)
+		}
+		extracts = append(extracts, fmt.Sprintf("原文字符 %d—%d：%s", start+1, end, string(data)))
+	}
+	return strings.Join(extracts, "\n"), "逐段事实摘录", nil
 }
 
 func (s *Service) fail(project Project, err error) error {

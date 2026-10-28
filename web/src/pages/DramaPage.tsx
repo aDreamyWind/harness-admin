@@ -7,7 +7,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import {
-  getDramaProject, getDramaSource, listDramaBatches, retryDramaProject, updateDramaOverview,
+  getDramaProject, getDramaSource, listDramaBatches, reanalyzeDramaOverview, retryDramaProject, updateDramaOverview,
   type DramaAsset, type DramaBatch, type DramaOverview, type DramaProject,
 } from '../api/drama'
 import { DramaBatchWorkspace } from './DramaBatchWorkspace'
@@ -52,6 +52,7 @@ export function DramaProjectPage() {
   const [draft, setDraft] = useState<DramaOverview>({})
   const [saving, setSaving] = useState(false)
   const [retrying, setRetrying] = useState(false)
+  const [reanalyzing, setReanalyzing] = useState(false)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [sourceLoading, setSourceLoading] = useState(false)
   const [sourceText, setSourceText] = useState('')
@@ -106,6 +107,13 @@ export function DramaProjectPage() {
     catch (error) { messageApi.error(error instanceof Error ? error.message : '重新解析失败') }
     finally { setRetrying(false) }
   }
+  async function reanalyze() {
+    if (!project) return
+    setReanalyzing(true)
+    try { setProject(await reanalyzeDramaOverview(project.id)); messageApi.success('已开始重新解析概览') }
+    catch (error) { messageApi.error(error instanceof Error ? error.message : '重新解析失败') }
+    finally { setReanalyzing(false) }
+  }
   async function showSource() {
     if (!project) return
     setSourceOpen(true)
@@ -147,14 +155,14 @@ export function DramaProjectPage() {
         <div className={`drama-workflow-step ${project.status === 'ready' ? 'complete' : project.status === 'failed' ? 'failed' : 'active'}`}>
           <span className="drama-workflow-number">01</span>
           <div className="drama-workflow-body"><div className="drama-workflow-title"><strong>概览解析</strong><span>{project.status === 'ready' ? '已完成' : project.status === 'failed' ? '需要重试' : '进行中'}</span></div>
-            <p>创建项目后自动读取原文前 3 万字，整理主角、故事类型、梗概与背景设定。</p>
-            {project.status === 'failed' && <div className="drama-workflow-error">{project.error}{project.sourceMode === 'upload' && <Button size="small" loading={retrying} onClick={() => void retry()}>重新解析概览</Button>}</div>}
+            <p>创建项目后自动读取原文前 10 万字，整理主角、故事类型、梗概与背景设定。</p>
+            {project.status === 'failed' && <div className="drama-workflow-error">{project.error}{project.sourceMode === 'upload' && !overview.protagonist && <Button size="small" loading={retrying} onClick={() => void retry()}>重新解析概览</Button>}</div>}
           </div>
         </div>
         <div className="drama-workflow-step pending">
           <span className="drama-workflow-number">02</span>
           <div className="drama-workflow-body"><div className="drama-workflow-title"><strong>剧本解析</strong><span>规则待补充</span></div>
-            <p>每批最多 5 万字，终点取范围内最接近上限的下一章或下一集开头；若没有标题，再找段落结尾。后续将生成剧本分集并提取角色、场景、道具。</p>
+            <p>每批最多 10 万字，终点取范围内最接近上限的下一章或下一集开头；若没有标题，再找段落结尾。后续将生成剧本分集并提取角色、场景、道具。</p>
           </div>
         </div>
       </section>
@@ -165,7 +173,7 @@ export function DramaProjectPage() {
             <label><span>视频风格</span><Select value={editing ? draft.videoStyle : display('videoStyle', project.style)} options={styleOptions} onChange={(value) => changeSelection('videoStyle', value)} /></label>
             <label><span>画面比例</span><Select value={editing ? draft.aspectRatio : selectedAspectRatio(project)} options={ratioOptions} onChange={(value) => changeSelection('aspectRatio', value)} /></label>
           </div>
-          <div className="drama-overview-actions">{editing ? <><Button onClick={() => setEditing(false)}>取消</Button><Button type="primary" loading={saving} onClick={() => void save()}>保存修改</Button></> : <Button onClick={beginEditing}>编辑概览</Button>}</div>
+          <div className="drama-overview-actions">{editing ? <><Button onClick={() => setEditing(false)}>取消</Button><Button type="primary" loading={saving} onClick={() => void save()}>保存修改</Button></> : <><Button loading={reanalyzing} disabled={project.status === 'queued' || project.status === 'running' || (project.status === 'failed' && !overview.protagonist)} onClick={() => void reanalyze()}>AI重新解析</Button><Button onClick={beginEditing}>编辑概览</Button></>}</div>
         </div>
         <article className="drama-synopsis-card">
           <div className="drama-story-facts">

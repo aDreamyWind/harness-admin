@@ -66,6 +66,10 @@ func TestDramaOverviewAndRetryQueriesAcceptParameters(t *testing.T) {
 	if !errors.Is(err, drama.ErrNotFound) {
 		t.Fatalf("概览更新语句未正确执行: %v", err)
 	}
+	_, err = repository.QueueOverviewReparse(ctx, missingID, missingID, missingID, "writer")
+	if !errors.Is(err, drama.ErrNotFound) {
+		t.Fatalf("概览重新解析更新语句未正确执行: %v", err)
+	}
 	_, err = repository.RetryFailed(ctx, missingID, missingID, missingID, "writer")
 	if !errors.Is(err, drama.ErrNotFound) {
 		t.Fatalf("重试更新语句未正确执行: %v", err)

@@ -15,7 +15,7 @@ interface Props {
 }
 
 const boundaryNames: Record<DramaBatch['boundary'], string> = {
-  episode: '完整分集', chapter: '章节结尾', paragraph: '段落结尾', limit: '5 万字上限', end: '原文末尾', manual: '手动标记',
+  episode: '完整分集', chapter: '章节结尾', paragraph: '段落结尾', limit: '10 万字上限', end: '原文末尾', manual: '手动标记',
 }
 const statusNames: Record<DramaBatch['status'], string> = { pending: '待解析', stale: '范围需核对', ready: '已解析' }
 
@@ -82,7 +82,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
     }
   }
   async function saveRange() {
-    if (startOffset === null || endOffset === null || endOffset <= startOffset || endOffset - startOffset > 50000) return
+    if (startOffset === null || endOffset === null || endOffset <= startOffset || endOffset - startOffset > 100000) return
     if (readerMode === 'view' && selected && selected.startOffset === startOffset && selected.endOffset === endOffset) {
       setReaderMode(null)
       setLocked(true)

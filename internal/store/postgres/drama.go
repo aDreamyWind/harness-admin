@@ -108,6 +108,13 @@ func (r *DramaRepository) RetryFailed(ctx context.Context, organizationID, owner
 		RETURNING `+dramaColumns, organizationID, ownerID, id, modelCode))
 }
 
+func (r *DramaRepository) QueueOverviewReparse(ctx context.Context, organizationID, ownerID, id, modelCode string) (drama.Project, error) {
+	return scanDrama(r.db.QueryRow(ctx, `UPDATE drama_projects SET status='queued', phase='waiting',
+        error_message='', model_code=$4, updated_at=NOW()
+        WHERE organization_id=$1 AND owner_id=$2 AND id=$3 AND status IN ('ready','failed') AND source_length > 0
+        RETURNING `+dramaColumns, organizationID, ownerID, id, modelCode))
+}
+
 func (r *DramaRepository) GetSource(ctx context.Context, organizationID, ownerID, id string) (string, error) {
 	var source string
 	err := r.db.QueryRow(ctx, `SELECT source_text FROM drama_projects WHERE organization_id=$1 AND owner_id=$2 AND id=$3`, organizationID, ownerID, id).Scan(&source)
@@ -118,7 +125,7 @@ func (r *DramaRepository) GetSource(ctx context.Context, organizationID, ownerID
 }
 
 const saveDramaAnalysisSQL = `UPDATE drama_projects SET status=$4::text, phase=$5::text,
-		overview=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN $6::jsonb || overview ELSE overview END,
+		overview=CASE WHEN $5::text='story' AND $6::jsonb IS NOT NULL THEN overview || $6::jsonb ELSE overview END,
 		characters=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'characters','[]'::jsonb) ELSE characters END,
 		scenes=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'scenes','[]'::jsonb) ELSE scenes END,
 		props=CASE WHEN $5::text='assets' AND $6::jsonb IS NOT NULL THEN COALESCE($6::jsonb->'props','[]'::jsonb) ELSE props END,

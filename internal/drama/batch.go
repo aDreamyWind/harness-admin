@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const BatchRuneLimit = 50000
+const BatchRuneLimit = 100000
 const SourcePageLimit = 12000
 
 var ErrBatchNotReady = errors.New("请先完成剧本概览解析")
@@ -66,7 +66,7 @@ func normalizedHeading(line string) string {
 	return strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), " \t\ufeff#＃=＝【[]()（）「」『』*＊—─-·"))
 }
 
-// FindBatchEnd 只在起点后的最多五万字符内找边界，绝不跨过上限。
+// FindBatchEnd 只在起点后的最多十万字符内找边界，绝不跨过上限。
 func FindBatchEnd(source string, start, total int) BatchSuggestion {
 	runes := []rune(source)
 	if len(runes) > BatchRuneLimit {

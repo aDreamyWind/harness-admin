@@ -82,7 +82,7 @@ paths:
             schema: { $ref: '#/components/schemas/DramaCreateInput' }
       responses:
         '201':
-          description: 已保存项目及完整原文；后台读取前 3 万字生成概览，完整原文留待后续剧本解析。
+          description: 已保存项目及完整原文；后台读取前 10 万字生成概览，完整原文留待后续剧本解析。
           content:
             application/json:
               schema:
@@ -128,6 +128,26 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 项目状态不允许重试，或当前用户未配置可用文本模型。 }
+  /ai-drama/projects/{id}/reanalyze-overview:
+    post:
+      summary: 使用当前用户配置的文本模型重新解析剧本概览
+      description: 从已保存原文的前十万字符重新生成概览；解析成功前保留旧概览。只允许已有完整概览的本人项目调用。
+      operationId: reanalyzeDramaOverview
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202':
+          description: 项目已排队重新解析。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaProject' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 项目状态不允许重新解析，或当前用户未配置可用文本模型。 }
   /ai-drama/projects/{id}/source/range:
     get:
       summary: 按 Unicode 字符位置分页读取不可编辑的完整原文
@@ -169,7 +189,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       summary: 根据起点方式创建待解析批次
-      description: 服务端自动建议不超过五万字的终点；也可提交手动终点。当前只保存原文区间，不启动 AI 剧集生成。
+      description: 服务端自动建议不超过十万字的终点；也可提交手动终点。当前只保存原文区间，不启动 AI 剧集生成。
       operationId: createDramaBatch
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
@@ -193,7 +213,7 @@ paths:
         '409': { description: 概览尚未完成。 }
   /ai-drama/projects/{id}/batches/suggest:
     get:
-      summary: 按选定起点建议五万字内的最近完整边界
+      summary: 按选定起点建议十万字内的最近完整边界
       operationId: suggestDramaBatch
       security: [{ sessionCookie: [] }]
       parameters:
@@ -203,7 +223,7 @@ paths:
         - { name: startOffset, in: query, schema: { type: integer, minimum: 0 } }
       responses:
         '200':
-          description: 起止位置及边界来源，终点不超过起点后五万字符。
+          description: 起止位置及边界来源，终点不超过起点后十万字符。
           content:
             application/json:
               schema:
@@ -3094,7 +3114,7 @@ components:
         mode: { type: string, enum: [beginning, previous, manual] }
         previousBatchId: { type: string, format: uuid, description: 承接已有批次时必填。 }
         startOffset: { type: integer, minimum: 0, description: 手动选择起点时必填。 }
-        endOffset: { type: integer, minimum: 1, description: 可选的手动终点；不得超过起点后五万字符。 }
+        endOffset: { type: integer, minimum: 1, description: 可选的手动终点；不得超过起点后十万字符。 }
     DramaBatchSuggestion:
       type: object
       required: [startOffset, endOffset, boundary]
