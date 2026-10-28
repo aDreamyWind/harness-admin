@@ -59,8 +59,12 @@ type BatchRangeChange struct {
 	Revision    int `json:"revision"`
 }
 
-var episodeHeading = regexp.MustCompile(`(?i)^\s*(?:第[零〇一二三四五六七八九十百千万两0-9]+集|episode\s*[0-9]+)`)
-var chapterHeading = regexp.MustCompile(`(?i)^\s*(?:第[零〇一二三四五六七八九十百千万两0-9]+[章节回幕]|chapter\s*[0-9]+)`)
+var episodeHeading = regexp.MustCompile(`(?i)^(?:第\s*[零〇一二三四五六七八九十百千万两0-9]+\s*集|episode\s*[0-9]+)`)
+var chapterHeading = regexp.MustCompile(`(?i)^(?:第\s*[零〇一二三四五六七八九十百千万两0-9]+\s*[章节回幕]|chapter\s*[0-9]+)`)
+
+func normalizedHeading(line string) string {
+	return strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), " \t\ufeff#＃=＝【[]()（）「」『』*＊—─-·"))
+}
 
 // FindBatchEnd 只在起点后的最多五万字符内找边界，绝不跨过上限。
 func FindBatchEnd(source string, start, total int) BatchSuggestion {
@@ -72,27 +76,21 @@ func FindBatchEnd(source string, start, total int) BatchSuggestion {
 	if limit >= total {
 		return BatchSuggestion{StartOffset: start, EndOffset: total, Boundary: "end"}
 	}
-	episodeEnd, chapterEnd := 0, 0
+	best, boundary := 0, "limit"
 	for offset := 0; offset < len(runes); {
 		lineEnd := offset
 		for lineEnd < len(runes) && runes[lineEnd] != '\n' {
 			lineEnd++
 		}
 		if offset > 0 && offset < len(runes) {
-			line := strings.TrimSpace(string(runes[offset:lineEnd]))
+			line := normalizedHeading(string(runes[offset:lineEnd]))
 			if episodeHeading.MatchString(line) {
-				episodeEnd = offset
+				best, boundary = offset, "episode"
 			} else if chapterHeading.MatchString(line) {
-				chapterEnd = offset
+				best, boundary = offset, "chapter"
 			}
 		}
 		offset = lineEnd + 1
-	}
-	best, boundary := 0, "limit"
-	if episodeEnd > 0 {
-		best, boundary = episodeEnd, "episode"
-	} else if chapterEnd > 0 {
-		best, boundary = chapterEnd, "chapter"
 	}
 	if best == 0 {
 		for offset := len(runes) - 1; offset > 0; offset-- {

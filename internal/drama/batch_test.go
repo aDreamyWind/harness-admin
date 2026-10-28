@@ -21,8 +21,13 @@ func TestFindBatchEndNeverCrossesLimit(t *testing.T) {
 	}
 	mixed := "开场\n" + strings.Repeat("山", 22000) + "\n第2集 转折\n" + strings.Repeat("海", 22000) + "\n第3章 伏笔\n" + strings.Repeat("云", 12000)
 	result = FindBatchEnd(mixed, 0, len([]rune(mixed)))
-	if result.Boundary != "episode" || result.EndOffset != len([]rune("开场\n"+strings.Repeat("山", 22000)+"\n")) {
-		t.Fatalf("五万字内同时存在分集和章节时，应优先按分集收尾: %+v", result)
+	if result.Boundary != "chapter" || result.EndOffset != len([]rune("开场\n"+strings.Repeat("山", 22000)+"\n第2集 转折\n"+strings.Repeat("海", 22000)+"\n")) {
+		t.Fatalf("五万字内同时存在分集和章节时，应选更接近上限的标题: %+v", result)
+	}
+	decorated := "===第一章 起始===\n" + strings.Repeat("山", 48900) + "\n===第二十章 贻孝大方===\n" + strings.Repeat("海", 3000)
+	result = FindBatchEnd(decorated, 0, len([]rune(decorated)))
+	if result.Boundary != "chapter" || result.EndOffset != len([]rune("===第一章 起始===\n"+strings.Repeat("山", 48900)+"\n")) {
+		t.Fatalf("带装饰符的章节标题应作为终点: %+v", result)
 	}
 	result = FindBatchEnd(strings.Repeat("山", 51000), 0, 51000)
 	if result.EndOffset != BatchRuneLimit || result.Boundary != "limit" {

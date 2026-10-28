@@ -154,7 +154,7 @@ export function DramaProjectPage() {
         <div className="drama-workflow-step pending">
           <span className="drama-workflow-number">02</span>
           <div className="drama-workflow-body"><div className="drama-workflow-title"><strong>剧本解析</strong><span>规则待补充</span></div>
-            <p>按约 5 万字分批处理完整原文，优先在完整分集处收尾；原文没有分集标记时，在章节末尾收尾。后续将生成剧本分集并提取角色、场景、道具。</p>
+            <p>每批最多 5 万字，终点取范围内最接近上限的下一章或下一集开头；若没有标题，再找段落结尾。后续将生成剧本分集并提取角色、场景、道具。</p>
           </div>
         </div>
       </section>
