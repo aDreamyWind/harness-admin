@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const BatchAnalysisChunkLimit = 12000
+const BatchAnalysisChunkLimit = 5000
 
 var ErrBatchRunning = errors.New("当前批次正在解析")
 
@@ -145,6 +145,17 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 %s`,
 			job.ProjectTitle, string(job.Overview), previousSynopsis, index+1, len(chunks), string(chunk))
 		response, callErr := s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
+		if errors.Is(callErr, ErrModelTimeout) && ctx.Err() == nil {
+			// 超时由供应商在响应头前耗尽等待时间引起；短暂退避后仅重试当前段。
+			timer := time.NewTimer(2 * time.Second)
+			select {
+			case <-timer.C:
+				response, callErr = s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
+			case <-ctx.Done():
+				timer.Stop()
+				callErr = ctx.Err()
+			}
+		}
 		if callErr != nil {
 			return s.failBatch(job, fmt.Errorf("第 %d 段模型调用失败: %w", index+1, callErr))
 		}

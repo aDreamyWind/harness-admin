@@ -16,6 +16,7 @@ var ErrInvalidInput = errors.New("漫剧项目参数不正确")
 var ErrNotFound = errors.New("漫剧项目不存在")
 var ErrModelNotConfigured = errors.New("请先在漫剧设置中配置可用的文本模型")
 var ErrModelUnavailable = errors.New("所选模型未启用或当前账号无权使用")
+var ErrModelTimeout = errors.New("文本模型响应超时")
 var ErrRetryNotAllowed = errors.New("当前项目不能重新解析")
 
 const ParseRuneLimit = 100000

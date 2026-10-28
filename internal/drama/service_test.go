@@ -180,6 +180,7 @@ func (r *fakeRepository) FailAnalysis(_ context.Context, _, _, _, message string
 type fakeWriter struct {
 	prompts []string
 	replies []string
+	errors  []error
 }
 
 func (w *fakeWriter) AvailableModels(context.Context, string, string) ([]Model, error) {
@@ -191,6 +192,13 @@ func (w *fakeWriter) AvailableModels(context.Context, string, string) ([]Model, 
 }
 func (w *fakeWriter) Complete(_ context.Context, _, _, _ string, prompt string) (string, error) {
 	w.prompts = append(w.prompts, prompt)
+	if len(w.errors) > 0 {
+		err := w.errors[0]
+		w.errors = w.errors[1:]
+		if err != nil {
+			return "", err
+		}
+	}
 	if len(w.replies) == 0 {
 		return "", errors.New("无响应")
 	}
@@ -437,5 +445,42 @@ func TestAnalyzeBatchStoresEpisodesAndAssets(t *testing.T) {
 	}
 	if repo.batches[0].Status != "ready" || len(repo.batchDraft.Episodes) != 1 || len(repo.batchDraft.Characters) != 1 {
 		t.Fatalf("批次结果未保存: %+v", repo.batchDraft)
+	}
+}
+
+func TestAnalyzeBatchRetriesTimedOutSegment(t *testing.T) {
+	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
+	repo := &fakeRepository{project: Project{ID: id, Title: "短剧", Status: "ready", SourceText: "第一章\n张三走入竹林。", Overview: json.RawMessage(`{}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, Revision: 1}}}
+	repo.batches[0].EndOffset = len([]rune(repo.project.SourceText))
+	writer := &fakeWriter{errors: []error{ErrModelTimeout}, replies: []string{`{"characters":[],"scenes":[],"props":[],"episodes":[{"title":"入林","scriptText":"【竹林 外 日】\n张三走入竹林。"}]}`}}
+	service := NewService(repo, writer)
+	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.AnalyzeBatch(job); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.prompts) != 2 || repo.batches[0].Status != "ready" {
+		t.Fatalf("超时后未只重试当前段: %d 次，状态 %s", len(writer.prompts), repo.batches[0].Status)
+	}
+}
+
+func TestAnalyzeBatchRetriesOnlyCurrentSegment(t *testing.T) {
+	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
+	source := strings.Repeat("甲", BatchAnalysisChunkLimit+100)
+	repo := &fakeRepository{project: Project{ID: id, Title: "长剧", Status: "ready", SourceText: source, Overview: json.RawMessage(`{}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, EndOffset: len([]rune(source)), Revision: 1}}}
+	reply := `{"characters":[],"scenes":[],"props":[],"episodes":[{"title":"片段","scriptText":"【场景 外 日】\n人物行动。"}]}`
+	writer := &fakeWriter{errors: []error{nil, ErrModelTimeout}, replies: []string{reply, reply}}
+	service := NewService(repo, writer)
+	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.AnalyzeBatch(job); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.prompts) != 3 || writer.prompts[0] == writer.prompts[1] || writer.prompts[1] != writer.prompts[2] || len(repo.batchDraft.Episodes) != 2 {
+		t.Fatalf("应只重试超时的第二段，调用 %d 次、剧集 %d 集", len(writer.prompts), len(repo.batchDraft.Episodes))
 	}
 }

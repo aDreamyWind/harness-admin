@@ -198,8 +198,9 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
       <div className="drama-batch-detail-head"><Button type="text" icon={<ArrowLeftOutlined />} onClick={() => setSelectedId(null)}>返回批次</Button><Tag color={selected.status === 'stale' ? 'warning' : selected.status === 'ready' ? 'success' : selected.status === 'failed' ? 'error' : selected.status === 'running' ? 'processing' : 'default'}>{statusNames[selected.status]}</Tag></div>
       <div className="drama-batch-detail-title"><div><h2>第 {selected.number} 批</h2><p>原文 {(selected.startOffset + 1).toLocaleString()}—{selected.endOffset.toLocaleString()} 字符 · 共 {(selected.endOffset - selected.startOffset).toLocaleString()} 字符 · {boundaryNames[selected.boundary]}</p></div><div className="drama-batch-detail-actions"><Button icon={<FileSearchOutlined />} onClick={() => openExistingReader(selected)}>查看在剧本中的位置</Button><Button type="primary" loading={analyzing || selected.status === 'running'} disabled={selected.status === 'running' || project.status !== 'ready'} onClick={() => void startAnalysis()}>{selected.status === 'ready' ? 'AI重新解析' : 'AI解析'}</Button></div></div>
       {selected.status === 'stale' && <Alert type="warning" showIcon message="上游批次范围已调整，请核对本批次起止位置" />}
-      {selected.status === 'failed' && <Alert type="error" showIcon message="本批解析失败" description={selected.errorMessage || '请重试'} />}
+      {selected.status === 'failed' && <Alert type="error" showIcon message="本批解析失败" description={selected.errorMessage?.includes('文本模型响应超时') ? '文本模型在等待时间内没有返回结果。这次解析没有产生新剧集，请点击 AI解析 重试。' : selected.errorMessage || '请重试'} />}
       {selected.status === 'running' && <Alert type="info" showIcon message="正在解析本批原文，完成后会自动显示结果" />}
+      {result?.episodes.length ? <>
       <Card className="drama-batch-result"><h3>角色、场景、道具</h3>
         {result && assetSections.map((section) => <div className="drama-batch-asset-group" key={section.key}><h4>{section.title}列表（{result.assets[section.field].length}）</h4>
           {result.assets[section.field].length ? <div className="drama-batch-asset-list">{result.assets[section.field].map((asset) => <div key={asset.id} className="drama-batch-asset-row"><strong>{asset.name}</strong><span>{asset.description}</span></div>)}</div> : <p className="drama-batch-muted">暂无{section.title}</p>}</div>)}
@@ -210,6 +211,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
           <div className="drama-batch-script"><h4>剧本内容</h4><pre>{episode.scriptText}</pre></div></div>
         </details>) : <Empty description={selected.status === 'running' ? '正在生成分集剧本' : '暂无分集剧本，点击 AI解析 开始'} />}
       </Card>
+      </> : <Card className="drama-batch-result"><Empty description={selected.status === 'running' ? '正在解析剧本，完成后显示结果' : selected.status === 'failed' ? '此次解析未产生剧集，点击 AI解析 重试' : '点击 AI解析 生成剧集和资产'} /></Card>}
     </>}
     <Modal title={`添加${assetPicker ? assetSections.find((item) => item.key === assetPicker.kind)?.title : ''}`} open={!!assetPicker} onCancel={() => setAssetPicker(null)} onOk={() => void saveEpisodeAssets()} okText="保存" okButtonProps={{ loading: savingAssets, disabled: pickedAssets.length === 0 }}>
       <input className="drama-asset-search" placeholder="搜索项目资产名称" value={assetQuery} onChange={(event) => setAssetQuery(event.target.value)} />

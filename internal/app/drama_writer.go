@@ -137,7 +137,7 @@ func (w *dramaWriter) Complete(ctx context.Context, organizationID, userID, mode
 	}
 	if callErr != nil {
 		if errors.Is(callErr, context.DeadlineExceeded) {
-			return "", errors.New("文本模型响应超时，请在项目页点击继续解析")
+			return "", fmt.Errorf("%w，请重试解析", drama.ErrModelTimeout)
 		}
 		return "", fmt.Errorf("模型调用失败: %w", callErr)
 	}
