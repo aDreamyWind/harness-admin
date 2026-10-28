@@ -123,9 +123,6 @@
 .drama-reader-range { display: grid; grid-template-columns: 55px minmax(0, 1fr); gap: 10px 7px; margin: 13px 0; padding: 15px 0; border-top: 1px solid #ffffff17; border-bottom: 1px solid #ffffff17; font-size: 12px; }
 .drama-reader-range span { color: #8e9aaa; }
 .drama-reader-range strong { color: #e7edf6; font-weight: 550; text-align: right; }
-.drama-reader-jump { display: flex; flex-wrap: wrap; gap: 8px; }
-.drama-reader-jump label { width: 100%; color: #a7b1c0; font-size: 12px; }
-.drama-reader-jump .ant-input-number { flex: 1; min-width: 110px; }
 .drama-reader-quick { display: flex; gap: 7px; }
 .drama-reader-quick .ant-btn { flex: 1; }
 .drama-reader-lock, .drama-reader-save { display: grid; gap: 13px; margin-top: auto; }
