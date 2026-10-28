@@ -67,6 +67,9 @@ func (s *dramaServiceStub) StartBatchAnalysis(context.Context, string, string, s
 	return drama.BatchAnalysisJob{Batch: drama.Batch{ID: "3a364763-e0df-4cb4-9c55-88ab0a11ff94", Status: "running"}}, nil
 }
 func (s *dramaServiceStub) AnalyzeBatch(drama.BatchAnalysisJob) error { return nil }
+func (s *dramaServiceStub) BatchProgress(context.Context, string, string, string, string) (drama.BatchProgress, error) {
+	return drama.BatchProgress{Steps: []drama.BatchStep{{Stage: "art", ChunkNumber: 1, ChunkTotal: 2, Status: "completed"}}}, nil
+}
 func (s *dramaServiceStub) BatchResult(context.Context, string, string, string, string) (drama.BatchResult, error) {
 	return drama.BatchResult{}, nil
 }
@@ -261,6 +264,12 @@ func TestDramaBatchAnalysisAndAssetRoutes(t *testing.T) {
 	}
 	if got := call(http.MethodGet, batch+"/result", "", true, false); got != 200 {
 		t.Fatalf("结果状态 %d", got)
+	}
+	if got := call(http.MethodGet, batch+"/progress", "", false, false); got != 401 {
+		t.Fatalf("未登录仍可读取解析进度: %d", got)
+	}
+	if got := call(http.MethodGet, batch+"/progress", "", true, false); got != 200 {
+		t.Fatalf("进度状态 %d", got)
 	}
 	if got := call(http.MethodGet, base+"/assets?kind=scene&q=test", "", true, false); got != 200 {
 		t.Fatalf("资产搜索状态 %d", got)

@@ -128,6 +128,22 @@ export interface DramaBatchResult {
   assets: { characters: DramaCatalogAsset[]; scenes: DramaCatalogAsset[]; props: DramaCatalogAsset[] }
   episodes: DramaScriptEpisode[]
 }
+export interface DramaBatchStep {
+  stage: 'art' | 'director'
+  chunkNumber: number
+  chunkTotal: number
+  status: 'running' | 'completed' | 'failed'
+  errorMessage?: string
+  durationMs: number
+  updatedAt: string
+}
+export interface DramaBatchProgress {
+  steps: DramaBatchStep[]
+  assets: { characters: DramaCatalogAsset[]; scenes: DramaCatalogAsset[]; props: DramaCatalogAsset[] }
+  episodes: Array<{ title: string; synopsis: string; scriptText: string }>
+}
+export const getDramaBatchProgress = (projectId: string, batchId: string) =>
+  request<DramaBatchProgress>(`/api/v1/ai-drama/projects/${projectId}/batches/${batchId}/progress`)
 export const analyzeDramaBatch = (projectId: string, batchId: string) => request<DramaBatch>(`/api/v1/ai-drama/projects/${projectId}/batches/${batchId}/analyze`, { method: 'POST', headers: csrfHeaders() })
 export const getDramaBatchResult = (projectId: string, batchId: string) => request<DramaBatchResult>(`/api/v1/ai-drama/projects/${projectId}/batches/${batchId}/result`)
 export const listDramaAssets = (projectId: string, kind: DramaAssetKind, q = '') => request<DramaCatalogAsset[]>(`/api/v1/ai-drama/projects/${projectId}/assets?kind=${kind}&q=${encodeURIComponent(q)}`)

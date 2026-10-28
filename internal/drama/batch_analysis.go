@@ -53,6 +53,23 @@ type BatchAssets struct {
 	Props      []Asset `json:"props"`
 }
 
+type BatchStep struct {
+	Stage        string    `json:"stage"`
+	ChunkNumber  int       `json:"chunkNumber"`
+	ChunkTotal   int       `json:"chunkTotal"`
+	Status       string    `json:"status"`
+	ResultText   string    `json:"-"`
+	ErrorMessage string    `json:"errorMessage,omitempty"`
+	DurationMS   int64     `json:"durationMs"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+type BatchProgress struct {
+	Steps    []BatchStep    `json:"steps"`
+	Assets   BatchAssets    `json:"assets"`
+	Episodes []EpisodeDraft `json:"episodes"`
+}
+
 type BatchResult struct {
 	Batch    Batch           `json:"batch"`
 	Assets   BatchAssets     `json:"assets"`
@@ -139,6 +156,16 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 		return s.failBatch(job, errors.New("批次原文读取不完整"))
 	}
 	chunks := splitBatchSource(runes)
+	savedSteps, err := s.repository.ListBatchSteps(ctx, job.OrganizationID, job.OwnerID, batch.ProjectID, batch.ID)
+	if err != nil {
+		return s.failBatch(job, err)
+	}
+	completed := make(map[string]string)
+	for _, step := range savedSteps {
+		if step.Status == "completed" && step.ChunkTotal == len(chunks) {
+			completed[fmt.Sprintf("%s:%d", step.Stage, step.ChunkNumber)] = step.ResultText
+		}
+	}
 	result := BatchDraft{Characters: []AssetDraft{}, Scenes: []AssetDraft{}, Props: []AssetDraft{}, Episodes: []EpisodeDraft{}}
 	artResults := make([]BatchDraft, len(chunks))
 	for index, chunk := range chunks {
@@ -148,9 +175,19 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 项目概览：%s
 本批原文片段 %d/%d：
 %s`, job.ProjectTitle, string(job.Overview), index+1, len(chunks), string(chunk))
-		response, callErr := s.completeBatchPrompt(ctx, job, prompt)
-		if callErr != nil {
-			return s.failBatch(job, fmt.Errorf("美术指导第 %d 段模型调用失败: %w", index+1, callErr))
+		key := fmt.Sprintf("art:%d", index+1)
+		response, wasSaved := completed[key]
+		started := time.Now()
+		if !wasSaved {
+			step := BatchStep{Stage: "art", ChunkNumber: index + 1, ChunkTotal: len(chunks)}
+			if err := s.repository.StartBatchStep(ctx, job.OrganizationID, job.OwnerID, batch.ProjectID, batch.ID, batch.AnalysisRevision, step); err != nil {
+				return s.failBatch(job, err)
+			}
+			var callErr error
+			response, callErr = s.completeBatchPrompt(ctx, job, prompt)
+			if callErr != nil {
+				return s.failBatch(job, fmt.Errorf("美术指导第 %d 段模型调用失败: %w", index+1, callErr))
+			}
 		}
 		data, parseErr := parseObject(response)
 		if parseErr != nil {
@@ -162,6 +199,12 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 		}
 		if parseErr := validateArtDraft(data, art); parseErr != nil {
 			return s.failBatch(job, fmt.Errorf("美术指导第 %d 段资产结果不完整: %w", index+1, parseErr))
+		}
+		if !wasSaved {
+			step := BatchStep{Stage: "art", ChunkNumber: index + 1, ChunkTotal: len(chunks), ResultText: string(data), DurationMS: time.Since(started).Milliseconds()}
+			if err := s.repository.CompleteBatchStep(ctx, job.OrganizationID, job.OwnerID, batch.ProjectID, batch.ID, batch.AnalysisRevision, step); err != nil {
+				return s.failBatch(job, err)
+			}
 		}
 		artResults[index] = art
 		result.Characters = append(result.Characters, art.Characters...)
@@ -186,9 +229,19 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 本段美术资产清单：%s
 本批原文片段 %d/%d：
 %s`, job.ProjectTitle, string(job.Overview), previousSynopsis, string(assetsJSON), index+1, len(chunks), string(chunk))
-		response, callErr := s.completeBatchPrompt(ctx, job, prompt)
-		if callErr != nil {
-			return s.failBatch(job, fmt.Errorf("导演第 %d 段模型调用失败: %w", index+1, callErr))
+		key := fmt.Sprintf("director:%d", index+1)
+		response, wasSaved := completed[key]
+		started := time.Now()
+		if !wasSaved {
+			step := BatchStep{Stage: "director", ChunkNumber: index + 1, ChunkTotal: len(chunks)}
+			if err := s.repository.StartBatchStep(ctx, job.OrganizationID, job.OwnerID, batch.ProjectID, batch.ID, batch.AnalysisRevision, step); err != nil {
+				return s.failBatch(job, err)
+			}
+			var callErr error
+			response, callErr = s.completeBatchPrompt(ctx, job, prompt)
+			if callErr != nil {
+				return s.failBatch(job, fmt.Errorf("导演第 %d 段模型调用失败: %w", index+1, callErr))
+			}
 		}
 		data, parseErr := parseObject(response)
 		if parseErr != nil {
@@ -204,6 +257,12 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 		if parseErr := validateBatchDraft(part); parseErr != nil {
 			return s.failBatch(job, fmt.Errorf("导演第 %d 段解析结果不完整: %w", index+1, parseErr))
 		}
+		if !wasSaved {
+			step := BatchStep{Stage: "director", ChunkNumber: index + 1, ChunkTotal: len(chunks), ResultText: string(data), DurationMS: time.Since(started).Milliseconds()}
+			if err := s.repository.CompleteBatchStep(ctx, job.OrganizationID, job.OwnerID, batch.ProjectID, batch.ID, batch.AnalysisRevision, step); err != nil {
+				return s.failBatch(job, err)
+			}
+		}
 		result.Episodes = append(result.Episodes, directed.Episodes...)
 		previousSynopsis = directed.Episodes[len(directed.Episodes)-1].Synopsis
 		if utf8.RuneCountInString(previousSynopsis) > 500 {
@@ -216,9 +275,69 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 	return nil
 }
 
+func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, projectID, batchID string) (BatchProgress, error) {
+	if _, err := uuid.Parse(projectID); err != nil {
+		return BatchProgress{}, ErrInvalidInput
+	}
+	if _, err := uuid.Parse(batchID); err != nil {
+		return BatchProgress{}, ErrInvalidInput
+	}
+	steps, err := s.repository.ListBatchSteps(ctx, organizationID, ownerID, projectID, batchID)
+	if err != nil {
+		return BatchProgress{}, err
+	}
+	progress := BatchProgress{Steps: steps, Assets: BatchAssets{Characters: []Asset{}, Scenes: []Asset{}, Props: []Asset{}}, Episodes: []EpisodeDraft{}}
+	seen := map[string]bool{}
+	for _, step := range steps {
+		if step.Status != "completed" {
+			continue
+		}
+		data, err := parseObject(step.ResultText)
+		if err != nil {
+			return BatchProgress{}, fmt.Errorf("读取已保存解析步骤失败: %w", err)
+		}
+		if step.Stage == "art" {
+			var art BatchDraft
+			if err := json.Unmarshal(data, &art); err != nil {
+				return BatchProgress{}, err
+			}
+			for _, group := range []struct {
+				kind  string
+				items []AssetDraft
+			}{{"character", art.Characters}, {"scene", art.Scenes}, {"prop", art.Props}} {
+				for _, item := range group.items {
+					key := group.kind + "\x00" + item.Name
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					asset := Asset{Kind: group.kind, Name: item.Name, Description: item.Description, AppearanceDescription: item.AppearanceDescription, VoiceDescription: item.VoiceDescription}
+					switch group.kind {
+					case "character":
+						progress.Assets.Characters = append(progress.Assets.Characters, asset)
+					case "scene":
+						progress.Assets.Scenes = append(progress.Assets.Scenes, asset)
+					case "prop":
+						progress.Assets.Props = append(progress.Assets.Props, asset)
+					}
+				}
+			}
+		} else if step.Stage == "director" {
+			var directed struct {
+				Episodes []EpisodeDraft `json:"episodes"`
+			}
+			if err := json.Unmarshal(data, &directed); err != nil {
+				return BatchProgress{}, err
+			}
+			progress.Episodes = append(progress.Episodes, directed.Episodes...)
+		}
+	}
+	return progress, nil
+}
+
 func (s *Service) completeBatchPrompt(ctx context.Context, job BatchAnalysisJob, prompt string) (string, error) {
 	response, callErr := s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
-	if errors.Is(callErr, ErrModelTimeout) && ctx.Err() == nil {
+	if (errors.Is(callErr, ErrModelTimeout) || errors.Is(callErr, ErrEmptyModelContent)) && ctx.Err() == nil {
 		timer := time.NewTimer(2 * time.Second)
 		select {
 		case <-timer.C:

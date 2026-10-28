@@ -276,6 +276,20 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 批次正在解析，或项目尚未完成概览解析。 }
+  /ai-drama/projects/{id}/batches/{batchId}/progress:
+    get:
+      summary: 查询批次逐段解析进度和已保存的阶段成果
+      operationId: getDramaBatchProgress
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 返回当前范围版本已完成的步骤、美术资产和剧集草稿，失败后仍可读取。
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DramaBatchProgress' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/batches/{batchId}/result:
     get:
       summary: 查询批次资产和逐集完整剧本
@@ -3219,6 +3233,38 @@ components:
         characters: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         scenes: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         props: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+    DramaBatchStep:
+      type: object
+      required: [stage, chunkNumber, chunkTotal, status, durationMs, updatedAt]
+      properties:
+        stage: { type: string, enum: [art, director] }
+        chunkNumber: { type: integer, minimum: 1 }
+        chunkTotal: { type: integer, minimum: 1 }
+        status: { type: string, enum: [running, completed, failed] }
+        errorMessage: { type: string }
+        durationMs: { type: integer, minimum: 0 }
+        updatedAt: { type: string, format: date-time }
+    DramaBatchProgress:
+      type: object
+      required: [steps, assets, episodes]
+      properties:
+        steps: { type: array, items: { $ref: '#/components/schemas/DramaBatchStep' } }
+        assets:
+          type: object
+          required: [characters, scenes, props]
+          properties:
+            characters: { type: array, items: { $ref: '#/components/schemas/DramaCatalogAsset' } }
+            scenes: { type: array, items: { $ref: '#/components/schemas/DramaCatalogAsset' } }
+            props: { type: array, items: { $ref: '#/components/schemas/DramaCatalogAsset' } }
+        episodes:
+          type: array
+          items:
+            type: object
+            required: [title, synopsis, scriptText]
+            properties:
+              title: { type: string }
+              synopsis: { type: string }
+              scriptText: { type: string }
     DramaBatchResult:
       type: object
       required: [batch, assets, episodes]

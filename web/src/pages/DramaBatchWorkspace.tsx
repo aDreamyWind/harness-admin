@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import {
-  createDramaBatch, listDramaBatches, suggestDramaBatch, updateDramaBatchRange, analyzeDramaBatch, getDramaBatchResult, listDramaAssets, addDramaEpisodeAsset, removeDramaEpisodeAsset,
-  type DramaBatch, type DramaBatchMode, type DramaProject, type DramaBatchResult, type DramaAssetKind, type DramaCatalogAsset,
+  createDramaBatch, listDramaBatches, suggestDramaBatch, updateDramaBatchRange, analyzeDramaBatch, getDramaBatchResult, getDramaBatchProgress, listDramaAssets, addDramaEpisodeAsset, removeDramaEpisodeAsset,
+  type DramaBatch, type DramaBatchMode, type DramaProject, type DramaBatchResult, type DramaBatchProgress, type DramaAssetKind, type DramaCatalogAsset,
 } from '../api/drama'
 import { DramaSourceReader } from './DramaSourceReader'
 
@@ -25,6 +25,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
   const [messageApi, contextHolder] = message.useMessage()
   const [searchParams, setSearchParams] = useSearchParams()
   const [result, setResult] = useState<DramaBatchResult | null>(null)
+  const [progress, setProgress] = useState<DramaBatchProgress | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [assetPicker, setAssetPicker] = useState<{ episodeId: string; kind: DramaAssetKind } | null>(null)
   const [assetQuery, setAssetQuery] = useState('')
@@ -64,6 +65,16 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
     }
     void refresh()
     return () => { active = false }
+  }, [project.id, selectedId, selected?.status, messageApi])
+  useEffect(() => {
+    if (!selectedId) { setProgress(null); return }
+    let active = true
+    const refresh = () => { void getDramaBatchProgress(project.id, selectedId).then((value) => {
+      if (active) setProgress(value)
+    }).catch((error) => { if (active) messageApi.error(error instanceof Error ? error.message : '读取解析进度失败') }) }
+    refresh()
+    const timer = selected?.status === 'running' ? window.setInterval(refresh, 3000) : null
+    return () => { active = false; if (timer !== null) window.clearInterval(timer) }
   }, [project.id, selectedId, selected?.status, messageApi])
   useEffect(() => {
     if (!selectedId || selected?.status !== 'running') return
@@ -210,7 +221,26 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
       <div className="drama-batch-detail-title"><div><h2>第 {selected.number} 批</h2><p>原文 {(selected.startOffset + 1).toLocaleString()}—{selected.endOffset.toLocaleString()} 字符 · 共 {(selected.endOffset - selected.startOffset).toLocaleString()} 字符 · {boundaryNames[selected.boundary]}</p></div><div className="drama-batch-detail-actions"><Button icon={<FileSearchOutlined />} onClick={() => openExistingReader(selected)}>查看在剧本中的位置</Button><Button type="primary" loading={analyzing || selected.status === 'running'} disabled={selected.status === 'running' || project.status !== 'ready'} onClick={() => void startAnalysis()}>{selected.status === 'ready' ? 'AI重新解析' : 'AI解析'}</Button></div></div>
       {selected.status === 'stale' && <Alert type="warning" showIcon message="上游批次范围已调整，请核对本批次起止位置" />}
       {selected.status === 'failed' && <Alert type="error" showIcon message="本批解析失败" description={selected.errorMessage?.includes('文本模型响应超时') ? '文本模型在等待时间内没有返回结果。这次解析没有产生新剧集，请点击 AI解析 重试。' : selected.errorMessage || '请重试'} />}
-      {selected.status === 'running' && <Alert type="info" showIcon message="正在解析本批原文，完成后会自动显示结果" />}
+      {selected.status === 'running' && <Alert type="info" showIcon message="正在逐段解析本批原文，已完成的阶段成果会显示在下方" />}
+      {progress && progress.steps.length > 0 && <Card className="drama-batch-progress" aria-live="polite">
+        <h3>解析进度</h3>
+        <div className="drama-batch-progress-counts">
+          <span>美术指导 {progress.steps.filter((step) => step.stage === 'art' && step.status === 'completed').length}/{progress.steps.find((step) => step.stage === 'art')?.chunkTotal ?? '?'} 段</span>
+          <span>导演 {progress.steps.filter((step) => step.stage === 'director' && step.status === 'completed').length}/{progress.steps.find((step) => step.stage === 'art')?.chunkTotal ?? '?'} 段</span>
+        </div>
+        <ol className="drama-batch-step-list">{progress.steps.map((step) => <li key={`${step.stage}-${step.chunkNumber}`} className={step.status}>
+          <span>{step.stage === 'art' ? '美术指导' : '导演'} · 第 {step.chunkNumber}/{step.chunkTotal} 段</span>
+          <strong>{step.status === 'completed' ? '已完成' : step.status === 'failed' ? '需重试' : '进行中'}</strong>
+          {step.status === 'completed' && <small>{Math.round(step.durationMs / 1000)} 秒</small>}
+          {step.errorMessage && <small title={step.errorMessage}>{step.errorMessage}</small>}
+        </li>)}</ol>
+        {selected.status !== 'ready' && (progress.assets.characters.length + progress.assets.scenes.length + progress.assets.props.length > 0 || progress.episodes.length > 0) && <div className="drama-batch-progress-preview">
+          <h4>已完成的阶段成果</h4>
+          {assetSections.map((group) => <div key={group.key} className="drama-batch-preview-group"><strong>{group.title}（{progress.assets[group.field].length}）</strong><div>{progress.assets[group.field].map((asset, index) => <Tag key={`${asset.name}-${index}`} title={asset.description}>{asset.name}</Tag>)}</div></div>)}
+          {progress.episodes.map((episode, index) => <details key={`${episode.title}-${index}`} className="drama-batch-preview-episode"><summary>已生成第 {index + 1} 集：{episode.title}</summary><p>{episode.synopsis}</p><pre>{episode.scriptText}</pre></details>)}
+          <p className="drama-batch-preview-note">阶段成果已保存；本批全部完成后才会加入正式资产和剧集。</p>
+        </div>}
+      </Card>}
       {result?.episodes.length ? <>
       <Card className="drama-batch-result"><h3>角色、场景、道具</h3>
         {result && assetSections.map((section) => <div className="drama-batch-asset-group" key={section.key}><h4>{section.title}列表（{result.assets[section.field].length}）</h4>
@@ -222,7 +252,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
           <div className="drama-batch-script"><h4>剧本内容</h4><pre>{episode.scriptText}</pre></div></div>
         </details>) : <Empty description={selected.status === 'running' ? '正在生成分集剧本' : '暂无分集剧本，点击 AI解析 开始'} />}
       </Card>
-      </> : <Card className="drama-batch-result"><Empty description={selected.status === 'running' ? '正在解析剧本，完成后显示结果' : selected.status === 'failed' ? '此次解析未产生剧集，点击 AI解析 重试' : '点击 AI解析 生成剧集和资产'} /></Card>}
+      </> : <Card className="drama-batch-result"><Empty description={selected.status === 'running' ? '正在解析剧本，完成后显示结果' : selected.status === 'failed' ? progress?.episodes.length ? '已保存部分阶段成果，点击 AI解析 从失败步骤继续' : '点击 AI解析 从失败步骤继续' : '点击 AI解析 生成剧集和资产'} /></Card>}
     </>}
     <Modal title={`添加${assetPicker ? assetSections.find((item) => item.key === assetPicker.kind)?.title : ''}`} open={!!assetPicker} onCancel={() => setAssetPicker(null)} onOk={() => void saveEpisodeAssets()} okText="保存" okButtonProps={{ loading: savingAssets, disabled: pickedAssets.length === 0 }}>
       <input className="drama-asset-search" placeholder="搜索项目资产名称" value={assetQuery} onChange={(event) => setAssetQuery(event.target.value)} />

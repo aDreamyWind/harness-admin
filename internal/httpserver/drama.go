@@ -31,6 +31,7 @@ type DramaService interface {
 	StartBatchAnalysis(context.Context, string, string, string, string) (drama.BatchAnalysisJob, error)
 	AnalyzeBatch(drama.BatchAnalysisJob) error
 	BatchResult(context.Context, string, string, string, string) (drama.BatchResult, error)
+	BatchProgress(context.Context, string, string, string, string) (drama.BatchProgress, error)
 	ProjectAssets(context.Context, string, string, string, string, string) ([]drama.Asset, error)
 	AddEpisodeAsset(context.Context, string, string, string, string, string, string) (drama.EpisodeAsset, error)
 	RemoveEpisodeAsset(context.Context, string, string, string, string, string) error
@@ -237,6 +238,15 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 			}
 		}()
 		httpx.OK(ctx, http.StatusAccepted, job.Batch)
+	})
+	group.GET("/projects/:id/batches/:batchId/progress", func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		progress, err := deps.Drama.BatchProgress(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, progress)
 	})
 	group.GET("/projects/:id/batches/:batchId/result", func(ctx *gin.Context) {
 		session := currentSession(ctx)

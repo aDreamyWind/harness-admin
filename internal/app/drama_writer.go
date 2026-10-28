@@ -111,7 +111,7 @@ func (w *dramaWriter) Complete(ctx context.Context, organizationID, userID, mode
 		result = "failed"
 	}
 	if result == "success" && (len(completion.Choices) == 0 || completion.Choices[0].Message.Content == "") {
-		callErr = errors.New("模型返回的内容无法读取")
+		callErr = drama.ErrEmptyModelContent
 		result = "failed"
 	}
 	errorMessage := ""

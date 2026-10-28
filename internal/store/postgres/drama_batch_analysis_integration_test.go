@@ -45,6 +45,29 @@ func TestDramaBatchResultDatabaseRoundTrip(t *testing.T) {
 	if batch.Status != "running" {
 		t.Fatalf("批次状态 %s", batch.Status)
 	}
+	step := drama.BatchStep{Stage: "art", ChunkNumber: 1, ChunkTotal: 1}
+	if err = repo.StartBatchStep(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, step); err != nil {
+		t.Fatal(err)
+	}
+	step.ResultText = `{"characters":[{"name":"张三"}],"scenes":[],"props":[]}`
+	step.DurationMS = 1200
+	if err = repo.CompleteBatchStep(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, step); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := repo.ListBatchSteps(ctx, org, owner, id, batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0].Status != "completed" || steps[0].ResultText != step.ResultText {
+		t.Fatalf("逐段结果未保存: %+v", steps)
+	}
+	progress, err := drama.NewService(repo, nil).BatchProgress(ctx, org, owner, id, batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(progress.Steps) != 1 || len(progress.Assets.Characters) != 1 || progress.Assets.Characters[0].Name != "张三" {
+		t.Fatalf("阶段成果预览不完整: %+v", progress)
+	}
 	draft := drama.BatchDraft{Characters: []drama.AssetDraft{{Name: "张三", Description: "主角", AppearanceDescription: "黑发青衣", VoiceDescription: "低沉清亮"}}, Scenes: []drama.AssetDraft{{Name: "竹林", Description: "林间"}}, Episodes: []drama.EpisodeDraft{{Title: "入林", Synopsis: "张三走入竹林", ScriptText: "【竹林 外 日】\n张三走入竹林。", Characters: []drama.EpisodeAssetDraft{{Name: "张三", StateLabel: "默认形象"}}, Scenes: []drama.EpisodeAssetDraft{{Name: "竹林", StateLabel: "白天"}}}}}
 	if err = repo.SaveBatchResult(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, draft); err != nil {
 		t.Fatal(err)

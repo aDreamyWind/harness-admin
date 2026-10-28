@@ -15,6 +15,7 @@ type fakeRepository struct {
 	failed     string
 	batches    []Batch
 	batchDraft BatchDraft
+	steps      []BatchStep
 }
 
 func (r *fakeRepository) GetSettings(_ context.Context, _, _ string) (Settings, error) {
@@ -93,6 +94,9 @@ func (r *fakeRepository) UpdateBatchRange(_ context.Context, _, _, _, id string,
 func (r *fakeRepository) QueueBatchAnalysis(_ context.Context, _, _, _, id string) (Batch, error) {
 	for i, item := range r.batches {
 		if item.ID == id {
+			if item.Status != "failed" || item.AnalysisRevision != item.Revision {
+				r.steps = nil
+			}
 			item.Status = "running"
 			item.AnalysisRevision = item.Revision
 			r.batches[i] = item
@@ -100,6 +104,30 @@ func (r *fakeRepository) QueueBatchAnalysis(_ context.Context, _, _, _, id strin
 		}
 	}
 	return Batch{}, ErrNotFound
+}
+func (r *fakeRepository) ListBatchSteps(_ context.Context, _, _, _, _ string) ([]BatchStep, error) {
+	return append([]BatchStep{}, r.steps...), nil
+}
+func (r *fakeRepository) StartBatchStep(_ context.Context, _, _, _, _ string, _ int, step BatchStep) error {
+	step.Status = "running"
+	for i, old := range r.steps {
+		if old.Stage == step.Stage && old.ChunkNumber == step.ChunkNumber {
+			r.steps[i] = step
+			return nil
+		}
+	}
+	r.steps = append(r.steps, step)
+	return nil
+}
+func (r *fakeRepository) CompleteBatchStep(_ context.Context, _, _, _, _ string, _ int, step BatchStep) error {
+	step.Status = "completed"
+	for i, old := range r.steps {
+		if old.Stage == step.Stage && old.ChunkNumber == step.ChunkNumber {
+			r.steps[i] = step
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 func (r *fakeRepository) SaveBatchResult(_ context.Context, _, _, _, id string, revision int, draft BatchDraft) error {
 	for i, item := range r.batches {
@@ -490,6 +518,60 @@ func TestAnalyzeBatchRetriesOnlyCurrentDirectorSegment(t *testing.T) {
 	}
 	if len(writer.prompts) != 5 || writer.prompts[0] == writer.prompts[2] || writer.prompts[3] != writer.prompts[4] || len(repo.batchDraft.Episodes) != 2 {
 		t.Fatalf("应只重试超时的导演片段，调用 %d 次、剧集 %d 集", len(writer.prompts), len(repo.batchDraft.Episodes))
+	}
+}
+
+func TestAnalyzeBatchKeepsCompletedStepsAfterFailure(t *testing.T) {
+	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
+	source := strings.Repeat("甲", BatchAnalysisChunkLimit+100)
+	repo := &fakeRepository{project: Project{ID: id, Title: "长剧", Status: "ready", SourceText: source, Overview: json.RawMessage(`{}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, StartOffset: 0, EndOffset: len([]rune(source)), Revision: 1}}}
+	art := `{"characters":[{"name":"甲","description":"主角"}],"scenes":[],"props":[]}`
+	director := `{"episodes":[{"title":"片段","scriptText":"【室内 日】\n甲在行动。"}]}`
+	writer := &fakeWriter{replies: []string{art, art, director}, errors: []error{nil, nil, nil, errors.New("供应商暂时失败")}}
+	service := NewService(repo, writer)
+	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.AnalyzeBatch(job); err == nil {
+		t.Fatal("导演第二段失败应终止当前任务")
+	}
+	progress, err := service.BatchProgress(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(progress.Assets.Characters) != 1 || len(progress.Episodes) != 1 || len(progress.Steps) != 4 {
+		t.Fatalf("成功片段应保留并可预览: %+v", progress)
+	}
+	job, err = service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.replies = []string{director}
+	if err = service.AnalyzeBatch(job); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.prompts) != 5 || len(repo.batchDraft.Episodes) != 2 {
+		t.Fatalf("重试应仅运行失败的导演片段，调用 %d 次，剧集 %d 集", len(writer.prompts), len(repo.batchDraft.Episodes))
+	}
+}
+
+func TestAnalyzeBatchRetriesEmptyModelContent(t *testing.T) {
+	id := "3a364763-e0df-4cb4-9c55-88ab0a11ff94"
+	repo := &fakeRepository{project: Project{ID: id, Title: "短剧", Status: "ready", SourceText: "甲", Overview: json.RawMessage(`{}`)}, settings: Settings{TextModelCode: "writer"}, batches: []Batch{{ID: id, ProjectID: id, EndOffset: 1, Revision: 1}}}
+	art := `{"characters":[],"scenes":[],"props":[]}`
+	director := `{"episodes":[{"title":"片段","scriptText":"【室内 日】甲在行动。"}]}`
+	writer := &fakeWriter{errors: []error{ErrEmptyModelContent}, replies: []string{art, director}}
+	service := NewService(repo, writer)
+	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.AnalyzeBatch(job); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.prompts) != 3 || writer.prompts[0] != writer.prompts[1] {
+		t.Fatal("空正文应只重试当前步骤")
 	}
 }
 

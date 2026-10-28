@@ -12,17 +12,38 @@ import (
 )
 
 func (r *DramaRepository) QueueBatchAnalysis(ctx context.Context, org, owner, project, batch string) (drama.Batch, error) {
-	item, err := scanDramaBatch(r.db.QueryRow(ctx, `UPDATE drama_batches b SET status='running', error_message='', analysis_revision=b.revision, updated_at=NOW()
- FROM drama_projects p WHERE p.id=b.project_id AND p.organization_id=$1 AND p.owner_id=$2 AND p.id=$3 AND p.status='ready'
- AND b.id=$4 AND b.status<>'running' RETURNING `+dramaBatchColumns, org, owner, project, batch))
-	if errors.Is(err, drama.ErrNotFound) {
-		if current, lookup := r.GetBatch(ctx, org, owner, project, batch); lookup == nil && current.Status == "running" {
-			return drama.Batch{}, drama.ErrBatchRunning
-		}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return drama.Batch{}, fmt.Errorf("启动剧本解析失败: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	var status string
+	var revision, analysisRevision int
+	err = tx.QueryRow(ctx, `SELECT b.status,b.revision,b.analysis_revision FROM drama_batches b
+      JOIN drama_projects p ON p.id=b.project_id WHERE p.organization_id=$1 AND p.owner_id=$2
+      AND p.id=$3 AND p.status='ready' AND b.id=$4 FOR UPDATE OF b`, org, owner, project, batch).Scan(&status, &revision, &analysisRevision)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return drama.Batch{}, drama.ErrNotFound
 	}
 	if err != nil {
+		return drama.Batch{}, fmt.Errorf("锁定解析批次失败: %w", err)
+	}
+	if status == "running" {
+		return drama.Batch{}, drama.ErrBatchRunning
+	}
+	// 失败后沿用同一范围的已完成步骤；主动重新解析或范围变化时开启全新运行。
+	if status != "failed" || analysisRevision != revision {
+		if _, err = tx.Exec(ctx, `DELETE FROM drama_batch_steps WHERE batch_id=$1`, batch); err != nil {
+			return drama.Batch{}, fmt.Errorf("清理旧解析步骤失败: %w", err)
+		}
+	}
+	item, err := scanDramaBatch(tx.QueryRow(ctx, `UPDATE drama_batches b SET status='running', error_message='', analysis_revision=b.revision, updated_at=NOW()
+      WHERE b.id=$1 RETURNING `+dramaBatchColumns, batch))
+	if err != nil {
 		return drama.Batch{}, fmt.Errorf("启动剧本解析失败: %w", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return drama.Batch{}, fmt.Errorf("提交剧本解析任务失败: %w", err)
 	}
 	return item, nil
 }
@@ -37,11 +58,20 @@ func (r *DramaRepository) FailBatchAnalysis(ctx context.Context, org, owner, pro
 	if tag.RowsAffected() == 0 {
 		return drama.ErrBatchConflict
 	}
+	_, err = r.db.Exec(ctx, `UPDATE drama_batch_steps SET status='failed', error_message=$3, updated_at=NOW()
+      WHERE batch_id=$1 AND analysis_revision=$2 AND status='running'`, batch, revision, reason)
+	if err != nil {
+		return fmt.Errorf("保存解析步骤失败状态失败: %w", err)
+	}
 	return nil
 }
 
 func (r *DramaRepository) FailInterruptedBatches(ctx context.Context) error {
-	_, err := r.db.Exec(ctx, `UPDATE drama_batches SET status='failed', error_message='解析服务中断，请重新点击 AI 解析', updated_at=NOW() WHERE status='running'`)
+	_, err := r.db.Exec(ctx, `UPDATE drama_batch_steps s SET status='failed', error_message='解析服务中断', updated_at=NOW() FROM drama_batches b WHERE b.id=s.batch_id AND b.status='running' AND s.status='running'`)
+	if err != nil {
+		return fmt.Errorf("恢复中断的解析步骤失败: %w", err)
+	}
+	_, err = r.db.Exec(ctx, `UPDATE drama_batches SET status='failed', error_message='解析服务中断，请重新点击 AI 解析', updated_at=NOW() WHERE status='running'`)
 	if err != nil {
 		return fmt.Errorf("恢复中断的剧本解析任务失败: %w", err)
 	}
