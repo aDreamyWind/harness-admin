@@ -60,15 +60,13 @@
 .drama-section-head { margin: 28px 0 18px; }
 .drama-section-head h2 { margin: 0; font-size: 20px; }
 .drama-workspace .drama-empty { display: grid; place-items: center; min-height: 220px; border: 1px dashed #d7dfea; border-radius: 12px; background: #fff; }
-.drama-asset-grid, .drama-episode-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
-.drama-asset-grid .ant-card, .drama-episode-list .ant-card { min-height: 180px; border-radius: 12px; }
-.drama-asset-icon { display: grid; place-items: center; width: 41px; height: 41px; margin-bottom: 18px; border-radius: 10px; background: #eef2fa; color: #5977b8; font-size: 19px; }
-.drama-asset-grid h4 { margin: 0 0 7px !important; }
-.drama-asset-grid p, .drama-episode-list p { color: #777f90; line-height: 1.7; }
+.drama-episode-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.drama-episode-list .ant-card { min-height: 180px; border-radius: 12px; }
+.drama-episode-list p { color: #777f90; line-height: 1.7; }
 .drama-episode-list .ant-card span { color: #5977b8; font-size: 12px; font-weight: 700; }
 .drama-episode-list h3 { margin: 16px 0 8px; }
-@media (max-width: 1000px) { .drama-workflow { grid-template-columns: 1fr; } .drama-asset-grid, .drama-episode-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 700px) { .drama-workspace { grid-template-columns: 1fr; } .drama-workspace-sidebar { position: static; height: auto; overflow: visible; min-height: auto; padding: 12px; } .drama-workspace-brand { display: none; } .drama-workspace-nav { display: flex; overflow-x: auto; } .drama-workspace-nav button { width: auto; flex: none; } .drama-workspace-main { padding: 25px 18px 60px; } .drama-workspace-header, .drama-overview-toolbar { align-items: flex-start; flex-direction: column; } .drama-overview-actions { align-self: flex-end; } .drama-synopsis-card { padding: 22px 20px 0; } .drama-overview-panel { padding: 22px 20px; } .drama-overview-panels, .drama-asset-grid, .drama-episode-list { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .drama-workflow { grid-template-columns: 1fr; } .drama-episode-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .drama-workspace { grid-template-columns: 1fr; } .drama-workspace-sidebar { position: static; height: auto; overflow: visible; min-height: auto; padding: 12px; } .drama-workspace-brand { display: none; } .drama-workspace-nav { display: flex; overflow-x: auto; } .drama-workspace-nav button { width: auto; flex: none; } .drama-workspace-main { padding: 25px 18px 60px; } .drama-workspace-header, .drama-overview-toolbar { align-items: flex-start; flex-direction: column; } .drama-overview-actions { align-self: flex-end; } .drama-synopsis-card { padding: 22px 20px 0; } .drama-overview-panel { padding: 22px 20px; } .drama-overview-panels, .drama-episode-list { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .drama-workspace * { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
 .drama-batches-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
@@ -202,3 +200,48 @@
 .drama-asset-batch-tags small { color: #a0a9b8; font-size: 12px; }
 .drama-asset-batch-tags .ant-tag { margin: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .drama-asset-batch-tags a { color: inherit; }
+
+/* 批次资产的两层标题跟随当前列表，保留原生折叠和键盘操作。 */
+.drama-asset-section { --drama-asset-heading-height: 52px; }
+.drama-asset-section > summary { position: sticky; top: 0; z-index: 4; box-sizing: border-box; height: var(--drama-asset-heading-height); padding: 14px 0; background: #fff; border-bottom: 1px solid #e7eaf0; }
+.drama-batch-asset-group > summary { position: sticky; top: var(--drama-asset-heading-height); z-index: 3; margin-bottom: 0; padding: 12px 0; background: #fff; border-bottom: 1px solid #e7eaf0; }
+.drama-batch-asset-group { scroll-margin-top: 100px; }
+.drama-batch-asset-list { margin-top: 10px; }
+
+/* 资产目录以封面为主，名称与批次关联留在封面外，便于快速浏览。 */
+.drama-asset-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); align-items: start; gap: 28px 18px; }
+.drama-asset-gallery.scene { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.drama-asset-gallery.prop { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.drama-asset-tile { min-width: 0; }
+.drama-asset-cover { position: relative; aspect-ratio: 2 / 3; overflow: hidden; border: 1px solid #e1e6ef; border-radius: 10px; background: #f0f3f9; }
+.scene .drama-asset-cover { aspect-ratio: 16 / 9; background: #eef3f2; }
+.prop .drama-asset-cover { aspect-ratio: 1; background: #f4f2f8; }
+.drama-asset-placeholder { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 18px; width: 100%; height: 100%; color: #a4b0c4; }
+.drama-asset-placeholder > .anticon { font-size: 64px; }
+.drama-asset-placeholder > span:last-child { font-size: 12px; letter-spacing: .08em; color: #8d9ab0; }
+.scene .drama-asset-placeholder { color: #9fbbb4; }
+.prop .drama-asset-placeholder { color: #b4a8c6; }
+.drama-asset-kind-label { position: absolute; top: 10px; left: 10px; padding: 3px 8px; border-radius: 5px; background: #ffffffd9; color: #5f6e83; font-size: 12px; }
+.drama-asset-cover-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 16px; padding: 20px 14px; background: #1c2538d9; opacity: 0; transition: opacity .16s ease; }
+.drama-asset-cover:hover .drama-asset-cover-overlay, .drama-asset-cover:focus-within .drama-asset-cover-overlay { opacity: 1; }
+.scene .drama-asset-cover-overlay, .prop .drama-asset-cover-overlay { gap: 10px; padding: 12px; }
+.scene .drama-asset-cover-overlay p { -webkit-line-clamp: 2; }
+.drama-asset-cover-actions { display: flex; flex-direction: column; align-items: center; gap: 9px; }
+.drama-asset-cover-actions .ant-btn { width: 128px; height: 30px; font-size: 12px; background: #fff; border-color: #fff; color: #26324a; }
+.drama-asset-cover-actions .ant-btn:disabled { background: #ffffffc9; border-color: transparent; color: #788191; }
+.drama-asset-cover-actions > span { border-radius: 6px; }
+.drama-asset-cover-actions > span:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.drama-asset-cover-overlay p { flex: none; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0; color: #f1f4fa; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.drama-asset-tile h4 { margin: 12px 0 0; color: #26324a; font-size: 14px; line-height: 1.6; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
+.drama-asset-tile .drama-asset-batch-tags { margin-top: 12px; padding-top: 10px; gap: 6px; }
+.drama-asset-tile .drama-asset-batch-tags .ant-tag { font-size: 11px; line-height: 19px; }
+.drama-asset-preview { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; padding: 12px 0; }
+.drama-asset-preview-cover { aspect-ratio: 2 / 3; border: 1px solid #e1e6ef; border-radius: 10px; background: #f0f3f9; }
+.drama-asset-preview.scene, .drama-asset-preview.prop { grid-template-columns: 1fr; }
+.drama-asset-preview.scene .drama-asset-preview-cover { aspect-ratio: 16 / 9; max-height: 280px; background: #eef3f2; }
+.drama-asset-preview.prop .drama-asset-preview-cover { aspect-ratio: 1; width: min(240px, 100%); margin: auto; background: #f4f2f8; }
+.drama-asset-preview-copy { min-width: 0; }
+.drama-asset-preview-copy h4 { margin: 0 0 8px; color: #26324a; font-size: 13px; }
+.drama-asset-preview-copy p { margin: 0 0 20px; color: #637089; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (hover: none) { .drama-asset-cover-overlay { top: auto; gap: 0; padding: 10px; background: #1c2538a6; opacity: 1; } .drama-asset-cover-overlay p, .drama-asset-cover-actions > span { display: none; } }
+@media (max-width: 700px) { .drama-asset-gallery, .drama-asset-gallery.prop { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 12px; } .drama-asset-gallery.scene { grid-template-columns: 1fr; } .drama-asset-preview { grid-template-columns: 1fr; } .drama-asset-preview-cover { width: min(200px, 100%); margin: auto; } .drama-asset-preview.scene .drama-asset-preview-cover { width: 100%; } .drama-asset-cover-overlay { padding: 10px; gap: 10px; } .drama-asset-cover-overlay p { display: none; } }
