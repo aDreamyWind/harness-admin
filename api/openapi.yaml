@@ -234,6 +234,37 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 概览尚未完成。 }
+  /ai-drama/projects/{id}/video-episodes:
+    get:
+      summary: 查询由正式分集剧本关联的视频制作入口
+      operationId: listDramaVideoEpisodes
+      description: 解析落库后直接可见，无需先生成视频。仅返回具有批次和非空正文的正式剧集，按批次编号及批次内集号排序；不返回旧概览中的分集规划。当前分镜功能尚未接入，状态为待拆分。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 本项目视频分集；没有正式剧本时返回空数组。
+          content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/DramaVideoEpisode' } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/video-episodes/{episodeId}:
+    get:
+      summary: 查询单集视频制作工作区及本集关联资产
+      operationId: getDramaVideoEpisodeWorkspace
+      description: episodeId 为原分集剧本主键。正文和资产描述从真实剧本与目录读取，仅返回本集实际关联的角色、场景、道具；状态说明单独返回。不复制剧本，不调用 AI，也不修改任何制作数据。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 单集制作工作区。
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DramaVideoEpisodeWorkspace' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/batches/{batchId}/name:
     patch:
       summary: 修改批次名称并保护手动名称
@@ -3301,6 +3332,32 @@ components:
         number: { type: integer }
         title: { type: string }
         synopsis: { type: string }
+        scriptText: { type: string }
+        characters: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+        scenes: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+        props: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+    DramaVideoEpisode:
+      type: object
+      required: [scriptEpisodeId, projectId, number, batchEpisodeNumber, batch, title, synopsis, storyboardStatus, characterCount, sceneCount, propCount, scriptNeedsReview, scriptUpdatedAt]
+      properties:
+        scriptEpisodeId: { type: string, format: uuid, description: 原分集剧本主键，也是制作入口的稳定标识。 }
+        projectId: { type: string, format: uuid }
+        number: { type: integer, minimum: 1, description: 按来源批次和批次内集号排序后的项目内展示序号，不作为身份标识。 }
+        batchEpisodeNumber: { type: integer, minimum: 1, description: 原批次内集号。 }
+        batch: { $ref: '#/components/schemas/DramaBatchReference' }
+        title: { type: string }
+        synopsis: { type: string }
+        storyboardStatus: { type: string, enum: [pending], description: 当前为待拆分；后续接入分镜和片段制作时扩展。 }
+        characterCount: { type: integer, minimum: 0 }
+        sceneCount: { type: integer, minimum: 0 }
+        propCount: { type: integer, minimum: 0 }
+        scriptNeedsReview: { type: boolean, description: 来源批次范围变更、正在重新解析或解析异常时，保留已有剧本入口并提示核对。 }
+        scriptUpdatedAt: { type: string, format: date-time }
+    DramaVideoEpisodeWorkspace:
+      type: object
+      required: [episode, scriptText, characters, scenes, props]
+      properties:
+        episode: { $ref: '#/components/schemas/DramaVideoEpisode' }
         scriptText: { type: string }
         characters: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         scenes: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }

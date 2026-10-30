@@ -161,3 +161,28 @@ export const getDramaBatchResult = (projectId: string, batchId: string) => reque
 export const listDramaAssets = (projectId: string, kind: DramaAssetKind, q = '') => request<DramaCatalogAsset[]>(`/api/v1/ai-drama/projects/${projectId}/assets?kind=${kind}&q=${encodeURIComponent(q)}`)
 export const addDramaEpisodeAsset = (projectId: string, episodeId: string, assetId: string, stateLabel = '') => request<DramaEpisodeAsset>(`/api/v1/ai-drama/projects/${projectId}/episodes/${episodeId}/assets`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ assetId, stateLabel }) })
 export const removeDramaEpisodeAsset = (projectId: string, episodeId: string, linkId: string) => request<{ removed: boolean }>(`/api/v1/ai-drama/projects/${projectId}/episodes/${episodeId}/assets/${linkId}`, { method: 'DELETE', headers: csrfHeaders() })
+
+export interface DramaVideoEpisode {
+  scriptEpisodeId: string
+  projectId: string
+  number: number
+  batchEpisodeNumber: number
+  batch: DramaBatchReference
+  title: string
+  synopsis: string
+  storyboardStatus: 'pending'
+  characterCount: number
+  sceneCount: number
+  propCount: number
+  scriptNeedsReview: boolean
+  scriptUpdatedAt: string
+}
+export interface DramaVideoEpisodeWorkspace {
+  episode: DramaVideoEpisode
+  scriptText: string
+  characters: DramaEpisodeAsset[]
+  scenes: DramaEpisodeAsset[]
+  props: DramaEpisodeAsset[]
+}
+export const listDramaVideoEpisodes = (projectId: string) => request<DramaVideoEpisode[]>(`/api/v1/ai-drama/projects/${projectId}/video-episodes`)
+export const getDramaVideoEpisodeWorkspace = (projectId: string, episodeId: string) => request<DramaVideoEpisodeWorkspace>(`/api/v1/ai-drama/projects/${projectId}/video-episodes/${episodeId}`)

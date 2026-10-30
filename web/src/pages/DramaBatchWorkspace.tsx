@@ -154,6 +154,15 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
     stream.onerror = () => { if (active && stream.readyState !== EventSource.CLOSED) setStreamHint('实时连接暂时中断，正在恢复…') }
     return () => { active = false; stream.close() }
   }, [project.id, selectedId, selected?.status])
+  const requestedScriptEpisode = searchParams.get('scriptEpisode')
+  useEffect(() => {
+    if (!requestedScriptEpisode || !result?.episodes.some((episode) => episode.id === requestedScriptEpisode)) return
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(`drama-script-episode-${requestedScriptEpisode}`) as HTMLDetailsElement | null
+      if (target) { target.open = true; target.scrollIntoView({ block: 'start' }) }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [requestedScriptEpisode, result])
   async function startAnalysis(mode: 'restart' | 'resume' = 'restart') {
     if (!selected) return
     setAnalyzing(true)
@@ -322,7 +331,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
           {result.assets[section.field].length ? <div className="drama-batch-asset-list">{result.assets[section.field].map((asset) => <div key={asset.id} className="drama-batch-asset-row"><strong>{asset.name}</strong><div className="drama-batch-asset-copy"><span>{asset.description}</span>{section.key === 'character' && asset.appearanceDescription && <small>外貌：{asset.appearanceDescription}</small>}{section.key === 'character' && asset.voiceDescription && <small>音色：{asset.voiceDescription}</small>}</div></div>)}</div> : <p className="drama-batch-muted">暂无{section.title}</p>}</details>)}
       </details></Card>
       <Card className="drama-batch-result"><h3>剧本内容</h3>
-        {result?.episodes.length ? result.episodes.map((episode) => <details className="drama-batch-episode" key={episode.id} open={episode.number === 1}><summary>第{episode.number}集：{episode.title}</summary>
+        {result?.episodes.length ? result.episodes.map((episode) => <details className="drama-batch-episode" id={`drama-script-episode-${episode.id}`} key={episode.id} open={episode.number === 1 || episode.id === requestedScriptEpisode}><summary>第{episode.number}集：{episode.title}</summary>
           <div className="drama-batch-episode-body">{assetSections.map((section) => <div className="drama-batch-episode-assets" key={section.key}><span className="drama-batch-episode-kind">{section.title}</span><div>{episode[section.field].map((asset) => <Tooltip key={asset.id} title={<div><strong>{asset.name}</strong>{asset.description && <p>{asset.description}</p>}{asset.stateLabel && <p className="drama-asset-tooltip-state">本集状态：{asset.stateLabel}</p>}</div>}><Tag data-asset-id={asset.assetId} closable onClose={(event) => { event.preventDefault(); void removeAsset(episode.id, asset.id) }}>{asset.name}</Tag></Tooltip>)}<Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => openAssetPicker(episode.id, section.key)}>添加</Button></div></div>)}
           <div className="drama-batch-script"><h4>剧本内容</h4><pre>{episode.scriptText}</pre></div></div>
         </details>) : <Empty description={selected.status === 'running' ? '正在生成分集剧本' : '暂无分集剧本，点击 AI解析 开始'} />}

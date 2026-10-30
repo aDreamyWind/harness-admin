@@ -10,9 +10,12 @@ import {
   getDramaProject, getDramaSource, listDramaBatches, reanalyzeDramaOverview, retryDramaProject, updateDramaOverview,
   type DramaAsset, type DramaBatch, type DramaOverview, type DramaProject,
 } from '../api/drama'
+import { DramaVideoEpisodes } from './DramaVideoEpisodes'
+import { DramaVideoEpisodeStudio } from './DramaVideoEpisodeStudio'
 import { DramaAssetGallery } from './DramaAssetGallery'
 import { DramaBatchWorkspace } from './DramaBatchWorkspace'
 import './drama.css'
+import './drama-video.css'
 
 const phaseNames: Record<string, string> = {
   waiting: '等待解析', script: '编剧正在生成剧本', story: '正在理解故事',
@@ -55,6 +58,7 @@ export function DramaProjectPage() {
   function selectSection(value: Section) {
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
+      next.delete('episode')
       if (value === 'overview') next.delete('section')
       else next.set('section', value)
       return next
@@ -154,6 +158,8 @@ export function DramaProjectPage() {
   const overview = project?.overview ?? {}
   const display = (key: keyof DramaOverview, fallback = '等待解析结果') => overview[key]?.trim() || fallback
   const styleOptions = Array.from(new Set([...stylePresets, project?.style, overview.videoStyle].filter((item): item is string => Boolean(item)))).map((item) => ({ value: item, label: item }))
+  const videoEpisodeId = searchParams.get('episode')
+  if (section === 'videoEpisodes' && videoEpisodeId && project) return <>{contextHolder}<DramaVideoEpisodeStudio project={project} episodeId={videoEpisodeId} /></>
   return <div className="drama-workspace">
     {contextHolder}
     <aside className="drama-workspace-sidebar">
@@ -214,11 +220,8 @@ export function DramaProjectPage() {
         <div role="tabpanel" aria-label={assetSection === 'characters' ? '角色' : assetSection === 'scenes' ? '场景' : '道具'}>
           {assets.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，内容会出现在这里" /></div> : <DramaAssetGallery projectId={project.id} kind={assetSection === 'characters' ? 'character' : assetSection === 'scenes' ? 'scene' : 'prop'} assets={assets} />}
         </div>
-      </section> : <section>
-        <div className="drama-section-head"><h2>{navItems.find((item) => item.key === section)?.label}</h2></div>
-        <div className="drama-empty"><Empty description="视频生成后，分集视频会出现在这里" /></div>
-      </section>}
+      </section> : <DramaVideoEpisodes projectId={project.id} />}
     </>}</main>
-    <Drawer title={project?.sourceMode === 'generate' ? '生成剧本' : '完整原文'} open={sourceOpen} onClose={() => setSourceOpen(false)} width={760}>{sourceLoading ? <Skeleton active /> : <pre className="drama-source-text">{sourceText}</pre>}</Drawer>
+    <Drawer title={project?.sourceMode === 'generate' ? '生成剧本' : '完整原文'} open={sourceOpen} onClose={() => setSourceOpen(false)} size={760}>{sourceLoading ? <Skeleton active /> : <pre className="drama-source-text">{sourceText}</pre>}</Drawer>
   </div>
 }

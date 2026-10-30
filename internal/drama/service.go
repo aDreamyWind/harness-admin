@@ -70,6 +70,8 @@ type Settings struct {
 }
 
 type Repository interface {
+	ListVideoEpisodes(context.Context, string, string, string) ([]VideoEpisode, error)
+	GetVideoEpisodeWorkspace(context.Context, string, string, string, string) (VideoEpisodeWorkspace, error)
 	Create(context.Context, Project) (Project, error)
 	List(context.Context, string, string) ([]Project, error)
 	Get(context.Context, string, string, string) (Project, error)

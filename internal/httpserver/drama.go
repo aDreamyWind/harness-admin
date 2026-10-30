@@ -16,6 +16,8 @@ import (
 )
 
 type DramaService interface {
+	VideoEpisodes(context.Context, string, string, string) ([]drama.VideoEpisode, error)
+	VideoEpisodeWorkspace(context.Context, string, string, string, string) (drama.VideoEpisodeWorkspace, error)
 	AvailableModels(context.Context, string, string) ([]drama.Model, error)
 	GetSettings(context.Context, string, string) (drama.Settings, error)
 	SaveSettings(context.Context, drama.Settings) (drama.Settings, error)
@@ -78,6 +80,24 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, saved)
+	})
+	group.GET("/projects/:id/video-episodes", func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		items, err := deps.Drama.VideoEpisodes(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, items)
+	})
+	group.GET("/projects/:id/video-episodes/:episodeId", func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		item, err := deps.Drama.VideoEpisodeWorkspace(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("episodeId"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, item)
 	})
 	group.GET("/projects", func(ctx *gin.Context) {
 		session := currentSession(ctx)

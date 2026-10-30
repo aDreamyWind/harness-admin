@@ -1,0 +1,62 @@
+.drama-video-list-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin: 8px 0 20px; }
+.drama-video-list-toolbar .ant-select { min-width: 200px; max-width: min(420px, 75%); }
+.drama-video-episode-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); gap: 20px; align-items: start; }
+.drama-video-episode-card { min-width: 0; overflow: hidden; border: 1px solid #e2e7ef; border-radius: 11px; background: #fff; }
+.drama-video-episode-cover { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; width: 100%; aspect-ratio: 16 / 9; border: 0; border-bottom: 1px solid #e9edf5; background: #f0f3fc; color: #8795ac; cursor: pointer; }
+.drama-video-episode-cover > .anticon { color: #a5b3ce; font-size: 46px; }
+.drama-video-episode-cover > span:last-child { font-size: 12px; }
+.drama-video-episode-cover:hover { background: #e9effb; }
+.drama-video-episode-cover:focus-visible { outline: 2px solid #315fbd; outline-offset: -3px; }
+.drama-video-episode-number { position: absolute; top: 10px; left: 10px; min-width: 26px; padding: 3px 7px; border-radius: 5px; background: #ffffffc9; color: #4b5c77; font-size: 12px; font-weight: 600; text-align: center; }
+.drama-video-episode-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; }
+.drama-video-episode-copy h3 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; font-size: 15px; font-weight: 600; line-height: 1.6; color: #26324a; overflow-wrap: anywhere; }
+.drama-video-batch-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #7e8ba0; }
+.drama-video-asset-counts { display: flex; flex-wrap: wrap; gap: 12px; margin: 1px 0 6px; color: #7c8ba2; font-size: 12px; }
+.drama-video-asset-counts > span { display: flex; align-items: center; gap: 4px; }
+.drama-video-episode-copy > .ant-btn { margin-top: 2px; }
+.drama-video-studio { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; background: #edf2f8; color: #26324a; }
+.drama-video-studio-header { display: flex; justify-content: space-between; align-items: center; gap: 24px; min-height: 68px; padding: 12px 20px 12px 12px; border-bottom: 1px solid #e3e8f1; background: #fff; }
+.drama-video-studio-identity, .drama-video-studio-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.drama-video-studio-identity > .ant-btn { flex: none; }
+.drama-video-studio-identity > div { min-width: 0; }
+.drama-video-studio-identity h1 { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.drama-video-studio-identity > div > span { display: block; margin-top: 3px; color: #8a97ab; font-size: 11px; }
+.drama-video-studio-identity > .ant-tag { flex: none; }
+.drama-video-studio-actions { flex: none; }
+.drama-video-studio-format { color: #728199; font-size: 12px; }
+.drama-video-studio-body { display: grid; grid-template-columns: 296px minmax(0, 1fr); gap: 12px; min-height: 0; padding: 12px; }
+.drama-video-studio-assets { min-width: 0; min-height: 0; overflow-y: auto; padding: 18px 14px 28px; border: 1px solid #e4e9f1; border-radius: 10px; background: #fff; }
+.drama-video-assets-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 18px; }
+.drama-video-assets-heading h2, .drama-video-storyboard-heading h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.drama-video-assets-heading .ant-btn { padding: 0; font-size: 12px; }
+.drama-video-assets-group { margin-top: 20px; }
+.drama-video-assets-group > summary { margin-bottom: 12px; color: #50607a; font-size: 13px; font-weight: 600; cursor: pointer; }
+.drama-video-assets-group > summary:focus-visible { outline: 2px solid #315fbd; outline-offset: 3px; }
+.drama-video-assets-group:not([open]) > summary { margin-bottom: 0; }
+.drama-video-asset-empty { margin: 0; padding: 12px; border-radius: 7px; background: #f8fafd; color: #97a2b5; font-size: 12px; }
+.drama-asset-gallery.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 10px; }
+.drama-asset-gallery.scene.compact { grid-template-columns: 1fr; }
+.compact .drama-asset-placeholder > .anticon { font-size: 40px; }
+.compact .drama-asset-placeholder { gap: 10px; }
+.compact .drama-asset-placeholder > span:last-child { font-size: 10px; }
+.compact .drama-asset-kind-label { display: none; }
+.compact .drama-asset-tile h4 { margin-top: 7px; font-size: 12px; }
+.compact .drama-asset-cover-actions .ant-btn { width: 92px; height: 28px; }
+.compact .drama-asset-cover-overlay { padding: 10px; gap: 8px; }
+.compact .drama-asset-cover-overlay p { display: none; }
+.drama-asset-state-label { margin: 5px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8c99ad; font-size: 11px; text-align: center; }
+.drama-video-storyboard { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; padding: 20px; border: 1px solid #e4e9f1; border-radius: 10px; background: #fff; }
+.drama-video-storyboard > .ant-alert { flex: none; margin-bottom: 18px; }
+.drama-video-storyboard-heading { display: flex; align-items: center; gap: 12px; }
+.drama-video-storyboard-heading > span { color: #97a2b4; font-size: 12px; }
+.drama-video-storyboard-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 14px; min-height: 320px; padding: 24px 12px; text-align: center; }
+.drama-video-storyboard-empty > .anticon { margin-bottom: 8px; color: #becbe1; font-size: 60px; }
+.drama-video-storyboard-empty h3 { margin: 0; color: #4b5c75; font-size: 16px; font-weight: 600; }
+.drama-video-storyboard-empty p { margin: 0 0 6px; color: #96a2b6; font-size: 13px; }
+.drama-video-studio-loading { padding: 28px; }
+.drama-video-script-synopsis { padding-bottom: 16px; border-bottom: 1px solid #e5eaf2; color: #8190a5; line-height: 1.8; }
+.drama-batch-episode { scroll-margin-top: 16px; }
+@media (max-width: 1050px) { .drama-video-studio-format { display: none; } .drama-video-studio-body { grid-template-columns: 260px minmax(0, 1fr); } }
+@media (max-width: 700px) { .drama-video-episode-grid { grid-template-columns: 1fr; } .drama-video-studio { height: auto; min-height: 100dvh; overflow: visible; } .drama-video-studio-header { flex-direction: column; align-items: stretch; gap: 12px; padding: 12px; } .drama-video-studio-actions { justify-content: flex-end; } .drama-video-studio-body { grid-template-columns: 1fr; } .drama-video-studio-assets { max-height: 40vh; } .drama-video-storyboard { min-height: 420px; } .drama-video-storyboard-empty { min-height: 300px; } }
+
+@media (prefers-reduced-motion: reduce) { .drama-video-studio * { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }

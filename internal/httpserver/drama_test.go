@@ -14,6 +14,8 @@ import (
 )
 
 type dramaServiceStub struct {
+	videoScope    []string
+	videoError    error
 	created       drama.CreateInput
 	savedSettings drama.Settings
 	started       chan struct{}
