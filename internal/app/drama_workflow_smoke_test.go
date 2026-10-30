@@ -76,7 +76,7 @@ func TestDramaWorkflowConfiguredModelSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	t.Log("开始真实模型联调：美术、剧情、整批规划、独立起名、逐集生成和审校")
+	t.Log("开始真实模型联调：美术、逐字证据、独立批次上下文、范围规划、命名、逐集生成和累计审校")
 	if err = service.AnalyzeBatch(job); err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +92,16 @@ func TestDramaWorkflowConfiguredModelSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	nameSteps := 0
+	contextSteps := 0
 	for _, step := range steps {
+		if step.Stage == "context" {
+			contextSteps++
+		}
 		if step.Stage == "name" {
 			nameSteps++
 		}
 	}
-	if result.Batch.Name == "" || result.Batch.Name == "未命名批次" || nameSteps != 1 {
+	if result.Batch.Name == "" || result.Batch.Name == "未命名批次" || nameSteps != 1 || contextSteps != 1 {
 		t.Fatalf("独立起名未成功：名称=%q，起名步骤=%d", result.Batch.Name, nameSteps)
 	}
 	t.Logf("真实流式链路通过：%d 个步骤、%d 集，批次名=%s，耗时 %s", len(steps), len(result.Episodes), result.Batch.Name, time.Since(start).Round(time.Second))

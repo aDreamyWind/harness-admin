@@ -70,6 +70,9 @@ type Settings struct {
 }
 
 type Repository interface {
+	ListReviewIssues(context.Context, string, string, string, string) ([]ReviewIssue, error)
+	SaveReviewIssues(context.Context, BatchAnalysisJob, []ReviewIssue) error
+	SaveRepairedEpisode(context.Context, BatchAnalysisJob, int, string, string) error
 	ListVideoEpisodes(context.Context, string, string, string) ([]VideoEpisode, error)
 	GetVideoEpisodeWorkspace(context.Context, string, string, string, string) (VideoEpisodeWorkspace, error)
 	Create(context.Context, Project) (Project, error)

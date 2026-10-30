@@ -34,7 +34,7 @@ func TestWorkflowPlansWholeBatchBeforeWritingAndResumesFailedEpisode(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err == nil {
+	if err = runV2Fixture(service, job); err == nil {
 		t.Fatal("第二集调用应失败")
 	}
 	progress, err := service.BatchProgress(context.Background(), "org", "user", id, id)
@@ -53,7 +53,7 @@ func TestWorkflowPlansWholeBatchBeforeWritingAndResumesFailedEpisode(t *testing.
 		t.Fatal("续跑应沿用运行时模型快照")
 	}
 	writer.replies = []string{workflowSecond, workflowPassed}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = runV2Fixture(service, job); err != nil {
 		t.Fatal(err)
 	}
 	if len(writer.prompts) != 9 || len(repo.batchDraft.Episodes) != 2 {
@@ -71,7 +71,7 @@ func TestWorkflowRepairsOnlyEpisodeRejectedByReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = runV2Fixture(service, job); err != nil {
 		t.Fatal(err)
 	}
 	if len(writer.prompts) != 10 || !strings.Contains(writer.prompts[8], "信件内容与原文不符") || len(repo.batchDraft.Episodes) != 2 {
@@ -175,7 +175,7 @@ func TestReviewFailureRemainsResumableWithoutRewritingApprovedEpisodes(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err == nil {
+	if err = runV2Fixture(service, job); err == nil {
 		t.Fatal("审校两次未通过应停止而非无限修正")
 	}
 	found := false
@@ -192,7 +192,7 @@ func TestReviewFailureRemainsResumableWithoutRewritingApprovedEpisodes(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = runV2Fixture(service, job); err != nil {
 		t.Fatal(err)
 	}
 	if len(writer.prompts) != 11 || len(repo.batchDraft.Episodes) != 2 {
@@ -219,7 +219,7 @@ func TestManualBatchNameSkipsAINameCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = runV2Fixture(service, job); err != nil {
 		t.Fatal(err)
 	}
 	if len(writer.prompts) != 7 || repo.batches[0].Name != "用户定义名称" {
@@ -230,4 +230,10 @@ func TestManualBatchNameSkipsAINameCall(t *testing.T) {
 			t.Fatal("应拒绝空或过长名称")
 		}
 	}
+}
+
+// 这些用例保留第二版协议的兼容性断言，第三版另行验证证据和累计修正。
+func runV2Fixture(s *Service, job BatchAnalysisJob) error {
+	job.WorkflowVersion = 2
+	return s.analyzeWorkflowV2(job)
 }

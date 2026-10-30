@@ -26,11 +26,13 @@ type StreamingWriter interface {
 	CompleteStream(context.Context, string, string, string, string, func(string) error) (string, error)
 }
 type EpisodePlan struct {
-	Title     string `json:"title"`
-	Synopsis  string `json:"synopsis"`
-	Hook      string `json:"hook"`
-	StartUnit int    `json:"startUnit"`
-	EndUnit   int    `json:"endUnit"`
+	FactIDs   []string     `json:"factIds,omitempty"`
+	Sources   []SourceFact `json:"sources,omitempty"`
+	Title     string       `json:"title"`
+	Synopsis  string       `json:"synopsis"`
+	Hook      string       `json:"hook"`
+	StartUnit int          `json:"startUnit"`
+	EndUnit   int          `json:"endUnit"`
 }
 type sourceUnit struct {
 	ID, Start, End int
@@ -60,7 +62,7 @@ type batchWorkflow struct {
 	slowThreshold time.Duration
 }
 
-var stageLabels = map[string]string{"art": "美术指导", "story": "剧情整理", "plan": "分集规划", "name": "批次命名", "director": "导演", "review": "剧本审校"}
+var stageLabels = map[string]string{"art": "美术指导", "story": "剧情整理", "plan": "分集规划", "name": "批次命名", "context": "本批上下文", "repair": "局部修正", "director": "导演", "review": "剧本审校"}
 
 type BatchEventPage struct {
 	Events []BatchEvent
@@ -87,9 +89,10 @@ func (s *Service) BatchEvents(ctx context.Context, org, owner, project, batch st
 func (w *batchWorkflow) emit(stage string, number int, kind, message string) error {
 	return w.service.repository.AppendBatchEvent(w.ctx, w.job, BatchEvent{Stage: stage, StepNumber: number, Kind: kind, Message: message})
 }
-func (w *batchWorkflow) runStep(stage string, number, total int, prompt string, validate func(json.RawMessage) error, force bool) (json.RawMessage, error) {
+func (w *batchWorkflow) runStep(stage string, number, total int, prompt string, validate func(json.RawMessage) error, force bool, normalize ...func(json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
+	inputHash := inputFingerprint(w.job, prompt)
 	key := fmt.Sprintf("%s:%d", stage, number)
-	if old, ok := w.saved[key]; ok && !force && old.Status == "completed" && old.ChunkTotal == total {
+	if old, ok := w.saved[key]; ok && !force && old.Status == "completed" && old.ChunkTotal == total && (w.job.WorkflowVersion < 3 || old.InputHash == inputHash) {
 		data, err := parseObject(old.ResultText)
 		if err != nil {
 			return nil, fmt.Errorf("读取%s已保存结果失败: %w", stageLabels[stage], err)
@@ -99,7 +102,7 @@ func (w *batchWorkflow) runStep(stage string, number, total int, prompt string, 
 		}
 		return data, nil
 	}
-	step := BatchStep{Stage: stage, ChunkNumber: number, ChunkTotal: total}
+	step := BatchStep{InputHash: inputHash, Stage: stage, ChunkNumber: number, ChunkTotal: total}
 	if err := w.service.repository.StartBatchStep(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.Batch.ProjectID, w.job.Batch.ID, w.job.Batch.AnalysisRevision, step); err != nil {
 		return nil, err
 	}
@@ -130,6 +133,9 @@ func (w *batchWorkflow) runStep(stage string, number, total int, prompt string, 
 			data, err = parseObject(response)
 			if err == nil {
 				err = validate(data)
+			}
+			if err == nil && len(normalize) > 0 {
+				data, err = normalize[0](data)
 			}
 			if err == nil {
 				step.ResultText = string(data)
@@ -279,7 +285,7 @@ func (w *batchWorkflow) schedule(tasks []workflowTask) error {
 	}
 	return nil
 }
-func (s *Service) analyzeWorkflow(job BatchAnalysisJob) error {
+func (s *Service) analyzeWorkflowV2(job BatchAnalysisJob) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Hour)
 	defer cancel()
 	source, err := s.repository.GetSourceRange(ctx, job.OrganizationID, job.OwnerID, job.Batch.ProjectID, job.Batch.StartOffset, job.Batch.EndOffset-job.Batch.StartOffset)

@@ -136,7 +136,7 @@ export interface DramaBatchResult {
   episodes: DramaScriptEpisode[]
 }
 export interface DramaBatchStep {
-  stage: 'art' | 'story' | 'plan' | 'name' | 'director' | 'review'
+  stage: 'art' | 'story' | 'context' | 'plan' | 'name' | 'director' | 'review' | 'repair'
   chunkNumber: number
   chunkTotal: number
   status: 'running' | 'completed' | 'failed'
@@ -145,9 +145,14 @@ export interface DramaBatchStep {
   startedAt: string
   updatedAt: string
 }
-export interface DramaEpisodePlan { title: string; synopsis: string; hook: string; startUnit: number; endUnit: number }
+export interface DramaSourceFact { id: string; unitId: number; claim: string; quote: string; startOffset: number; endOffset: number }
+export interface DramaGroundedContext { startOffset: number; endOffset: number; precedingStart: number; precedingEnd: number; summary: string; background: string; setting: string; continuity: string }
+export interface DramaReviewIssue { id: string; episodeNumber: number; category: 'fact' | 'continuity' | 'causality' | 'style'; severity: 'blocking' | 'suggestion'; message: string; sourceQuote: string; scriptQuote: string; sourceStart: number; sourceEnd: number; status: 'open' | 'resolved'; createdAt: string; updatedAt: string }
+export interface DramaEpisodePlan { title: string; synopsis: string; hook: string; startUnit: number; endUnit: number; factIds?: string[]; sources?: DramaSourceFact[] }
 export interface DramaBatchEvent { id: number; stage: string; stepNumber: number; kind: string; message: string; createdAt: string }
 export interface DramaBatchProgress {
+ context?: DramaGroundedContext
+ reviewIssues?: DramaReviewIssue[]
   plans: DramaEpisodePlan[]
   steps: DramaBatchStep[]
   assets: { characters: DramaCatalogAsset[]; scenes: DramaCatalogAsset[]; props: DramaCatalogAsset[] }

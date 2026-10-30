@@ -245,3 +245,17 @@
 .drama-asset-preview-copy p { margin: 0 0 20px; color: #637089; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (hover: none) { .drama-asset-cover-overlay { top: auto; gap: 0; padding: 10px; background: #1c2538a6; opacity: 1; } .drama-asset-cover-overlay p, .drama-asset-cover-actions > span { display: none; } }
 @media (max-width: 700px) { .drama-asset-gallery, .drama-asset-gallery.prop { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 12px; } .drama-asset-gallery.scene { grid-template-columns: 1fr; } .drama-asset-preview { grid-template-columns: 1fr; } .drama-asset-preview-cover { width: min(200px, 100%); margin: auto; } .drama-asset-preview.scene .drama-asset-preview-cover { width: 100%; } .drama-asset-cover-overlay { padding: 10px; gap: 10px; } .drama-asset-cover-overlay p { display: none; } }
+
+.drama-grounded-context, .drama-review-history { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e4e9f1; }
+.drama-grounded-context > summary, .drama-review-history > summary { color: #344868; font-weight: 600; cursor: pointer; font-size: 14px; }
+.drama-grounded-context p { color: #69788f; line-height: 1.8; white-space: pre-wrap; }
+.drama-grounded-context small { color: #8c99ac; }
+.drama-review-issue { margin-top: 12px; padding: 14px; border: 1px solid #f1d6cf; border-radius: 8px; background: #fff8f6; }
+.drama-review-issue.resolved { border-color: #cfe6d8; background: #f5fbf7; }
+.drama-review-issue > div { display: flex; align-items: center; gap: 12px; }
+.drama-review-issue p { margin: 10px 0; color: #52637c; line-height: 1.7; }
+.drama-review-issue small { color: #7b8aa0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.drama-review-issue blockquote, .drama-plan-evidence blockquote { margin: 10px 0; padding-left: 12px; border-left: 2px solid #bacce6; color: #75849a; font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.drama-plan-evidence blockquote p { margin: 4px 0; }
+
+.drama-review-issue.suggestion:not(.resolved) { border-color: #e1e7f0; background: #f8fafd; }

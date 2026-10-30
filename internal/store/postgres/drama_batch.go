@@ -12,13 +12,13 @@ import (
 )
 
 const dramaBatchColumns = `b.id, b.project_id, b.batch_number, b.start_offset, b.end_offset,
- b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at, b.analysis_context,b.name,b.name_manually_edited`
+ b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at, b.analysis_context,b.name,b.name_manually_edited,b.analysis_run_id`
 
 func scanDramaBatch(row pgx.Row) (drama.Batch, error) {
 	var item drama.Batch
 	var previous sql.NullString
 	err := row.Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-		&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.AnalysisContext, &item.Name, &item.NameManuallyEdited)
+		&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.AnalysisContext, &item.Name, &item.NameManuallyEdited, &item.AnalysisRunID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return drama.Batch{}, drama.ErrNotFound
 	}
@@ -115,10 +115,10 @@ func (r *DramaRepository) CreateBatch(ctx context.Context, organizationID, owner
 		(id, project_id, batch_number, start_offset, end_offset, selection_mode, previous_batch_id, boundary, status)
 		VALUES ($1, $2, (SELECT COALESCE(MAX(batch_number), 0) + 1 FROM drama_batches WHERE project_id=$2), $3, $4, $5, $6, $7, 'pending')
 		RETURNING id, project_id, batch_number, start_offset, end_offset, selection_mode,
-		previous_batch_id, boundary, status, error_message, revision, analysis_revision, created_at, updated_at,name,name_manually_edited`,
+		previous_batch_id, boundary, status, error_message, revision, analysis_revision, created_at, updated_at,name,name_manually_edited,analysis_run_id`,
 		item.ID, item.ProjectID, item.StartOffset, item.EndOffset, item.SelectionMode, previous, item.Boundary).
 		Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-			&item.SelectionMode, &previousID, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.Name, &item.NameManuallyEdited)
+			&item.SelectionMode, &previousID, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.Name, &item.NameManuallyEdited, &item.AnalysisRunID)
 	if err != nil {
 		return drama.Batch{}, fmt.Errorf("创建剧本批次失败: %w", err)
 	}
@@ -144,10 +144,10 @@ func (r *DramaRepository) UpdateBatchRange(ctx context.Context, organizationID, 
 		FROM drama_projects p WHERE p.id=b.project_id AND p.organization_id=$1 AND p.owner_id=$2
 		AND p.id=$3 AND b.id=$4 AND b.revision=$7
 		RETURNING b.id, b.project_id, b.batch_number, b.start_offset, b.end_offset,
-		b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at,b.name,b.name_manually_edited`,
+		b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at,b.name,b.name_manually_edited,b.analysis_run_id`,
 		organizationID, ownerID, projectID, batchID, change.StartOffset, change.EndOffset, change.Revision).
 		Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-			&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.Name, &item.NameManuallyEdited)
+			&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.Name, &item.NameManuallyEdited, &item.AnalysisRunID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, lookupErr := r.GetBatch(ctx, organizationID, ownerID, projectID, batchID); lookupErr != nil {
 			return drama.Batch{}, lookupErr

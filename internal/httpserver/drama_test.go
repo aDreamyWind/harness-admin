@@ -70,7 +70,7 @@ func (s *dramaServiceStub) StartBatchAnalysis(context.Context, string, string, s
 }
 func (s *dramaServiceStub) AnalyzeBatch(drama.BatchAnalysisJob) error { return nil }
 func (s *dramaServiceStub) BatchProgress(context.Context, string, string, string, string) (drama.BatchProgress, error) {
-	return drama.BatchProgress{Steps: []drama.BatchStep{{Stage: "art", ChunkNumber: 1, ChunkTotal: 2, Status: "completed"}}}, nil
+	return drama.BatchProgress{ReviewIssues: []drama.ReviewIssue{}, Steps: []drama.BatchStep{{Stage: "art", ChunkNumber: 1, ChunkTotal: 2, Status: "completed"}}}, nil
 }
 func (s *dramaServiceStub) BatchResult(context.Context, string, string, string, string) (drama.BatchResult, error) {
 	return drama.BatchResult{}, nil

@@ -4,19 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
 	"strings"
 	"testing"
 )
 
 type fakeRepository struct {
-	project    Project
-	settings   Settings
-	stages     []string
-	failed     string
-	batches    []Batch
-	batchDraft BatchDraft
-	steps      []BatchStep
-	events     []BatchEvent
+	reviewIssues []ReviewIssue
+	project      Project
+	settings     Settings
+	stages       []string
+	failed       string
+	batches      []Batch
+	batchDraft   BatchDraft
+	steps        []BatchStep
+	events       []BatchEvent
 }
 
 func (r *fakeRepository) GetSettings(_ context.Context, _, _ string) (Settings, error) {
@@ -101,6 +103,10 @@ func (r *fakeRepository) QueueBatchAnalysis(_ context.Context, _, _, _, id strin
 			if !options.Resume {
 				r.steps = nil
 				r.events = nil
+				item.AnalysisRunID = uuid.NewString()
+				item.AnalysisContext = options.ContextText
+			}
+			if options.ContextText != "" {
 				item.AnalysisContext = options.ContextText
 			}
 			item.Status = "running"
@@ -118,6 +124,8 @@ func (r *fakeRepository) StartBatchStep(_ context.Context, _, _, _, _ string, _ 
 	step.Status = "running"
 	for i, old := range r.steps {
 		if old.Stage == step.Stage && old.ChunkNumber == step.ChunkNumber {
+			step.ResultText = old.ResultText
+			step.InputHash = old.InputHash
 			r.steps[i] = step
 			return nil
 		}

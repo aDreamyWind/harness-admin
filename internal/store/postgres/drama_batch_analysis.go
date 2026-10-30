@@ -44,7 +44,7 @@ func (r *DramaRepository) QueueBatchAnalysis(ctx context.Context, org, owner, pr
 			return drama.Batch{}, fmt.Errorf("清理旧运行事件失败: %w", err)
 		}
 	}
-	item, err := scanDramaBatch(tx.QueryRow(ctx, `UPDATE drama_batches b SET status='running', error_message='', analysis_revision=b.revision, analysis_context=CASE WHEN $2::boolean THEN b.analysis_context ELSE $3::text END, updated_at=NOW()
+	item, err := scanDramaBatch(tx.QueryRow(ctx, `UPDATE drama_batches b SET status='running', error_message='', analysis_revision=b.revision, analysis_run_id=CASE WHEN $2::boolean THEN b.analysis_run_id ELSE gen_random_uuid() END, analysis_context=CASE WHEN $2::boolean AND $3::text='' THEN b.analysis_context ELSE $3::text END, updated_at=NOW()
       WHERE b.id=$1 RETURNING `+dramaBatchColumns, batch, options.Resume, options.ContextText))
 	if err != nil {
 		return drama.Batch{}, fmt.Errorf("启动剧本解析失败: %w", err)

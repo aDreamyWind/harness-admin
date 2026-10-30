@@ -3362,10 +3362,128 @@ components:
         characters: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         scenes: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         props: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+    DramaSourceFact:
+      type: object
+      required:
+      - id
+      - unitId
+      - claim
+      - quote
+      - startOffset
+      - endOffset
+      properties:
+        id:
+          type: string
+        unitId:
+          type: integer
+          minimum: 1
+        claim:
+          type: string
+        quote:
+          type: string
+        startOffset:
+          type: integer
+          minimum: 0
+          description: 完整原文字符位置，从零开始。
+        endOffset:
+          type: integer
+          minimum: 1
+          description: 结束位置不包含。
+    DramaGroundedContext:
+      type: object
+      required:
+      - startOffset
+      - endOffset
+      - precedingStart
+      - precedingEnd
+      - summary
+      - background
+      - setting
+      - continuity
+      properties:
+        startOffset:
+          type: integer
+          minimum: 0
+        endOffset:
+          type: integer
+          minimum: 0
+        precedingStart:
+          type: integer
+          minimum: 0
+        precedingEnd:
+          type: integer
+          minimum: 0
+        summary:
+          type: string
+        background:
+          type: string
+        setting:
+          type: string
+        continuity:
+          type: string
+    DramaReviewIssue:
+      type: object
+      required:
+      - id
+      - episodeNumber
+      - category
+      - severity
+      - message
+      - sourceQuote
+      - scriptQuote
+      - sourceStart
+      - sourceEnd
+      - status
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        episodeNumber:
+          type: integer
+          minimum: 1
+        category:
+          type: string
+          enum:
+          - fact
+          - continuity
+          - causality
+          - style
+        severity:
+          type: string
+          enum:
+          - blocking
+          - suggestion
+        message:
+          type: string
+        sourceQuote:
+          type: string
+        scriptQuote:
+          type: string
+        sourceStart:
+          type: integer
+          minimum: 0
+        sourceEnd:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - open
+          - resolved
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     DramaEpisodePlan:
       type: object
       required: [title, synopsis, hook, startUnit, endUnit]
       properties:
+        factIds: { type: array, items: { type: string } }
+        sources: { type: array, items: { $ref: '#/components/schemas/DramaSourceFact' } }
         title: { type: string }
         synopsis: { type: string }
         hook: { type: string }
@@ -3385,7 +3503,7 @@ components:
       type: object
       required: [stage, chunkNumber, chunkTotal, status, durationMs, startedAt, updatedAt]
       properties:
-        stage: { type: string, enum: [art, story, plan, name, director, review] }
+        stage: { type: string, enum: [art, story, context, plan, name, director, review, repair] }
         chunkNumber: { type: integer, minimum: 1 }
         chunkTotal: { type: integer, minimum: 1 }
         status: { type: string, enum: [running, completed, failed] }
@@ -3395,8 +3513,10 @@ components:
         updatedAt: { type: string, format: date-time }
     DramaBatchProgress:
       type: object
-      required: [steps, assets, episodes, plans]
+      required: [steps, assets, episodes, plans, reviewIssues]
       properties:
+        context: { $ref: '#/components/schemas/DramaGroundedContext' }
+        reviewIssues: { type: array, items: { $ref: '#/components/schemas/DramaReviewIssue' } }
         plans: { type: array, items: { $ref: '#/components/schemas/DramaEpisodePlan' } }
         steps: { type: array, items: { $ref: '#/components/schemas/DramaBatchStep' } }
         assets:
@@ -3458,6 +3578,7 @@ components:
         projectId: { type: string, format: uuid }
         name: { type: string, minLength: 1, maxLength: 80 }
         nameManuallyEdited: { type: boolean, description: 手动命名后 AI 不覆盖。 }
+        analysisRunId: { type: string, format: uuid, readOnly: true, description: 当前解析运行标识，继续沿用、重新解析更新。 }
         number: { type: integer, minimum: 1 }
         startOffset: { type: integer, minimum: 0 }
         endOffset: { type: integer, minimum: 1 }

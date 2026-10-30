@@ -62,6 +62,7 @@ type BatchAssets struct {
 }
 
 type BatchStep struct {
+	InputHash    string    `json:"-"`
 	Stage        string    `json:"stage"`
 	ChunkNumber  int       `json:"chunkNumber"`
 	ChunkTotal   int       `json:"chunkTotal"`
@@ -74,10 +75,12 @@ type BatchStep struct {
 }
 
 type BatchProgress struct {
-	Steps    []BatchStep    `json:"steps"`
-	Assets   BatchAssets    `json:"assets"`
-	Episodes []EpisodeDraft `json:"episodes"`
-	Plans    []EpisodePlan  `json:"plans"`
+	Context      *GroundedContext `json:"context,omitempty"`
+	ReviewIssues []ReviewIssue    `json:"reviewIssues"`
+	Steps        []BatchStep      `json:"steps"`
+	Assets       BatchAssets      `json:"assets"`
+	Episodes     []EpisodeDraft   `json:"episodes"`
+	Plans        []EpisodePlan    `json:"plans"`
 }
 
 type BatchResult struct {
@@ -94,8 +97,9 @@ type AssetDraft struct {
 }
 
 type EpisodeAssetDraft struct {
-	Name       string `json:"name"`
-	StateLabel string `json:"stateLabel"`
+	SourceQuote string `json:"sourceQuote,omitempty"`
+	Name        string `json:"name"`
+	StateLabel  string `json:"stateLabel"`
 }
 
 type EpisodeDraft struct {
@@ -161,7 +165,7 @@ func (s *Service) startBatchRun(ctx context.Context, org, owner, projectID, batc
 	if err != nil {
 		return BatchAnalysisJob{}, err
 	}
-	snapshot := batchRunContext{Version: 2, Title: project.Title, Model: settings.TextModelCode, Overview: project.Overview}
+	snapshot := batchRunContext{Version: 3, Title: project.Title, Model: settings.TextModelCode, Overview: project.Overview}
 	if resume {
 		previous, err := s.repository.GetBatch(ctx, org, owner, projectID, batchID)
 		if err != nil {
@@ -174,6 +178,23 @@ func (s *Service) startBatchRun(ctx context.Context, org, owner, projectID, batc
 		} else {
 			snapshot.Version = 1
 		}
+	}
+	if snapshot.Version == 2 {
+		snapshot.Version = 3
+	}
+	if snapshot.Version >= 3 {
+		var creative map[string]any
+		_ = json.Unmarshal(formatOnly(snapshot.Overview), &creative)
+		if creative == nil {
+			creative = map[string]any{}
+		}
+		if creative["videoStyle"] == nil {
+			creative["videoStyle"] = project.Style
+		}
+		if creative["aspectRatio"] == nil {
+			creative["aspectRatio"] = project.AspectRatio
+		}
+		snapshot.Overview, _ = json.Marshal(creative)
 	}
 	if snapshot.Model == "" {
 		return BatchAnalysisJob{}, ErrModelNotConfigured
@@ -203,8 +224,11 @@ func (s *Service) startBatchRun(ctx context.Context, org, owner, projectID, batc
 }
 
 func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
+	if job.WorkflowVersion >= 3 {
+		return s.analyzeGroundedWorkflow(job)
+	}
 	if job.WorkflowVersion >= 2 {
-		return s.analyzeWorkflow(job)
+		return s.analyzeWorkflowV2(job)
 	}
 	return s.analyzeLegacyBatch(job)
 }
@@ -353,7 +377,7 @@ func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, pr
 	if err != nil {
 		return BatchProgress{}, err
 	}
-	progress := BatchProgress{Steps: steps, Assets: BatchAssets{Characters: []Asset{}, Scenes: []Asset{}, Props: []Asset{}}, Episodes: []EpisodeDraft{}, Plans: []EpisodePlan{}}
+	progress := BatchProgress{ReviewIssues: []ReviewIssue{}, Steps: steps, Assets: BatchAssets{Characters: []Asset{}, Scenes: []Asset{}, Props: []Asset{}}, Episodes: []EpisodeDraft{}, Plans: []EpisodePlan{}}
 	seen := map[string]bool{}
 	for _, step := range steps {
 		if step.Status != "completed" {
@@ -389,6 +413,12 @@ func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, pr
 					}
 				}
 			}
+		} else if step.Stage == "context" {
+			var value GroundedContext
+			if err := json.Unmarshal(data, &value); err != nil {
+				return BatchProgress{}, err
+			}
+			progress.Context = &value
 		} else if step.Stage == "plan" {
 			var plan struct {
 				Episodes []EpisodePlan `json:"episodes"`
@@ -406,6 +436,10 @@ func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, pr
 			}
 			progress.Episodes = append(progress.Episodes, directed.Episodes...)
 		}
+	}
+	progress.ReviewIssues, err = s.repository.ListReviewIssues(ctx, organizationID, ownerID, projectID, batchID)
+	if err != nil {
+		return BatchProgress{}, err
 	}
 	return progress, nil
 }
