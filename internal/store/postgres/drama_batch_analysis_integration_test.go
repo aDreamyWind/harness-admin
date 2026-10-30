@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func TestDramaBatchResultDatabaseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch, err = repo.QueueBatchAnalysis(ctx, org, owner, id, batch.ID)
+	batch, err = repo.QueueBatchAnalysis(ctx, org, owner, id, batch.ID, drama.BatchRunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,5 +103,59 @@ func TestDramaBatchResultDatabaseRoundTrip(t *testing.T) {
 	}
 	if len(project.Characters) == 0 || len(project.Episodes) == 0 {
 		t.Fatal("项目资产和分集兼容视图为空")
+	}
+	if _, err = repo.QueueBatchAnalysis(ctx, org, owner, id, batch.ID, drama.BatchRunOptions{Resume: true}); !errors.Is(err, drama.ErrResumeNotAllowed) {
+		t.Fatalf("已完成批次不应续跑：%v", err)
+	}
+	job := drama.BatchAnalysisJob{Batch: batch, OrganizationID: org, OwnerID: owner}
+	if err = repo.AppendBatchEvent(ctx, job, drama.BatchEvent{Stage: "art", StepNumber: 1, Kind: "completed", Message: "已保存"}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := repo.ListBatchEvents(ctx, org, owner, id, batch.ID, 0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("事件读写失败：%v %+v", err, events)
+	}
+	if events, err = repo.ListBatchEvents(ctx, org, owner, id, batch.ID, events[0].ID); err != nil || len(events) != 0 {
+		t.Fatal("事件游标未生效")
+	}
+	if _, err = repo.ListBatchEvents(ctx, org, uuid.NewString(), id, batch.ID, 0); !errors.Is(err, drama.ErrNotFound) {
+		t.Fatal("不得读取其他用户事件")
+	}
+	batch, err = repo.QueueBatchAnalysis(ctx, org, owner, id, batch.ID, drama.BatchRunOptions{ContextText: `{"version":2,"model":"writer"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err = repo.ListBatchSteps(ctx, org, owner, id, batch.ID)
+	if err != nil || len(steps) != 0 {
+		t.Fatal("重新解析没有清空检查点")
+	}
+	previous, err := repo.GetBatchResult(ctx, org, owner, id, batch.ID)
+	if err != nil || len(previous.Episodes) != 1 {
+		t.Fatal("新结果尚未完成时应保留正式剧集")
+	}
+	step = drama.BatchStep{Stage: "art", ChunkNumber: 1, ChunkTotal: 1, ResultText: `{"characters":[],"scenes":[],"props":[]}`}
+	if err = repo.StartBatchStep(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, step); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.CompleteBatchStep(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, step); err != nil {
+		t.Fatal(err)
+	}
+	job.Batch = batch
+	if err = repo.StartBatchStep(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, drama.BatchStep{Stage: "review", ChunkNumber: 1, ChunkTotal: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.FailBatchStep(ctx, job, "review", 1, "审校待修正"); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.FailBatchAnalysis(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, "审校待修正"); err != nil {
+		t.Fatal(err)
+	}
+	batch, err = repo.QueueBatchAnalysis(ctx, org, owner, id, batch.ID, drama.BatchRunOptions{Resume: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err = repo.ListBatchSteps(ctx, org, owner, id, batch.ID)
+	if err != nil || len(steps) != 2 || steps[0].Status != "completed" || batch.AnalysisContext == "" {
+		t.Fatalf("续跑丢失检查点或上下文：%v %+v", err, steps)
 	}
 }

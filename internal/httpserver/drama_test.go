@@ -262,6 +262,24 @@ func TestDramaBatchAnalysisAndAssetRoutes(t *testing.T) {
 	if got := call(http.MethodPost, batch+"/analyze", "", true, true); got != 202 {
 		t.Fatalf("解析状态 %d", got)
 	}
+	if got := call(http.MethodPost, batch+"/resume", "", false, false); got != 401 {
+		t.Fatalf("未登录续跑状态 %d", got)
+	}
+	if got := call(http.MethodPost, batch+"/resume", "", true, false); got != 403 {
+		t.Fatalf("无CSRF续跑状态 %d", got)
+	}
+	if got := call(http.MethodPost, batch+"/resume", "", true, true); got != 202 {
+		t.Fatalf("续跑状态 %d", got)
+	}
+	if got := call(http.MethodGet, batch+"/events", "", false, false); got != 401 {
+		t.Fatalf("未登录事件流状态 %d", got)
+	}
+	if got := call(http.MethodGet, batch+"/events?after=-1", "", true, false); got != 400 {
+		t.Fatalf("无效事件游标状态 %d", got)
+	}
+	if got := call(http.MethodGet, batch+"/events", "", true, false); got != 200 {
+		t.Fatalf("事件流状态 %d", got)
+	}
 	if got := call(http.MethodGet, batch+"/result", "", true, false); got != 200 {
 		t.Fatalf("结果状态 %d", got)
 	}
@@ -313,4 +331,11 @@ func TestDramaReanalyzeOverviewRequiresSessionAndCSRF(t *testing.T) {
 		t.Fatalf("重新解析未排队: %d %s", response.Code, response.Body.String())
 	}
 	<-service.started
+}
+
+func (s *dramaServiceStub) ResumeBatchAnalysis(context.Context, string, string, string, string) (drama.BatchAnalysisJob, error) {
+	return drama.BatchAnalysisJob{Batch: drama.Batch{Status: "running"}}, nil
+}
+func (s *dramaServiceStub) BatchEvents(context.Context, string, string, string, string, int64) (drama.BatchEventPage, error) {
+	return drama.BatchEventPage{Status: "failed", Events: []drama.BatchEvent{{ID: 1, Stage: "review", Kind: "failed", Message: "审校失败"}}}, nil
 }

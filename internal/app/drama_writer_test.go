@@ -83,3 +83,41 @@ func TestDramaWriterReportsTimeoutClearly(t *testing.T) {
 		t.Fatal("超时调用应记录完整请求和错误")
 	}
 }
+
+type dramaStreamForwarderStub struct {
+	payload   string
+	streaming bool
+}
+
+func (f *dramaStreamForwarderStub) Forward(_ context.Context, _ modelgateway.Route, _ []byte, stream bool) (*http.Response, error) {
+	f.streaming = stream
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(f.payload))}, nil
+}
+func TestDramaWriterStreamsContentAndRecordsRawSSE(t *testing.T) {
+	gateway := &dramaGatewayStub{}
+	forwarder := &dramaStreamForwarderStub{payload: "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"ok\\\":\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"true}\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":8,\"total_tokens\":20}}\n\ndata: [DONE]\n\n"}
+	writer := &dramaWriter{gateway: gateway, forwarder: forwarder}
+	live := ""
+	result, err := writer.CompleteStream(context.Background(), "org", "user", "writer", "生成", func(text string) error { live = text; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != `{"ok":true}` || live != result || !forwarder.streaming {
+		t.Fatalf("流式结果不完整：%q / %q", result, live)
+	}
+	if !gateway.record.Streaming || gateway.record.TotalTokens != 20 || string(gateway.record.ResponseBody) != forwarder.payload {
+		t.Fatal("流式请求、原始响应或用量未完整记录")
+	}
+}
+func TestDramaWriterRejectsReasoningOnlyAndInterruptedStream(t *testing.T) {
+	for _, payload := range []string{"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"推理\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", "data: {\"choices\":[{\"delta\":{\"content\":\"半截\"}}]}\n\n"} {
+		gateway := &dramaGatewayStub{}
+		writer := &dramaWriter{gateway: gateway, forwarder: &dramaStreamForwarderStub{payload: payload}}
+		if _, err := writer.CompleteStream(context.Background(), "org", "user", "writer", "生成", nil); err == nil {
+			t.Fatal("仅推理或断流不能视为完成")
+		}
+		if gateway.record.Result != "failed" || len(gateway.record.ResponseBody) == 0 {
+			t.Fatal("失败流也必须记录原始响应")
+		}
+	}
+}

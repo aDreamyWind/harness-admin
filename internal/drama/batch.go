@@ -19,6 +19,7 @@ var ErrBatchNotReady = errors.New("请先完成剧本概览解析")
 var ErrBatchConflict = errors.New("批次已被修改，请刷新后重试")
 
 type Batch struct {
+	AnalysisContext  string    `json:"-"`
 	ID               string    `json:"id"`
 	ProjectID        string    `json:"projectId"`
 	Number           int       `json:"number"`

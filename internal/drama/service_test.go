@@ -16,6 +16,7 @@ type fakeRepository struct {
 	batches    []Batch
 	batchDraft BatchDraft
 	steps      []BatchStep
+	events     []BatchEvent
 }
 
 func (r *fakeRepository) GetSettings(_ context.Context, _, _ string) (Settings, error) {
@@ -91,11 +92,16 @@ func (r *fakeRepository) UpdateBatchRange(_ context.Context, _, _, _, id string,
 	}
 	return Batch{}, ErrNotFound
 }
-func (r *fakeRepository) QueueBatchAnalysis(_ context.Context, _, _, _, id string) (Batch, error) {
+func (r *fakeRepository) QueueBatchAnalysis(_ context.Context, _, _, _, id string, options BatchRunOptions) (Batch, error) {
 	for i, item := range r.batches {
 		if item.ID == id {
-			if item.Status != "failed" || item.AnalysisRevision != item.Revision {
+			if options.Resume && (item.Status != "failed" || item.AnalysisRevision != item.Revision) {
+				return Batch{}, ErrResumeNotAllowed
+			}
+			if !options.Resume {
 				r.steps = nil
+				r.events = nil
+				item.AnalysisContext = options.ContextText
 			}
 			item.Status = "running"
 			item.AnalysisRevision = item.Revision
@@ -470,7 +476,7 @@ func TestAnalyzeBatchStoresEpisodesAndAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = service.analyzeLegacyBatch(job); err != nil {
 		t.Fatal(err)
 	}
 	if repo.batches[0].Status != "ready" || len(repo.batchDraft.Episodes) != 1 || len(repo.batchDraft.Characters) != 1 || repo.batchDraft.Characters[0].VoiceDescription != "低沉清亮" {
@@ -493,7 +499,7 @@ func TestAnalyzeBatchRetriesTimedOutArtSegment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = service.analyzeLegacyBatch(job); err != nil {
 		t.Fatal(err)
 	}
 	if len(writer.prompts) != 3 || writer.prompts[0] != writer.prompts[1] || repo.batches[0].Status != "ready" {
@@ -513,7 +519,7 @@ func TestAnalyzeBatchRetriesOnlyCurrentDirectorSegment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = service.analyzeLegacyBatch(job); err != nil {
 		t.Fatal(err)
 	}
 	if len(writer.prompts) != 5 || writer.prompts[0] == writer.prompts[2] || writer.prompts[3] != writer.prompts[4] || len(repo.batchDraft.Episodes) != 2 {
@@ -533,7 +539,7 @@ func TestAnalyzeBatchKeepsCompletedStepsAfterFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err == nil {
+	if err = service.analyzeLegacyBatch(job); err == nil {
 		t.Fatal("导演第二段失败应终止当前任务")
 	}
 	progress, err := service.BatchProgress(context.Background(), "org", "user", id, id)
@@ -543,12 +549,12 @@ func TestAnalyzeBatchKeepsCompletedStepsAfterFailure(t *testing.T) {
 	if len(progress.Assets.Characters) != 1 || len(progress.Episodes) != 1 || len(progress.Steps) != 4 {
 		t.Fatalf("成功片段应保留并可预览: %+v", progress)
 	}
-	job, err = service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	job, err = service.ResumeBatchAnalysis(context.Background(), "org", "user", id, id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writer.replies = []string{director}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = service.analyzeLegacyBatch(job); err != nil {
 		t.Fatal(err)
 	}
 	if len(writer.prompts) != 5 || len(repo.batchDraft.Episodes) != 2 {
@@ -567,7 +573,7 @@ func TestAnalyzeBatchRetriesEmptyModelContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err != nil {
+	if err = service.analyzeLegacyBatch(job); err != nil {
 		t.Fatal(err)
 	}
 	if len(writer.prompts) != 3 || writer.prompts[0] != writer.prompts[1] {
@@ -584,10 +590,35 @@ func TestAnalyzeBatchRejectsMissingArtLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = service.AnalyzeBatch(job); err == nil || !strings.Contains(err.Error(), "美术指导第 1 段") {
+	if err = service.analyzeLegacyBatch(job); err == nil || !strings.Contains(err.Error(), "美术指导第 1 段") {
 		t.Fatalf("应指出美术指导结果格式错误: %v", err)
 	}
 	if repo.batches[0].Status != "failed" || len(writer.prompts) != 1 {
 		t.Fatal("无效资产结果不应进入导演阶段")
 	}
+}
+
+func (r *fakeRepository) AppendBatchEvent(_ context.Context, _ BatchAnalysisJob, e BatchEvent) error {
+	e.ID = int64(len(r.events) + 1)
+	r.events = append(r.events, e)
+	return nil
+}
+func (r *fakeRepository) ListBatchEvents(_ context.Context, _, _, _, _ string, after int64) ([]BatchEvent, error) {
+	out := []BatchEvent{}
+	for _, e := range r.events {
+		if e.ID > after {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+func (r *fakeRepository) FailBatchStep(_ context.Context, _ BatchAnalysisJob, stage string, number int, reason string) error {
+	for i := range r.steps {
+		if r.steps[i].Stage == stage && r.steps[i].ChunkNumber == number {
+			r.steps[i].Status = "failed"
+			r.steps[i].ErrorMessage = reason
+			return nil
+		}
+	}
+	return ErrNotFound
 }

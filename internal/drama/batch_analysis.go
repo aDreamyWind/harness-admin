@@ -62,12 +62,14 @@ type BatchStep struct {
 	ErrorMessage string    `json:"errorMessage,omitempty"`
 	DurationMS   int64     `json:"durationMs"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+	StartedAt    time.Time `json:"startedAt"`
 }
 
 type BatchProgress struct {
 	Steps    []BatchStep    `json:"steps"`
 	Assets   BatchAssets    `json:"assets"`
 	Episodes []EpisodeDraft `json:"episodes"`
+	Plans    []EpisodePlan  `json:"plans"`
 }
 
 type BatchResult struct {
@@ -105,44 +107,101 @@ type BatchDraft struct {
 }
 
 type BatchAnalysisJob struct {
-	Batch          Batch
-	OrganizationID string
-	OwnerID        string
-	ProjectTitle   string
-	Overview       json.RawMessage
-	ModelCode      string
+	Batch           Batch
+	OrganizationID  string
+	OwnerID         string
+	ProjectTitle    string
+	Overview        json.RawMessage
+	ModelCode       string
+	WorkflowVersion int
 }
 
-func (s *Service) StartBatchAnalysis(ctx context.Context, organizationID, ownerID, projectID, batchID string) (BatchAnalysisJob, error) {
+type BatchRunOptions struct {
+	Resume      bool
+	ContextText string
+}
+type batchRunContext struct {
+	Version  int             `json:"version"`
+	Title    string          `json:"title"`
+	Model    string          `json:"model"`
+	Overview json.RawMessage `json:"overview"`
+}
+
+var ErrResumeNotAllowed = errors.New("当前批次没有可继续的失败任务，或原文范围已变化，请重新解析")
+
+func (s *Service) StartBatchAnalysis(ctx context.Context, org, owner, projectID, batchID string) (BatchAnalysisJob, error) {
+	return s.startBatchRun(ctx, org, owner, projectID, batchID, false)
+}
+func (s *Service) ResumeBatchAnalysis(ctx context.Context, org, owner, projectID, batchID string) (BatchAnalysisJob, error) {
+	return s.startBatchRun(ctx, org, owner, projectID, batchID, true)
+}
+func (s *Service) startBatchRun(ctx context.Context, org, owner, projectID, batchID string, resume bool) (BatchAnalysisJob, error) {
 	if _, err := uuid.Parse(projectID); err != nil {
 		return BatchAnalysisJob{}, ErrInvalidInput
 	}
 	if _, err := uuid.Parse(batchID); err != nil {
 		return BatchAnalysisJob{}, ErrInvalidInput
 	}
-	project, err := s.Get(ctx, organizationID, ownerID, projectID)
+	project, err := s.Get(ctx, org, owner, projectID)
 	if err != nil {
 		return BatchAnalysisJob{}, err
 	}
 	if project.Status != "ready" {
 		return BatchAnalysisJob{}, ErrBatchNotReady
 	}
-	settings, err := s.repository.GetSettings(ctx, organizationID, ownerID)
+	settings, err := s.repository.GetSettings(ctx, org, owner)
 	if err != nil {
 		return BatchAnalysisJob{}, err
 	}
-	if settings.TextModelCode == "" {
+	snapshot := batchRunContext{Version: 2, Title: project.Title, Model: settings.TextModelCode, Overview: project.Overview}
+	if resume {
+		previous, err := s.repository.GetBatch(ctx, org, owner, projectID, batchID)
+		if err != nil {
+			return BatchAnalysisJob{}, err
+		}
+		if previous.AnalysisContext != "" {
+			if err = json.Unmarshal([]byte(previous.AnalysisContext), &snapshot); err != nil {
+				return BatchAnalysisJob{}, fmt.Errorf("读取解析上下文失败: %w", err)
+			}
+		} else {
+			snapshot.Version = 1
+		}
+	}
+	if snapshot.Model == "" {
 		return BatchAnalysisJob{}, ErrModelNotConfigured
 	}
-	batch, err := s.repository.QueueBatchAnalysis(ctx, organizationID, ownerID, projectID, batchID)
+	models, err := s.writer.AvailableModels(ctx, org, owner)
 	if err != nil {
 		return BatchAnalysisJob{}, err
 	}
-	return BatchAnalysisJob{Batch: batch, OrganizationID: organizationID, OwnerID: ownerID,
-		ProjectTitle: project.Title, Overview: project.Overview, ModelCode: settings.TextModelCode}, nil
+	available := false
+	for _, m := range models {
+		if m.Code == snapshot.Model && m.ModelType == "chat" {
+			available = true
+		}
+	}
+	if !available {
+		return BatchAnalysisJob{}, ErrModelUnavailable
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return BatchAnalysisJob{}, err
+	}
+	batch, err := s.repository.QueueBatchAnalysis(ctx, org, owner, projectID, batchID, BatchRunOptions{Resume: resume, ContextText: string(raw)})
+	if err != nil {
+		return BatchAnalysisJob{}, err
+	}
+	return BatchAnalysisJob{Batch: batch, OrganizationID: org, OwnerID: owner, ProjectTitle: snapshot.Title, Overview: snapshot.Overview, ModelCode: snapshot.Model, WorkflowVersion: snapshot.Version}, nil
 }
 
 func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
+	if job.WorkflowVersion >= 2 {
+		return s.analyzeWorkflow(job)
+	}
+	return s.analyzeLegacyBatch(job)
+}
+
+func (s *Service) analyzeLegacyBatch(job BatchAnalysisJob) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Hour)
 	defer cancel()
 	batch := job.Batch
@@ -184,7 +243,7 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 				return s.failBatch(job, err)
 			}
 			var callErr error
-			response, callErr = s.completeBatchPrompt(ctx, job, prompt)
+			response, callErr = s.completeBatchPrompt(ctx, job, prompt, "art", index+1)
 			if callErr != nil {
 				return s.failBatch(job, fmt.Errorf("美术指导第 %d 段模型调用失败: %w", index+1, callErr))
 			}
@@ -238,7 +297,7 @@ func (s *Service) AnalyzeBatch(job BatchAnalysisJob) error {
 				return s.failBatch(job, err)
 			}
 			var callErr error
-			response, callErr = s.completeBatchPrompt(ctx, job, prompt)
+			response, callErr = s.completeBatchPrompt(ctx, job, prompt, "director", index+1)
 			if callErr != nil {
 				return s.failBatch(job, fmt.Errorf("导演第 %d 段模型调用失败: %w", index+1, callErr))
 			}
@@ -286,7 +345,7 @@ func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, pr
 	if err != nil {
 		return BatchProgress{}, err
 	}
-	progress := BatchProgress{Steps: steps, Assets: BatchAssets{Characters: []Asset{}, Scenes: []Asset{}, Props: []Asset{}}, Episodes: []EpisodeDraft{}}
+	progress := BatchProgress{Steps: steps, Assets: BatchAssets{Characters: []Asset{}, Scenes: []Asset{}, Props: []Asset{}}, Episodes: []EpisodeDraft{}, Plans: []EpisodePlan{}}
 	seen := map[string]bool{}
 	for _, step := range steps {
 		if step.Status != "completed" {
@@ -322,6 +381,14 @@ func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, pr
 					}
 				}
 			}
+		} else if step.Stage == "plan" {
+			var plan struct {
+				Episodes []EpisodePlan `json:"episodes"`
+			}
+			if err := json.Unmarshal(data, &plan); err != nil {
+				return BatchProgress{}, err
+			}
+			progress.Plans = plan.Episodes
 		} else if step.Stage == "director" {
 			var directed struct {
 				Episodes []EpisodeDraft `json:"episodes"`
@@ -335,13 +402,14 @@ func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, pr
 	return progress, nil
 }
 
-func (s *Service) completeBatchPrompt(ctx context.Context, job BatchAnalysisJob, prompt string) (string, error) {
-	response, callErr := s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
+func (s *Service) completeBatchPrompt(ctx context.Context, job BatchAnalysisJob, prompt string, stage string, number int) (string, error) {
+	w := &batchWorkflow{service: s, job: job, ctx: ctx}
+	response, callErr := w.complete(stage, number, prompt)
 	if (errors.Is(callErr, ErrModelTimeout) || errors.Is(callErr, ErrEmptyModelContent)) && ctx.Err() == nil {
 		timer := time.NewTimer(2 * time.Second)
 		select {
 		case <-timer.C:
-			response, callErr = s.writer.Complete(ctx, job.OrganizationID, job.OwnerID, job.ModelCode, prompt)
+			response, callErr = w.complete(stage, number, prompt)
 		case <-ctx.Done():
 			timer.Stop()
 			callErr = ctx.Err()

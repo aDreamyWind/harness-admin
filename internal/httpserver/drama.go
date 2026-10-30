@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -30,6 +32,8 @@ type DramaService interface {
 	UpdateBatchRange(context.Context, string, string, string, string, drama.BatchRangeChange) (drama.Batch, error)
 	StartBatchAnalysis(context.Context, string, string, string, string) (drama.BatchAnalysisJob, error)
 	AnalyzeBatch(drama.BatchAnalysisJob) error
+	ResumeBatchAnalysis(context.Context, string, string, string, string) (drama.BatchAnalysisJob, error)
+	BatchEvents(context.Context, string, string, string, string, int64) (drama.BatchEventPage, error)
 	BatchResult(context.Context, string, string, string, string) (drama.BatchResult, error)
 	BatchProgress(context.Context, string, string, string, string) (drama.BatchProgress, error)
 	ProjectAssets(context.Context, string, string, string, string, string) ([]drama.Asset, error)
@@ -239,6 +243,84 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 		}()
 		httpx.OK(ctx, http.StatusAccepted, job.Batch)
 	})
+	group.POST("/projects/:id/batches/:batchId/resume", requireCSRF(deps), func(ctx *gin.Context) {
+		session := currentSession(ctx)
+		job, err := deps.Drama.ResumeBatchAnalysis(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"))
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		go func() {
+			if err := deps.Drama.AnalyzeBatch(job); err != nil {
+				deps.Logger.Error("剧本批次继续解析失败", "batch_id", job.Batch.ID, "error", err)
+			}
+		}()
+		httpx.OK(ctx, http.StatusAccepted, job.Batch)
+	})
+	group.GET("/projects/:id/batches/:batchId/events", func(ctx *gin.Context) {
+		afterText := ctx.GetHeader("Last-Event-ID")
+		if afterText == "" {
+			afterText = ctx.DefaultQuery("after", "0")
+		}
+		after, err := strconv.ParseInt(afterText, 10, 64)
+		if err != nil || after < 0 {
+			handleDramaError(ctx, deps, drama.ErrInvalidInput)
+			return
+		}
+		session := currentSession(ctx)
+		page, err := deps.Drama.BatchEvents(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"), after)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		ctx.Header("Content-Type", "text/event-stream")
+		ctx.Header("Cache-Control", "no-cache")
+		ctx.Header("X-Accel-Buffering", "no")
+		timer := time.NewTicker(time.Second)
+		lastHeartbeat := time.Now()
+		defer timer.Stop()
+		for {
+			for _, event := range page.Events {
+				data, err := json.Marshal(event)
+				if err != nil {
+					deps.Logger.Error("编码漫剧进度事件失败", "error", err)
+					return
+				}
+				if _, err = fmt.Fprintf(ctx.Writer, "id: %d\nevent: progress\ndata: %s\n\n", event.ID, data); err != nil {
+					return
+				}
+				after = event.ID
+			}
+			if time.Since(lastHeartbeat) >= 15*time.Second {
+				if _, err = fmt.Fprint(ctx.Writer, ": ping\n\n"); err != nil {
+					return
+				}
+				lastHeartbeat = time.Now()
+			}
+			ctx.Writer.Flush()
+			if len(page.Events) < 100 {
+				if page.Status != "running" {
+					ctx.SSEvent("batch-state", page.Status)
+					ctx.Writer.Flush()
+					return
+				}
+				select {
+				case <-ctx.Request.Context().Done():
+					return
+				case <-timer.C:
+				}
+			}
+			page, err = deps.Drama.BatchEvents(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"), after)
+			if err != nil {
+				if ctx.Request.Context().Err() == nil {
+					deps.Logger.Error("读取漫剧进度事件失败", "error", err)
+					ctx.SSEvent("stream-error", "读取实时进度失败，请刷新重试")
+					ctx.Writer.Flush()
+				}
+				return
+			}
+		}
+	})
 	group.GET("/projects/:id/batches/:batchId/progress", func(ctx *gin.Context) {
 		session := currentSession(ctx)
 		progress, err := deps.Drama.BatchProgress(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"))
@@ -313,7 +395,7 @@ func handleDramaError(ctx *gin.Context, deps Dependencies, err error) {
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_drama_project", err.Error())
 	case errors.Is(err, drama.ErrModelUnavailable):
 		httpx.Fail(ctx, http.StatusBadRequest, "drama_model_unavailable", err.Error())
-	case errors.Is(err, drama.ErrBatchNotReady), errors.Is(err, drama.ErrBatchConflict), errors.Is(err, drama.ErrBatchRunning):
+	case errors.Is(err, drama.ErrBatchNotReady), errors.Is(err, drama.ErrBatchConflict), errors.Is(err, drama.ErrBatchRunning), errors.Is(err, drama.ErrResumeNotAllowed):
 		httpx.Fail(ctx, http.StatusConflict, "drama_batch_conflict", err.Error())
 	case errors.Is(err, drama.ErrRetryNotAllowed):
 		httpx.Fail(ctx, http.StatusConflict, "drama_retry_not_allowed", err.Error())

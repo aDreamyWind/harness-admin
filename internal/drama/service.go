@@ -17,6 +17,7 @@ var ErrNotFound = errors.New("漫剧项目不存在")
 var ErrModelNotConfigured = errors.New("请先在漫剧设置中配置可用的文本模型")
 var ErrModelUnavailable = errors.New("所选模型未启用或当前账号无权使用")
 var ErrModelTimeout = errors.New("文本模型响应超时")
+var ErrModelTemporary = errors.New("模型供应商暂时不可用")
 var ErrEmptyModelContent = errors.New("模型没有返回可解析的正文")
 var ErrRetryNotAllowed = errors.New("当前项目不能重新解析")
 
@@ -78,11 +79,14 @@ type Repository interface {
 	GetBatch(context.Context, string, string, string, string) (Batch, error)
 	CreateBatch(context.Context, string, string, Batch) (Batch, error)
 	UpdateBatchRange(context.Context, string, string, string, string, BatchRangeChange) (Batch, error)
-	QueueBatchAnalysis(context.Context, string, string, string, string) (Batch, error)
+	QueueBatchAnalysis(context.Context, string, string, string, string, BatchRunOptions) (Batch, error)
 	SaveBatchResult(context.Context, string, string, string, string, int, BatchDraft) error
 	ListBatchSteps(context.Context, string, string, string, string) ([]BatchStep, error)
 	StartBatchStep(context.Context, string, string, string, string, int, BatchStep) error
 	CompleteBatchStep(context.Context, string, string, string, string, int, BatchStep) error
+	FailBatchStep(context.Context, BatchAnalysisJob, string, int, string) error
+	AppendBatchEvent(context.Context, BatchAnalysisJob, BatchEvent) error
+	ListBatchEvents(context.Context, string, string, string, string, int64) ([]BatchEvent, error)
 	FailBatchAnalysis(context.Context, string, string, string, string, int, string) error
 	GetBatchResult(context.Context, string, string, string, string) (BatchResult, error)
 	ListProjectAssets(context.Context, string, string, string, string, string) ([]Asset, error)

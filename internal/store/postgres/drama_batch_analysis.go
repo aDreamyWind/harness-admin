@@ -11,7 +11,7 @@ import (
 	"harness-admin/internal/drama"
 )
 
-func (r *DramaRepository) QueueBatchAnalysis(ctx context.Context, org, owner, project, batch string) (drama.Batch, error) {
+func (r *DramaRepository) QueueBatchAnalysis(ctx context.Context, org, owner, project, batch string, options drama.BatchRunOptions) (drama.Batch, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return drama.Batch{}, fmt.Errorf("启动剧本解析失败: %w", err)
@@ -32,13 +32,19 @@ func (r *DramaRepository) QueueBatchAnalysis(ctx context.Context, org, owner, pr
 		return drama.Batch{}, drama.ErrBatchRunning
 	}
 	// 失败后沿用同一范围的已完成步骤；主动重新解析或范围变化时开启全新运行。
-	if status != "failed" || analysisRevision != revision {
+	if options.Resume && (status != "failed" || analysisRevision != revision) {
+		return drama.Batch{}, drama.ErrResumeNotAllowed
+	}
+	if !options.Resume {
 		if _, err = tx.Exec(ctx, `DELETE FROM drama_batch_steps WHERE batch_id=$1`, batch); err != nil {
 			return drama.Batch{}, fmt.Errorf("清理旧解析步骤失败: %w", err)
 		}
+		if _, err = tx.Exec(ctx, `DELETE FROM drama_batch_events WHERE batch_id=$1`, batch); err != nil {
+			return drama.Batch{}, fmt.Errorf("清理旧运行事件失败: %w", err)
+		}
 	}
-	item, err := scanDramaBatch(tx.QueryRow(ctx, `UPDATE drama_batches b SET status='running', error_message='', analysis_revision=b.revision, updated_at=NOW()
-      WHERE b.id=$1 RETURNING `+dramaBatchColumns, batch))
+	item, err := scanDramaBatch(tx.QueryRow(ctx, `UPDATE drama_batches b SET status='running', error_message='', analysis_revision=b.revision, analysis_context=CASE WHEN $2::boolean THEN b.analysis_context ELSE $3::text END, updated_at=NOW()
+      WHERE b.id=$1 RETURNING `+dramaBatchColumns, batch, options.Resume, options.ContextText))
 	if err != nil {
 		return drama.Batch{}, fmt.Errorf("启动剧本解析失败: %w", err)
 	}

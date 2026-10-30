@@ -263,7 +263,7 @@ paths:
         '409': { description: 批次版本已变化，请刷新后重试。 }
   /ai-drama/projects/{id}/batches/{batchId}/analyze:
     post:
-      summary: 异步启动或重新启动一个批次的 AI 剧本解析
+      summary: 从头启动或重新解析批次，清空当前阶段检查点
       operationId: analyzeDramaBatch
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
@@ -276,6 +276,41 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 批次正在解析，或项目尚未完成概览解析。 }
+  /ai-drama/projects/{id}/batches/{batchId}/resume:
+    post:
+      summary: 从失败处继续解析，保留已完成步骤
+      description: 只允许失败且原文范围未变化的批次；沿用该次运行保存的模型和概览快照。
+      operationId: resumeDramaBatch
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202':
+          description: 已继续解析。
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DramaBatch' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 任务不是失败状态、原文范围变化或已在运行。 }
+  /ai-drama/projects/{id}/batches/{batchId}/events:
+    get:
+      summary: 订阅真实解析事件和流式剧本正文
+      operationId: streamDramaBatchEvents
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: after, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: Last-Event-ID, in: header, schema: { type: integer, minimum: 0 }, description: 断线续传游标，优先于 after。 }
+      responses:
+        '200':
+          description: SSE progress 事件以 DramaBatchEvent 为 data；batch-state 事件返回终态并关闭流。delta 为待校验的正文增量，不含模型推理。按事件 id 去重，重连可传游标。
+          content: { text/event-stream: { schema: { type: string } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/batches/{batchId}/progress:
     get:
       summary: 查询批次逐段解析进度和已保存的阶段成果
@@ -3233,21 +3268,42 @@ components:
         characters: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         scenes: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         props: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+    DramaEpisodePlan:
+      type: object
+      required: [title, synopsis, hook, startUnit, endUnit]
+      properties:
+        title: { type: string }
+        synopsis: { type: string }
+        hook: { type: string }
+        startUnit: { type: integer, minimum: 1 }
+        endUnit: { type: integer, minimum: 1 }
+    DramaBatchEvent:
+      type: object
+      required: [id, stage, stepNumber, kind, message, createdAt]
+      properties:
+        id: { type: integer, minimum: 1 }
+        stage: { type: string }
+        stepNumber: { type: integer, minimum: 0 }
+        kind: { type: string, enum: [started, receiving, delta, completed, assets, repair, retry, schedule, failed] }
+        message: { type: string }
+        createdAt: { type: string, format: date-time }
     DramaBatchStep:
       type: object
-      required: [stage, chunkNumber, chunkTotal, status, durationMs, updatedAt]
+      required: [stage, chunkNumber, chunkTotal, status, durationMs, startedAt, updatedAt]
       properties:
-        stage: { type: string, enum: [art, director] }
+        stage: { type: string, enum: [art, story, plan, director, review] }
         chunkNumber: { type: integer, minimum: 1 }
         chunkTotal: { type: integer, minimum: 1 }
         status: { type: string, enum: [running, completed, failed] }
         errorMessage: { type: string }
         durationMs: { type: integer, minimum: 0 }
+        startedAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     DramaBatchProgress:
       type: object
-      required: [steps, assets, episodes]
+      required: [steps, assets, episodes, plans]
       properties:
+        plans: { type: array, items: { $ref: '#/components/schemas/DramaEpisodePlan' } }
         steps: { type: array, items: { $ref: '#/components/schemas/DramaBatchStep' } }
         assets:
           type: object

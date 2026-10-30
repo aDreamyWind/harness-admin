@@ -159,3 +159,23 @@
 .drama-batch-preview-episode summary { cursor: pointer; font-weight: 600; }
 .drama-batch-preview-episode pre { max-height: 420px; overflow: auto; white-space: pre-wrap; font: inherit; line-height: 1.7; }
 .drama-batch-preview-note { margin: 17px 0 0; color: #7b8799; font-size: 12px; }
+
+.drama-batch-live { margin-top: 18px; border-radius: 12px; }
+.drama-batch-live h3 { margin: 0 0 15px; font-size: 17px; }
+.drama-batch-events { max-height: 230px; overflow: auto; }
+.drama-batch-events p { display: flex; align-items: baseline; gap: 12px; margin: 0; padding: 7px 0; color: #53637b; font-size: 13px; line-height: 1.6; }
+.drama-batch-events time { flex: 0 0 62px; font-size: 12px; color: #8c98aa; }
+.drama-batch-events p.failed, .drama-batch-events p.repair { color: #b24e3e; }
+.drama-batch-events p.completed { color: #2c7953; }
+.drama-live-script { margin-top: 16px; border-top: 1px solid #e5eaf1; padding-top: 14px; }
+.drama-live-script summary { cursor: pointer; color: #3c5274; font-size: 13px; }
+.drama-live-script pre { max-height: 300px; overflow: auto; white-space: pre-wrap; font: inherit; font-size: 14px; line-height: 1.8; color: #3b4a61; }
+.drama-stream-hint { color: #8b7041; font-size: 12px; }
+.drama-step-error { flex-basis: 100%; overflow-wrap: anywhere; }
+.drama-batch-step-list .ant-btn { border-color: #e9b6ae; color: #a94036; }
+.drama-resume-fallback { margin-top: 14px; }
+.drama-batch-plan { margin-top: 22px; padding-top: 16px; border-top: 1px solid #e4e9f1; }
+.drama-batch-plan h4 { margin: 0 0 10px; }
+.drama-batch-plan details { padding: 9px 0; font-size: 14px; }
+.drama-batch-plan summary { cursor: pointer; color: #344868; font-weight: 600; }
+.drama-batch-plan p { color: #6b7890; line-height: 1.7; }

@@ -12,13 +12,13 @@ import (
 )
 
 const dramaBatchColumns = `b.id, b.project_id, b.batch_number, b.start_offset, b.end_offset,
- b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at`
+ b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at, b.analysis_context`
 
 func scanDramaBatch(row pgx.Row) (drama.Batch, error) {
 	var item drama.Batch
 	var previous sql.NullString
 	err := row.Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-		&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt)
+		&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.AnalysisContext)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return drama.Batch{}, drama.ErrNotFound
 	}
