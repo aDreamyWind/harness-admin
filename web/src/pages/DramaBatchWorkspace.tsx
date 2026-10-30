@@ -53,6 +53,9 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
   const requestedBatchId = searchParams.get('batch')
   const selected = batches.find((item) => item.id === requestedBatchId) ?? null
   const selectedId = selected?.id ?? null
+  const pickerField = assetSections.find((item) => item.key === assetPicker?.kind)?.field
+  const pickerEpisode = result?.episodes.find((item) => item.id === assetPicker?.episodeId)
+  const linkedAssetIds = new Set(pickerField && pickerEpisode ? pickerEpisode[pickerField].map((asset) => asset.assetId) : [])
   function selectBatch(value: string | null) {
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
@@ -145,7 +148,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
     if (!assetPicker || pickedAssets.length === 0) return
     setSavingAssets(true)
     try {
-      for (const assetId of pickedAssets) await addDramaEpisodeAsset(project.id, assetPicker.episodeId, assetId)
+      for (const assetId of pickedAssets.filter((id) => !linkedAssetIds.has(id))) await addDramaEpisodeAsset(project.id, assetPicker.episodeId, assetId)
       if (selectedId) setResult(await getDramaBatchResult(project.id, selectedId))
       setAssetPicker(null); messageApi.success('已关联到本集')
     } catch (error) { messageApi.error(error instanceof Error ? error.message : '保存资产关联失败') }
@@ -290,13 +293,13 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
         </div>}
       </Card>}
       {result?.episodes.length ? <>
-      <Card className="drama-batch-result"><h3>角色、场景、道具</h3>
-        {result && assetSections.map((section) => <div className="drama-batch-asset-group" key={section.key}><h4>{section.title}列表（{result.assets[section.field].length}）</h4>
-          {result.assets[section.field].length ? <div className="drama-batch-asset-list">{result.assets[section.field].map((asset) => <div key={asset.id} className="drama-batch-asset-row"><strong>{asset.name}</strong><div className="drama-batch-asset-copy"><span>{asset.description}</span>{section.key === 'character' && asset.appearanceDescription && <small>外貌：{asset.appearanceDescription}</small>}{section.key === 'character' && asset.voiceDescription && <small>音色：{asset.voiceDescription}</small>}</div></div>)}</div> : <p className="drama-batch-muted">暂无{section.title}</p>}</div>)}
-      </Card>
+      <Card className="drama-batch-result"><details className="drama-asset-section" open><summary>角色、场景、道具</summary>
+        {result && assetSections.map((section) => <details className="drama-batch-asset-group" key={section.key} open><summary>{section.title}列表（{result.assets[section.field].length}）</summary>
+          {result.assets[section.field].length ? <div className="drama-batch-asset-list">{result.assets[section.field].map((asset) => <div key={asset.id} className="drama-batch-asset-row"><strong>{asset.name}</strong><div className="drama-batch-asset-copy"><span>{asset.description}</span>{section.key === 'character' && asset.appearanceDescription && <small>外貌：{asset.appearanceDescription}</small>}{section.key === 'character' && asset.voiceDescription && <small>音色：{asset.voiceDescription}</small>}</div></div>)}</div> : <p className="drama-batch-muted">暂无{section.title}</p>}</details>)}
+      </details></Card>
       <Card className="drama-batch-result"><h3>剧本内容</h3>
         {result?.episodes.length ? result.episodes.map((episode) => <details className="drama-batch-episode" key={episode.id} open={episode.number === 1}><summary>第{episode.number}集：{episode.title}</summary>
-          <div className="drama-batch-episode-body">{assetSections.map((section) => <div className="drama-batch-episode-assets" key={section.key}><span className="drama-batch-episode-kind">{section.title}</span><div>{episode[section.field].map((asset) => <Tag key={asset.id} closable onClose={(event) => { event.preventDefault(); void removeAsset(episode.id, asset.id) }}>{asset.name}{asset.stateLabel ? `—${asset.stateLabel}` : ''}</Tag>)}<Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => openAssetPicker(episode.id, section.key)}>添加</Button></div></div>)}
+          <div className="drama-batch-episode-body">{assetSections.map((section) => <div className="drama-batch-episode-assets" key={section.key}><span className="drama-batch-episode-kind">{section.title}</span><div>{episode[section.field].map((asset) => <Tooltip key={asset.id} title={<div><strong>{asset.name}</strong>{asset.description && <p>{asset.description}</p>}{asset.stateLabel && <p className="drama-asset-tooltip-state">本集状态：{asset.stateLabel}</p>}</div>}><Tag data-asset-id={asset.assetId} closable onClose={(event) => { event.preventDefault(); void removeAsset(episode.id, asset.id) }}>{asset.name}</Tag></Tooltip>)}<Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => openAssetPicker(episode.id, section.key)}>添加</Button></div></div>)}
           <div className="drama-batch-script"><h4>剧本内容</h4><pre>{episode.scriptText}</pre></div></div>
         </details>) : <Empty description={selected.status === 'running' ? '正在生成分集剧本' : '暂无分集剧本，点击 AI解析 开始'} />}
       </Card>
@@ -304,7 +307,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
     </>}
     <Modal title={`添加${assetPicker ? assetSections.find((item) => item.key === assetPicker.kind)?.title : ''}`} open={!!assetPicker} onCancel={() => setAssetPicker(null)} onOk={() => void saveEpisodeAssets()} okText="保存" okButtonProps={{ loading: savingAssets, disabled: pickedAssets.length === 0 }}>
       <input className="drama-asset-search" placeholder="搜索项目资产名称" value={assetQuery} onChange={(event) => setAssetQuery(event.target.value)} />
-      <div className="drama-asset-picker-list">{assetOptions.map((asset) => <label key={asset.id} className="drama-asset-picker-item"><input type="checkbox" checked={pickedAssets.includes(asset.id)} onChange={(event) => setPickedAssets(event.target.checked ? [...pickedAssets, asset.id] : pickedAssets.filter((id) => id !== asset.id))} /><span><strong>{asset.name}</strong><small>{asset.description}</small></span></label>)}{assetOptions.length === 0 && <Empty description="项目资产库暂无匹配项" />}</div>
+      <div className="drama-asset-picker-list">{assetOptions.map((asset) => <label key={asset.id} className={`drama-asset-picker-item${linkedAssetIds.has(asset.id) ? ' linked' : ''}`}><input type="checkbox" checked={linkedAssetIds.has(asset.id) || pickedAssets.includes(asset.id)} disabled={linkedAssetIds.has(asset.id)} onChange={(event) => setPickedAssets(event.target.checked ? [...pickedAssets, asset.id] : pickedAssets.filter((id) => id !== asset.id))} /><span><strong>{asset.name}</strong><small>{asset.description}</small></span>{linkedAssetIds.has(asset.id) && <small className="drama-asset-linked-label">已关联</small>}</label>)}{assetOptions.length === 0 && <Empty description="项目资产库暂无匹配项" />}</div>
     </Modal>
     <Modal title="新建批次" open={choiceOpen} onCancel={() => setChoiceOpen(false)} onOk={() => void openCreateReader()} okText="选择原文范围" okButtonProps={{ loading: opening, disabled: mode === 'previous' && !previousBatchId }}>
       <p className="drama-batch-choice-help">选择本批从哪里开始。下一步可在原文中检查和调整终点。</p>

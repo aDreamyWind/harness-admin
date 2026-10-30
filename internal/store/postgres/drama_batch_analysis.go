@@ -171,7 +171,11 @@ func (r *DramaRepository) SaveBatchResult(ctx context.Context, org, owner, proje
 				if id == "" {
 					continue
 				}
-				_, e = tx.Exec(ctx, `INSERT INTO drama_episode_asset_links(id,episode_id,asset_id,state_label) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, uuid.NewString(), episodeID, id, strings.TrimSpace(a.StateLabel))
+				_, e = tx.Exec(ctx, `INSERT INTO drama_episode_asset_links(id,episode_id,asset_id,state_label) VALUES($1,$2,$3,$4)
+ ON CONFLICT(episode_id,asset_id) DO UPDATE SET state_label=CASE
+ WHEN drama_episode_asset_links.state_label='' THEN EXCLUDED.state_label
+ WHEN EXCLUDED.state_label='' OR EXCLUDED.state_label=ANY(string_to_array(drama_episode_asset_links.state_label,E'\n')) THEN drama_episode_asset_links.state_label
+ ELSE drama_episode_asset_links.state_label||E'\n'||EXCLUDED.state_label END`, uuid.NewString(), episodeID, id, strings.TrimSpace(a.StateLabel))
 				if e != nil {
 					return fmt.Errorf("保存第%d集资产关联失败: %w", index+1, e)
 				}
@@ -297,7 +301,8 @@ func (r *DramaRepository) AddEpisodeAsset(ctx context.Context, org, owner, proje
 	err := r.db.QueryRow(ctx, `INSERT INTO drama_episode_asset_links(id,episode_id,asset_id,state_label)
  SELECT $6,e.id,a.id,$7 FROM drama_script_episodes e JOIN drama_projects p ON p.id=e.project_id JOIN drama_assets a ON a.project_id=p.id
  WHERE p.id=$3 AND p.organization_id=$1 AND p.owner_id=$2 AND e.id=$4 AND a.id=$5
- ON CONFLICT (episode_id,asset_id,state_label) DO UPDATE SET state_label=EXCLUDED.state_label
+ ON CONFLICT (episode_id,asset_id) DO UPDATE SET state_label=CASE
+ WHEN drama_episode_asset_links.state_label='' THEN EXCLUDED.state_label ELSE drama_episode_asset_links.state_label END
  RETURNING id,asset_id,state_label`, org, owner, project, episode, asset, uuid.NewString(), state).Scan(&a.ID, &a.AssetID, &a.StateLabel)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, drama.ErrNotFound

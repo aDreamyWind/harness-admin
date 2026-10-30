@@ -118,6 +118,7 @@ export const updateDramaBatchRange = (id: string, batchId: string, input: DramaB
 
 export type DramaAssetKind = 'character' | 'scene' | 'prop'
 export interface DramaCatalogAsset { id: string; kind: DramaAssetKind; name: string; description: string; appearanceDescription: string; voiceDescription: string }
+// id 为本集关联记录标识，assetId 为项目资产目录中的真实主键。
 export interface DramaEpisodeAsset extends DramaCatalogAsset { assetId: string; stateLabel: string }
 export interface DramaScriptEpisode {
   id: string; number: number; title: string; synopsis: string; scriptText: string

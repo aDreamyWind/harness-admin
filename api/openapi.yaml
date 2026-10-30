@@ -362,6 +362,7 @@ paths:
   /ai-drama/projects/{id}/episodes/{episodeId}/assets:
     post:
       summary: 将项目已有资产关联到一集剧本
+      description: 按项目资产 assetId 关联，同一集同一资产唯一。重复添加返回已有关联，并保留已有状态说明；移除关联不删除资产目录数据。
       operationId: addDramaEpisodeAsset
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
@@ -369,10 +370,10 @@ paths:
         - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, required: [assetId], properties: { assetId: { type: string, format: uuid }, stateLabel: { type: string } } } } }
+        content: { application/json: { schema: { type: object, required: [assetId], properties: { assetId: { type: string, format: uuid }, stateLabel: { type: string, maxLength: 120 } } } } }
       responses:
         '201':
-          description: 已创建的剧集资产关联。
+          description: 新建或已存在的剧集资产关联，同一资产重复添加返回相同关联标识。
           content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DramaEpisodeAsset' } } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -3254,8 +3255,9 @@ components:
         - type: object
           required: [assetId, stateLabel]
           properties:
-            assetId: { type: string, format: uuid }
-            stateLabel: { type: string }
+            id: { type: string, format: uuid, description: 本集资产关联记录标识，用于移除关联。 }
+            assetId: { type: string, format: uuid, description: 项目真实资产主键，与资产目录中的 id 相同。 }
+            stateLabel: { type: string, description: 本集状态说明，不参与资产身份判定；多种说明以换行保留。 }
     DramaScriptEpisode:
       type: object
       required: [id, number, title, synopsis, scriptText, characters, scenes, props]

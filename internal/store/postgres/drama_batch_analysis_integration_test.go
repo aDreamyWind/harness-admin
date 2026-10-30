@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,7 @@ func TestDramaBatchResultDatabaseRoundTrip(t *testing.T) {
 		t.Fatalf("阶段成果预览不完整: %+v", progress)
 	}
 	draft := drama.BatchDraft{Characters: []drama.AssetDraft{{Name: "张三", Description: "主角", AppearanceDescription: "黑发青衣", VoiceDescription: "低沉清亮"}}, Scenes: []drama.AssetDraft{{Name: "竹林", Description: "林间"}}, Episodes: []drama.EpisodeDraft{{Title: "入林", Synopsis: "张三走入竹林", ScriptText: "【竹林 外 日】\n张三走入竹林。", Characters: []drama.EpisodeAssetDraft{{Name: "张三", StateLabel: "默认形象"}}, Scenes: []drama.EpisodeAssetDraft{{Name: "竹林", StateLabel: "白天"}}}}}
+	draft.Episodes[0].Characters = append(draft.Episodes[0].Characters, drama.EpisodeAssetDraft{Name: "张三", StateLabel: "受伤状态"})
 	if err = repo.SaveBatchResult(ctx, org, owner, id, batch.ID, batch.AnalysisRevision, draft); err != nil {
 		t.Fatal(err)
 	}
@@ -91,9 +93,25 @@ func TestDramaBatchResultDatabaseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if link.StateLabel != "受伤状态" {
-		t.Fatalf("关联状态丢失: %+v", link)
+	if link.AssetID != assets[0].ID || link.ID != result.Episodes[0].Characters[0].ID || !strings.Contains(link.StateLabel, "默认形象") || !strings.Contains(link.StateLabel, "受伤状态") {
+		t.Fatalf("同一资产应复用关联并保留已有状态：%+v", link)
 	}
+	again, err := repo.AddEpisodeAsset(ctx, org, owner, id, result.Episodes[0].ID, assets[0].ID, "")
+	if err != nil || again.ID != link.ID || again.StateLabel != link.StateLabel {
+		t.Fatalf("空状态重复添加应幂等：%v %+v", err, again)
+	}
+	var count int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM drama_episode_asset_links WHERE episode_id=$1 AND asset_id=$2`, result.Episodes[0].ID, assets[0].ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("重复添加产生多个关联：%d %v", count, err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE drama_assets SET description='修改后的项目角色描述' WHERE id=$1`, assets[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	linkedResult, err := repo.GetBatchResult(ctx, org, owner, id, batch.ID)
+	if err != nil || len(linkedResult.Episodes[0].Characters) != 1 || linkedResult.Episodes[0].Characters[0].Description != "修改后的项目角色描述" {
+		t.Fatal("剧集必须直接引用项目资产的真实数据")
+	}
+
 	if err = repo.RemoveEpisodeAsset(ctx, org, owner, id, result.Episodes[0].ID, link.ID); err != nil {
 		t.Fatal(err)
 	}
