@@ -1,0 +1,18 @@
+.drama-style-picker {display:inline-flex; align-items:center; gap:8px; max-width:100%; min-height:32px; padding:3px 10px 3px 4px; border:1px solid #dce4ef; border-radius:8px; background:#fff; color:#33445e; cursor:pointer; font:inherit; font-size:13px; text-align:left;}
+.drama-style-picker>span:nth-last-child(2) {flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.drama-style-picker>.anticon {font-size:10px; color:#8895aa;}
+.drama-style-picker:hover {border-color:#7295e9;}
+.drama-style-picker:disabled {opacity:.55; cursor:not-allowed;}
+.drama-style-picker:focus-visible,.drama-visual-style-tabs button:focus-visible,.drama-visual-style-card:focus-visible {outline:2px solid #3969da; outline-offset:3px;}
+.drama-style-picker-preview {width:32px; height:24px; flex:none; border-radius:5px; background-size:300% 300%;}
+.drama-visual-style-tabs {display:flex; gap:22px; margin:10px 0 20px; border-bottom:1px solid #e7ebf3;}
+.drama-visual-style-tabs button {padding:8px 0 12px; background:transparent; border:0; border-bottom:2px solid transparent; color:#7c8aa0; cursor:pointer;}
+.drama-visual-style-tabs button.active {color:#2c5ad2; border-color:#3969da;}
+.drama-visual-style-grid {display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; max-height:min(65vh,640px); overflow:auto; padding:3px;}
+.drama-visual-style-card {position:relative; aspect-ratio:1.6; border:2px solid transparent; border-radius:12px; overflow:hidden; background-size:300% 300%; cursor:pointer;}
+.drama-visual-style-card>span:first-child {position:absolute; inset:auto 0 0; padding:26px 6px 9px; color:white; font-weight:600; font-size:13px; text-align:center; background:linear-gradient(transparent,rgba(0,0,0,.78));}
+.drama-visual-style-card>.anticon {position:absolute; right:7px; top:7px; display:grid; place-items:center; width:22px; height:22px; border-radius:50%; background:#315fdb; color:white;}
+.drama-visual-style-card.selected {border-color:#3969da; box-shadow:0 0 0 2px #dce6ff;}
+.drama-canvas-generation-toolbar>.drama-style-picker {max-width:230px;}
+.drama-canvas-edit-form .drama-style-picker {width:100%;}
+@media(max-width:520px){.drama-visual-style-grid{grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px;}.drama-visual-style-tabs{gap:15px;}}

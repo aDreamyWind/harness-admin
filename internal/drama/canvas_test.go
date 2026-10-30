@@ -54,7 +54,7 @@ func TestCanvasRejectsInvalidCoordinatesAndDuplicateNodes(t *testing.T) {
 }
 func TestImageFailureIsPersistedAndModelSettingRequired(t *testing.T) {
 	repo := &visualRepoStub{}
-	s := NewService(&fakeRepository{}, nil).WithVisuals(repo, &visualGeneratorStub{err: errors.New("模型超时")}, &visualFilesStub{})
+	s := NewService(&fakeRepository{}, nil).WithVisuals(repo, &visualGeneratorStub{err: &ImageFailure{Message: "图片模型响应超时，请重试。", Cause: errors.New("PRIVATE_STYLE_TEMPLATE")}}, &visualFilesStub{})
 	id := uuid.NewString()
 	if _, err := s.StartImage(context.Background(), "o", "u", id, id, ImageInput{}); !errors.Is(err, ErrImageModelMissing) {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestImageFailureIsPersistedAndModelSettingRequired(t *testing.T) {
 	if repo.calls != 0 {
 		t.Fatal("未配置模型不应创建任务")
 	}
-	if err := s.GenerateImage(ImageJob{ID: id}); err == nil || repo.job.Status != "failed" || repo.job.Error != "模型超时" {
+	if err := s.GenerateImage(ImageJob{ID: id}); err == nil || repo.job.Status != "failed" || repo.job.Error != "图片模型响应超时，请重试。" {
 		t.Fatalf("失败任务未保存 %+v %v", repo.job, err)
 	}
 }

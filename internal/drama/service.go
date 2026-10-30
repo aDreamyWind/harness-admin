@@ -34,6 +34,7 @@ type Project struct {
 	ForceOverview  bool            `json:"-"`
 	SourceLength   int             `json:"sourceLength"`
 	SourceMode     string          `json:"sourceMode"`
+	StyleID        string          `json:"styleId"`
 	Style          string          `json:"style"`
 	AspectRatio    string          `json:"aspectRatio"`
 	ModelCode      string          `json:"modelCode"`
@@ -56,6 +57,7 @@ type CreateInput struct {
 	SourceName     string `json:"sourceName"`
 	SourceText     string `json:"sourceText"`
 	SourceMode     string `json:"sourceMode"`
+	StyleID        string `json:"styleId"`
 	Style          string `json:"style"`
 	AspectRatio    string `json:"aspectRatio"`
 }
@@ -128,6 +130,7 @@ type Service struct {
 	visual     VisualRepository
 	images     ImageGenerator
 	files      ImageFiles
+	styles     StyleRepository
 }
 
 func NewService(repository Repository, writer Writer) *Service {
@@ -204,11 +207,16 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Project, error
 	if input.SourceMode == "" {
 		input.SourceMode = "upload"
 	}
-	if input.OrganizationID == "" || input.OwnerID == "" || input.Title == "" || strings.TrimSpace(input.SourceText) == "" || input.Style == "" ||
+	if input.OrganizationID == "" || input.OwnerID == "" || input.Title == "" || strings.TrimSpace(input.SourceText) == "" || (input.Style == "" && input.StyleID == "") ||
 		utf8.RuneCountInString(input.Title) > 120 || utf8.RuneCountInString(input.SourceName) > 255 || utf8.RuneCountInString(input.Style) > 80 ||
 		(input.AspectRatio != "9:16" && input.AspectRatio != "16:9") || (input.SourceMode != "upload" && input.SourceMode != "generate") || !utf8.ValidString(input.SourceText) {
 		return Project{}, ErrInvalidInput
 	}
+	style, err := s.resolveStyle(ctx, input.StyleID, input.Style)
+	if err != nil {
+		return Project{}, err
+	}
+	input.StyleID, input.Style = style.ID, style.Name
 	settings, err := s.GetSettings(ctx, input.OrganizationID, input.OwnerID)
 	if err != nil {
 		return Project{}, fmt.Errorf("读取漫剧模型设置失败: %w", err)
@@ -233,7 +241,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Project, error
 	item := Project{
 		ID: uuid.NewString(), OrganizationID: input.OrganizationID, OwnerID: input.OwnerID,
 		Title: input.Title, SourceName: input.SourceName, SourceText: input.SourceText,
-		SourceLength: utf8.RuneCountInString(input.SourceText), Style: input.Style,
+		SourceLength: utf8.RuneCountInString(input.SourceText), Style: input.Style, StyleID: input.StyleID,
 		SourceMode:  input.SourceMode,
 		AspectRatio: input.AspectRatio, ModelCode: settings.TextModelCode, Status: "queued", Phase: "waiting",
 		Overview: json.RawMessage(`{}`), Characters: json.RawMessage(`[]`), Scenes: json.RawMessage(`[]`),
@@ -359,7 +367,7 @@ func (s *Service) UpdateOverview(ctx context.Context, organizationID, ownerID, i
 	if len(overview) > 16*1024 || json.Unmarshal(overview, &value) != nil || value == nil {
 		return Project{}, ErrInvalidInput
 	}
-	for _, key := range []string{"videoStyle", "aspectRatio", "protagonist", "genre", "synopsis", "background", "setting"} {
+	for _, key := range []string{"videoStyle", "styleId", "aspectRatio", "protagonist", "genre", "synopsis", "background", "setting"} {
 		if item, ok := value[key]; ok {
 			if _, ok := item.(string); !ok {
 				return Project{}, ErrInvalidInput
@@ -371,6 +379,19 @@ func (s *Service) UpdateOverview(ctx context.Context, organizationID, ownerID, i
 	}
 	if ratio, ok := value["aspectRatio"].(string); ok && ratio != "" && ratio != "9:16" && ratio != "16:9" {
 		return Project{}, ErrInvalidInput
+	}
+	styleID, _ := value["styleId"].(string)
+	styleName, _ := value["videoStyle"].(string)
+	if styleID != "" || styleName != "" {
+		style, err := s.resolveStyle(ctx, styleID, styleName)
+		if err != nil {
+			return Project{}, err
+		}
+		value["styleId"], value["videoStyle"] = style.ID, style.Name
+	}
+	overview, err := json.Marshal(value)
+	if err != nil {
+		return Project{}, err
 	}
 	return s.repository.UpdateOverview(ctx, organizationID, ownerID, id, overview)
 }

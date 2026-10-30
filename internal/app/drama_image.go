@@ -43,7 +43,7 @@ func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) 
 	}
 	prepared, err := w.gateway.PrepareForUserOperation(ctx, in.OrganizationID, in.UserID, body, "image")
 	if err != nil {
-		return nil, "", err
+		return nil, "", &drama.ImageFailure{Message: "图片模型调用未通过，请检查模型可用性、权限或调用限制。", Cause: err}
 	}
 	started := time.Now()
 	route := prepared.Route
@@ -106,9 +106,27 @@ func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) 
 	recordCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err = w.gateway.RecordCall(recordCtx, modelgateway.RecordCallInput{OrganizationID: in.OrganizationID, UserID: in.UserID, DepartmentID: prepared.Caller.DepartmentID, AuthType: "user", ModelID: route.ModelID, ProviderID: route.ProviderID, RequestID: uuid.NewString(), ModelCode: route.ModelCode, ModelType: "image", UpstreamModelID: route.UpstreamModelID, Result: result, HTTPStatus: status, LatencyMS: time.Since(started).Milliseconds(), Source: "ai_drama", Operation: "image", RequestBody: prepared.Body, ResponseBody: raw, ResponseTruncated: truncated, ErrorMessage: errorMessage}); err != nil {
-		return nil, "", fmt.Errorf("记录图片模型调用失败: %w", err)
+		return nil, "", &drama.ImageFailure{Message: "记录图片调用日志失败，请联系管理员检查服务。", Cause: fmt.Errorf("记录图片模型调用失败: %w", err)}
 	}
-	return data, mime, callErr
+	if callErr != nil {
+		message := "图片生成失败，请查看调用记录。"
+		switch {
+		case errors.Is(callErr, context.DeadlineExceeded):
+			message = "图片模型响应超时，请重试。"
+		case status == 400:
+			message = "图片模型拒绝了请求（HTTP 400），请确认模型支持所选比例和参考图。"
+		case status == 401 || status == 403:
+			message = fmt.Sprintf("图片模型鉴权失败（HTTP %d），请检查供应商配置。", status)
+		case status == 429:
+			message = "图片模型调用过于频繁，请稍后重试。"
+		case status >= 500:
+			message = "图片供应商暂时不可用，请稍后重试。"
+		case status >= 200 && status < 300:
+			message = "图片模型返回的图片无法读取，请查看调用记录。"
+		}
+		return data, mime, &drama.ImageFailure{Message: message, Cause: callErr}
+	}
+	return data, mime, nil
 }
 func dramaImageMIME(data []byte) (string, error) {
 	if len(data) == 0 || len(data) > 20*1024*1024 {

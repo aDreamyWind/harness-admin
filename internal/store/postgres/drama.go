@@ -56,7 +56,7 @@ const dramaColumns = `id, organization_id, owner_id, title, source_name, source_
  COALESCE((SELECT jsonb_agg(` + dramaAssetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='scene'), '[]'::jsonb),
  COALESCE((SELECT jsonb_agg(` + dramaAssetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='prop'), '[]'::jsonb),
  COALESCE((SELECT jsonb_agg(jsonb_build_object('title', e.title, 'synopsis', e.synopsis) ORDER BY b.batch_number NULLS FIRST, e.number, e.created_at) FROM drama_script_episodes e LEFT JOIN drama_batches b ON b.id=e.batch_id WHERE e.project_id=drama_projects.id), '[]'::jsonb),
- created_at, updated_at`
+ created_at, updated_at,COALESCE(style_id,'')`
 
 func scanDrama(row pgx.Row) (drama.Project, error) {
 	var item drama.Project
@@ -64,7 +64,7 @@ func scanDrama(row pgx.Row) (drama.Project, error) {
 	err := row.Scan(&item.ID, &item.OrganizationID, &item.OwnerID, &item.Title, &item.SourceName,
 		&item.SourceText, &item.SourceLength, &item.SourceMode, &item.Style, &item.AspectRatio, &item.ModelCode,
 		&item.Status, &item.Phase, &item.Error, &protagonist, &genre, &synopsis, &background, &setting,
-		&item.Characters, &item.Scenes, &item.Props, &item.Episodes, &item.CreatedAt, &item.UpdatedAt)
+		&item.Characters, &item.Scenes, &item.Props, &item.Episodes, &item.CreatedAt, &item.UpdatedAt, &item.StyleID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return drama.Project{}, drama.ErrNotFound
 	}
@@ -74,7 +74,7 @@ func scanDrama(row pgx.Row) (drama.Project, error) {
 	item.Overview = json.RawMessage(`{}`)
 	if protagonist != "" || genre != "" || synopsis != "" || background != "" || setting != "" {
 		item.Overview, err = json.Marshal(map[string]string{
-			"videoStyle": item.Style, "aspectRatio": item.AspectRatio,
+			"videoStyle": item.Style, "styleId": item.StyleID, "aspectRatio": item.AspectRatio,
 			"protagonist": protagonist, "genre": genre, "synopsis": synopsis,
 			"background": background, "setting": setting,
 		})
@@ -87,10 +87,10 @@ func scanDrama(row pgx.Row) (drama.Project, error) {
 
 func (r *DramaRepository) Create(ctx context.Context, item drama.Project) (drama.Project, error) {
 	row := r.db.QueryRow(ctx, `INSERT INTO drama_projects
-		(id, organization_id, owner_id, title, source_name, source_text, source_length, source_mode, style, aspect_ratio, model_code, status, phase)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING `+dramaColumns,
+		(id, organization_id, owner_id, title, source_name, source_text, source_length, source_mode, style, aspect_ratio, model_code, status, phase,style_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULLIF($14,'')) RETURNING `+dramaColumns,
 		item.ID, item.OrganizationID, item.OwnerID, item.Title, item.SourceName, item.SourceText,
-		item.SourceLength, item.SourceMode, item.Style, item.AspectRatio, item.ModelCode, item.Status, item.Phase)
+		item.SourceLength, item.SourceMode, item.Style, item.AspectRatio, item.ModelCode, item.Status, item.Phase, item.StyleID)
 	return scanDrama(row)
 }
 
@@ -186,6 +186,7 @@ func (r *DramaRepository) UpdateOverview(ctx context.Context, organizationID, ow
 		background=COALESCE($4::jsonb->>'background',''),
 		setting=COALESCE($4::jsonb->>'setting',''),
 		style=COALESCE(NULLIF($4::jsonb->>'videoStyle',''), style),
+		style_id=COALESCE(NULLIF($4::jsonb->>'styleId',''),style_id),
 		aspect_ratio=COALESCE(NULLIF($4::jsonb->>'aspectRatio',''), aspect_ratio),
 		updated_at=NOW()
 		WHERE organization_id=$1 AND owner_id=$2 AND id=$3 RETURNING `+dramaColumns,

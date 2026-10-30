@@ -35,7 +35,7 @@ func (s *visualServiceStub) DeriveForm(_ context.Context, o, u, p, f string) (st
 }
 func (s *visualServiceStub) StartImage(_ context.Context, o, u, p, f string, _ drama.ImageInput) (drama.ImageJob, error) {
 	s.scope = []string{o, u, p, f}
-	return drama.ImageJob{ID: "job", Status: "queued"}, s.err
+	return drama.ImageJob{ID: "job", Status: "queued", Prompt: "PRIVATE_STYLE_TEMPLATE"}, s.err
 }
 func (s *visualServiceStub) GenerateImage(job drama.ImageJob) error {
 	s.generated <- job.ID
@@ -75,7 +75,9 @@ func TestDramaCanvasRoutesRequireSessionCSRFAndUseCallerScope(t *testing.T) {
 				t.Fatalf("缺少CSRF未拒绝 %s: %d", tc.path, res.Code)
 			}
 		}
-		if res := call(true, true); res.Code != tc.status {
+		if res := call(true, true); strings.Contains(res.Body.String(), "PRIVATE_STYLE_TEMPLATE") {
+			t.Fatal("任务响应泄露私有提示词")
+		} else if res.Code != tc.status {
 			t.Fatalf("%s: %d %s", tc.path, res.Code, res.Body)
 		}
 		if len(service.scope) < 3 || service.scope[0] != session.User.OrganizationID || service.scope[1] != session.User.ID {

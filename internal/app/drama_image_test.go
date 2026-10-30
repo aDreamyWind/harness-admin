@@ -32,6 +32,7 @@ func (g *visualGatewayStub) RecordCall(_ context.Context, in modelgateway.Record
 }
 
 type visualForwarderStub struct {
+	status      int
 	body        string
 	err         error
 	downloadErr error
@@ -45,7 +46,11 @@ func (f *visualForwarderStub) Forward(_ context.Context, route modelgateway.Rout
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(f.body))}, nil
+	status := f.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(f.body))}, nil
 }
 func (f *visualForwarderStub) DownloadImage(context.Context, string) ([]byte, error) {
 	data, _ := base64.StdEncoding.DecodeString(visualPNG)
@@ -103,5 +108,20 @@ func TestDramaMediaFilesRoundTripAndTraversal(t *testing.T) {
 	}
 	if _, err := files.Put(context.Background(), id, []byte("not an image"), "image/png"); err == nil {
 		t.Fatal("非图片内容未拒绝")
+	}
+}
+
+func TestDramaImageFailureKeepsSupplierEchoInPrivateLog(t *testing.T) {
+	const secret = "PRIVATE_STYLE_TEMPLATE"
+	gateway := &visualGatewayStub{}
+	forwarder := &visualForwarderStub{status: http.StatusBadRequest, body: `{"error":{"message":"request echoed PRIVATE_STYLE_TEMPLATE"}}`}
+	engine := &dramaImageEngine{gateway: gateway, forwarder: forwarder}
+	_, _, err := engine.Generate(context.Background(), drama.ImageRequest{OrganizationID: "org", UserID: "user", ModelCode: "painter", Prompt: secret, AspectRatio: "9:16"})
+	var public *drama.ImageFailure
+	if !errors.As(err, &public) || strings.Contains(public.Message, secret) || !strings.Contains(public.Message, "HTTP 400") {
+		t.Fatalf("公开失败信息不正确: %v", err)
+	}
+	if !strings.Contains(string(gateway.record.ResponseBody), secret) || !strings.Contains(gateway.record.ErrorMessage, secret) || !strings.Contains(string(gateway.record.RequestBody), secret) {
+		t.Fatal("排查日志未保留原始请求和响应")
 	}
 }

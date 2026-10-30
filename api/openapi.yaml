@@ -6,6 +6,21 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /ai-drama/styles:
+    get:
+      summary: 查询可选择的漫剧视觉风格，仅返回公开展示字段
+      operationId: listDramaVisualStyles
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 风格ID、名称、分类和封面。不返回生图、生视频模板或最终提示词。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DramaStyleOption' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /ai-drama/projects/{id}/canvas:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -3385,10 +3400,30 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
+    DramaStyleOption:
+      type: object
+      additionalProperties: false
+      required: [id, name, category, previewUrl, previewX, previewY]
+      properties:
+        id: { type: string, maxLength: 80 }
+        name: { type: string }
+        category: { type: string, description: 真人、2D、3D或历史。 }
+        previewUrl: { type: string }
+        previewX: { type: integer, minimum: 0, maximum: 2 }
+        previewY: { type: integer, minimum: 0, maximum: 2 }
+    DramaSourceReference:
+      type: object
+      required: [quote, startOffset, endOffset]
+      properties:
+        id: { type: string, description: 程序分配的句段编号，旧式引文兼容时可省略。 }
+        quote: { type: string, description: 由程序从上传原文回填的真实文字。 }
+        startOffset: { type: integer, minimum: 0 }
+        endOffset: { type: integer, minimum: 1 }
     DramaAssetForm:
       type: object
       required: [id, assetId, assetName, kind, name, description, gender, style, aspectRatio, x, y, revision, imageStatus]
       properties:
+        styleId: { type: string, maxLength: 80, description: 服务端风格目录主键。 }
         id: { type: string, format: uuid }
         assetId: { type: string, format: uuid, description: 始终关联真实项目资产，多个形象共享同一资产。 }
         assetName: { type: string }
@@ -3439,8 +3474,10 @@ components:
         revision: { type: integer }
     DramaFormEdit:
       type: object
-      required: [revision, name, description, gender, style, aspectRatio]
+      required: [revision, name, description, gender, aspectRatio]
+      anyOf: [{ required: [styleId] }, { required: [style] }]
       properties:
+        styleId: { type: string, maxLength: 80, description: 服务端风格目录主键。 }
         revision: { type: integer, minimum: 1 }
         name: { type: string, minLength: 1, maxLength: 80 }
         description: { type: string, minLength: 1, maxLength: 10000 }
@@ -3463,13 +3500,14 @@ components:
         id: { type: string, format: uuid }
     DramaImageJob:
       type: object
-      required: [id, projectId, formId, modelCode, prompt, aspectRatio, status]
+      additionalProperties: false
+      required: [id, projectId, formId, modelCode, styleId, aspectRatio, status]
       properties:
         id: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
         formId: { type: string, format: uuid }
         modelCode: { type: string }
-        prompt: { type: string }
+        styleId: { type: string, description: 本次生成使用的风格编码，完整提示词仅保存在服务端。 }
         aspectRatio: { type: string }
         referenceId: { type: string, format: uuid }
         status: { type: string, enum: [queued, running, succeeded, failed] }
@@ -3495,8 +3533,10 @@ components:
             updatedAt: { type: string, format: date-time }
     DramaCreateInput:
       type: object
-      required: [title, sourceText, sourceMode, style, aspectRatio]
+      required: [title, sourceText, sourceMode, aspectRatio]
+      anyOf: [{ required: [styleId] }, { required: [style] }]
       properties:
+        styleId: { type: string, maxLength: 80, description: 服务端风格目录主键。 }
         title: { type: string, maxLength: 120 }
         sourceName: { type: string, maxLength: 255 }
         sourceText: { type: string, description: 完整原文或创意；不设置业务字数上限。 }
@@ -3506,6 +3546,7 @@ components:
     DramaOverview:
       type: object
       properties:
+        styleId: { type: string, maxLength: 80 }
         videoStyle: { type: string, maxLength: 80 }
         aspectRatio: { type: string, enum: ['9:16', '16:9', ''] }
         protagonist: { type: string }
@@ -3615,6 +3656,8 @@ components:
       - startOffset
       - endOffset
       properties:
+        sourceIds: { type: array, items: { type: string }, description: 由AI选择、由程序校验的本单元句段编号。 }
+        references: { type: array, items: { $ref: '#/components/schemas/DramaSourceReference' }, description: 每处依据分别保存，不拼接非连续原文。 }
         id:
           type: string
         unitId:
@@ -3746,7 +3789,7 @@ components:
       type: object
       required: [stage, chunkNumber, chunkTotal, status, durationMs, startedAt, updatedAt]
       properties:
-        stage: { type: string, enum: [art, story, context, plan, name, director, review, repair] }
+        stage: { type: string, enum: [art, story, evidence, context, plan, name, director, review, repair] }
         chunkNumber: { type: integer, minimum: 1 }
         chunkTotal: { type: integer, minimum: 1 }
         status: { type: string, enum: [running, completed, failed] }
@@ -3838,6 +3881,7 @@ components:
       type: object
       required: [id, title, sourceLength, sourceMode, style, aspectRatio, modelCode, status, phase, overview, characters, scenes, props, episodes, createdAt, updatedAt]
       properties:
+        styleId: { type: string, maxLength: 80, description: 服务端风格目录主键。 }
         id: { type: string, format: uuid }
         title: { type: string }
         sourceName: { type: string }

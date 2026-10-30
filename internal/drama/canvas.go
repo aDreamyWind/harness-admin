@@ -26,6 +26,7 @@ type AssetForm struct {
 	Name           string  `json:"name"`
 	Description    string  `json:"description"`
 	Gender         string  `json:"gender"`
+	StyleID        string  `json:"styleId"`
 	Style          string  `json:"style"`
 	AspectRatio    string  `json:"aspectRatio"`
 	X              float64 `json:"x"`
@@ -60,6 +61,7 @@ type FormEdit struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Gender      string `json:"gender"`
+	StyleID     string `json:"styleId"`
 	Style       string `json:"style"`
 	AspectRatio string `json:"aspectRatio"`
 }
@@ -70,8 +72,9 @@ type ImageJob struct {
 	ID             string `json:"id"`
 	ProjectID      string `json:"projectId"`
 	FormID         string `json:"formId"`
+	StyleID        string `json:"styleId"`
 	ModelCode      string `json:"modelCode"`
-	Prompt         string `json:"prompt"`
+	Prompt         string `json:"-"`
 	AspectRatio    string `json:"aspectRatio"`
 	ReferenceID    string `json:"referenceId,omitempty"`
 	Status         string `json:"status"`
@@ -82,6 +85,21 @@ type ImageJob struct {
 	OrganizationID string `json:"-"`
 	UserID         string `json:"-"`
 }
+
+// 图片供应商可能在错误中回显请求，普通任务状态仅暴露经过分类的短消息。
+type ImageFailure struct {
+	Message string
+	Cause   error
+}
+
+func (e *ImageFailure) Error() string {
+	if e.Cause == nil {
+		return e.Message
+	}
+	return e.Message + "：" + e.Cause.Error()
+}
+func (e *ImageFailure) Unwrap() error { return e.Cause }
+
 type ImageRequest struct{ OrganizationID, UserID, ModelCode, Prompt, AspectRatio, ReferenceDataURI string }
 type ImageGenerator interface {
 	Generate(context.Context, ImageRequest) ([]byte, string, error)
@@ -149,6 +167,11 @@ func (s *Service) EditForm(ctx context.Context, org, user, project, form string,
 	if in.AspectRatio != "9:16" && in.AspectRatio != "16:9" && in.AspectRatio != "1:1" {
 		return ErrInvalidInput
 	}
+	style, err := s.resolveStyle(ctx, in.StyleID, in.Style)
+	if err != nil {
+		return err
+	}
+	in.StyleID, in.Style = style.ID, style.Name
 	return s.visual.EditAssetForm(ctx, org, user, project, form, in)
 }
 func (s *Service) DeriveForm(ctx context.Context, org, user, project, parent string) (string, error) {
@@ -214,7 +237,11 @@ func (s *Service) GenerateImage(job ImageJob) error {
 	job.Status = "succeeded"
 	if err != nil {
 		job.Status = "failed"
-		job.Error = err.Error()
+		job.Error = "图片生成或保存失败，请查看调用记录和服务日志。"
+		var public *ImageFailure
+		if errors.As(err, &public) {
+			job.Error = public.Message
+		}
 	}
 	saveCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
 	defer done()

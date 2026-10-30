@@ -39,6 +39,7 @@ type Dependencies struct {
 	Skills                SkillService
 	Drama                 DramaService
 	DramaVisual           DramaVisualService
+	DramaStyles           DramaStyleService
 	GatewayForwarder      ModelGatewayForwarder
 	OIDCAdmin             OIDCAdminService
 	OIDCProvider          OIDCProviderService
@@ -124,6 +125,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.DramaVisual != nil {
 		registerDramaCanvasRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.DramaStyles != nil {
+		registerDramaStyleRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.OIDCAdmin != nil {
 		registerOIDCAdminRoutes(router, deps)

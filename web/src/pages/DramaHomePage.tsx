@@ -1,9 +1,9 @@
 import {
-  CheckOutlined, ClockCircleOutlined, CloudUploadOutlined, DeleteOutlined,
+  ClockCircleOutlined, CloudUploadOutlined, DeleteOutlined,
   FileTextOutlined, FolderOpenOutlined, PictureOutlined, RobotOutlined,
   SettingOutlined, VideoCameraOutlined,
 } from '@ant-design/icons'
-import { Button, Card, Drawer, Empty, Input, Modal, Select, Skeleton, Tag, message } from 'antd'
+import { Button, Card, Drawer, Empty, Input, Select, Skeleton, Tag, message } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -11,20 +11,9 @@ import {
   createDramaProject, getDramaSettings, listDramaModels, listDramaProjects, saveDramaSettings,
   type DramaModel, type DramaProject, type DramaSettings,
 } from '../api/drama'
+import { DramaStylePicker } from './DramaStylePicker'
 import './drama-home.css'
 
-type StyleCategory = '全部' | '真人' | '2D' | '3D'
-const stylePresets: { name: string; category: Exclude<StyleCategory, '全部'>; x: number; y: number }[] = [
-  { name: '电影写实', category: '真人', x: 0, y: 0 },
-  { name: '国风水墨', category: '2D', x: 1, y: 0 },
-  { name: '日系动漫', category: '2D', x: 2, y: 0 },
-  { name: '三维动画', category: '3D', x: 0, y: 1 },
-  { name: '暗黑漫画', category: '2D', x: 1, y: 1 },
-  { name: '奇幻绘本', category: '2D', x: 2, y: 1 },
-  { name: '美式漫画', category: '2D', x: 0, y: 2 },
-  { name: '怀旧动画', category: '2D', x: 1, y: 2 },
-  { name: '赛博霓虹', category: '真人', x: 2, y: 2 },
-]
 const emptySettings: DramaSettings = { textModelCode: '', imageModelCode: '', videoModelCode: '' }
 const phaseNames: Record<string, string> = {
   waiting: '等待解析', script: '编剧正在生成剧本', story: '编剧正在梳理故事',
@@ -50,8 +39,6 @@ export function DramaHomePage() {
   const [savingSettings, setSavingSettings] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
-  const [styleOpen, setStyleOpen] = useState(false)
-  const [styleCategory, setStyleCategory] = useState<StyleCategory>('全部')
   const [libraryTab, setLibraryTab] = useState<'projects' | 'assets'>('projects')
   const [mode, setMode] = useState<'upload' | 'generate'>('upload')
   const [title, setTitle] = useState('')
@@ -60,7 +47,7 @@ export function DramaHomePage() {
   const [uploadText, setUploadText] = useState('')
   const [ideaText, setIdeaText] = useState('')
   const [pasteOpen, setPasteOpen] = useState(false)
-  const [style, setStyle] = useState('国风水墨')
+  const [styleId, setStyleId] = useState('ink-wash')
   const [ratio, setRatio] = useState<'9:16' | '16:9'>('9:16')
 
   useEffect(() => {
@@ -125,7 +112,7 @@ export function DramaHomePage() {
     }
     setSubmitting(true)
     try {
-      const project = await createDramaProject({ title: title.trim(), sourceName: mode === 'upload' ? sourceName : '', sourceText, sourceMode: mode, style, aspectRatio: ratio })
+      const project = await createDramaProject({ title: title.trim(), sourceName: mode === 'upload' ? sourceName : '', sourceText, sourceMode: mode, styleId, aspectRatio: ratio })
       navigate(`/ai-apps/drama/projects/${project.id}`)
     } catch (error) { messageApi.error(error instanceof Error ? error.message : '创建项目失败') }
     finally { setSubmitting(false) }
@@ -136,8 +123,6 @@ export function DramaHomePage() {
     ...project.scenes.map((item) => ({ ...item, kind: '场景', project: project.title })),
     ...project.props.map((item) => ({ ...item, kind: '道具', project: project.title })),
   ]), [projects])
-  const visibleStyles = styleCategory === '全部' ? stylePresets : stylePresets.filter((item) => item.category === styleCategory)
-  const selectedStyle = stylePresets.find((item) => item.name === style) ?? stylePresets[1]
   const activeTasks = projects.filter((item) => item.status === 'queued' || item.status === 'running').length
 
   return <main className="drama-home">
@@ -161,7 +146,7 @@ export function DramaHomePage() {
       </div>
       <div className="drama-composer-footer">
         <div className="drama-creation-options">
-          <button type="button" className="drama-option-button" onClick={() => setStyleOpen(true)}><span className="drama-option-preview" style={{ backgroundPosition: `${selectedStyle.x * 50}% ${selectedStyle.y * 50}%` }} /><span>{style}</span><span className="drama-option-chevron">⌄</span></button>
+          <DramaStylePicker value={styleId} onChange={(style) => setStyleId(style.id)} />
           <Select className="drama-ratio-select" variant="borderless" value={ratio} onChange={setRatio} options={[{ label: '9:16 竖屏', value: '9:16' }, { label: '16:9 横屏', value: '16:9' }]} />
           <Input className="drama-title-input" value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} placeholder="项目名称" prefix="项目名称" />
         </div>
@@ -177,10 +162,6 @@ export function DramaHomePage() {
       {loading ? <Skeleton active /> : libraryTab === 'projects' ? projects.length === 0 ? <div className="drama-empty"><FolderOpenOutlined /><strong>暂无项目</strong><span>上传剧本或输入创意后，项目会出现在这里。</span></div> : <div className="drama-project-grid">{projects.map((project) => <Card key={project.id} className="drama-project-card" variant="borderless" onClick={() => navigate(`/ai-apps/drama/projects/${project.id}`)} hoverable><div className="drama-project-art"><VideoCameraOutlined /><span>{project.aspectRatio}</span></div><div className="drama-project-meta">{statusTag(project)}<span>{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</span></div><h3>{project.title}</h3><p>{project.overview?.synopsis || (project.sourceMode === 'generate' ? '正在生成剧本' : '等待解析故事内容')}</p><div className="drama-project-foot">{project.episodes.length} 集 · {project.characters.length} 个角色</div></Card>)}</div> : assets.length === 0 ? <div className="drama-empty"><PictureOutlined /><strong>暂无资产</strong><span>剧本解析完成后，角色、场景和道具会出现在这里。</span></div> : <div className="drama-asset-library">{assets.map((item, index) => <div key={`${item.project}-${item.kind}-${index}`} className="drama-asset-item"><div className="drama-asset-library-icon"><PictureOutlined /></div><div><Tag>{item.kind}</Tag><strong>{item.name}</strong><small>{item.project} · {item.description || '暂无描述'}</small></div></div>)}</div>}
     </section>
 
-    <Modal className="drama-style-modal" title={<><strong>风格库</strong><small>选择适合故事的视觉风格</small></>} open={styleOpen} onCancel={() => setStyleOpen(false)} footer={null} width={780} destroyOnHidden>
-      <div className="drama-style-tabs">{(['全部', '真人', '2D', '3D'] as const).map((category) => <button type="button" key={category} className={styleCategory === category ? 'active' : ''} onClick={() => setStyleCategory(category)}>{category}</button>)}</div>
-      <div className="drama-style-grid">{visibleStyles.map((preset) => <button type="button" key={preset.name} className={`drama-style-card${style === preset.name ? ' selected' : ''}`} style={{ backgroundPosition: `${preset.x * 50}% ${preset.y * 50}%` }} onClick={() => { setStyle(preset.name); setStyleOpen(false) }}><span>{preset.name}</span>{style === preset.name && <CheckOutlined />}</button>)}</div>
-    </Modal>
     <Drawer title="模型设置" open={settingsOpen} onClose={() => setSettingsOpen(false)} width={440} extra={<Button type="primary" loading={savingSettings} onClick={() => void saveSettings()}>保存设置</Button>}>
       <p className="drama-settings-note">为当前账号设置漫剧默认模型。新项目创建时使用这里配置的文本模型。</p>
       {([

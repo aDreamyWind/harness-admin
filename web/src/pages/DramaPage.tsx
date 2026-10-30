@@ -8,13 +8,13 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import {
   getDramaProject, getDramaSource, listDramaBatches, reanalyzeDramaOverview, retryDramaProject, updateDramaOverview,
-  type DramaAsset, type DramaBatch, type DramaOverview, type DramaProject,
+  type DramaBatch, type DramaOverview, type DramaProject,
 } from '../api/drama'
 import { DramaVideoEpisodes } from './DramaVideoEpisodes'
 import { DramaVideoEpisodeStudio } from './DramaVideoEpisodeStudio'
 import { DramaAssetCanvas } from './DramaAssetCanvas'
-import { DramaImageSettingsButton } from './DramaImageTools'
-import { DramaAssetGallery } from './DramaAssetGallery'
+import { DramaStylePicker } from './DramaStylePicker'
+import { DramaProjectAssets } from './DramaProjectAssets'
 import { DramaBatchWorkspace } from './DramaBatchWorkspace'
 import './drama.css'
 import './drama-video.css'
@@ -23,11 +23,9 @@ const phaseNames: Record<string, string> = {
   waiting: '等待解析', script: '编剧正在生成剧本', story: '正在理解故事',
   assets: '正在整理角色、场景和道具', episodes: '正在规划分集', complete: '解析完成', overview_done: '概览已完成', failed: '解析失败',
 }
-const stylePresets = ['电影写实', '国风水墨', '日系动漫', '三维动画', '暗黑漫画', '奇幻绘本', '美式漫画', '怀旧动画', '赛博霓虹']
 const ratioOptions = [{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }]
 
 type Section = 'overview' | 'episodes' | 'assets' | 'videoEpisodes'
-type AssetSection = 'characters' | 'scenes' | 'props'
 const navItems: { key: Section; label: string; icon: ReactNode }[] = [
   { key: 'overview', label: '剧本概览', icon: <FileTextOutlined /> },
   { key: 'episodes', label: '剧本分集', icon: <OrderedListOutlined /> },
@@ -55,8 +53,6 @@ export function DramaProjectPage() {
   const [loading, setLoading] = useState(true)
   const requestedSection = searchParams.get('section')
   const section: Section = navItems.some((item) => item.key === requestedSection) ? requestedSection as Section : 'overview'
-  const requestedAssetSection = searchParams.get('asset')
-  const assetSection: AssetSection = requestedAssetSection === 'scenes' || requestedAssetSection === 'props' ? requestedAssetSection : 'characters'
   function selectSection(value: Section) {
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
@@ -66,14 +62,6 @@ export function DramaProjectPage() {
       return next
     })
     setEditing(false)
-  }
-  function selectAssetSection(value: AssetSection) {
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current)
-      if (value === 'characters') next.delete('asset')
-      else next.set('asset', value)
-      return next
-    })
   }
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<DramaOverview>({})
@@ -156,10 +144,8 @@ export function DramaProjectPage() {
     finally { setSourceLoading(false) }
   }
 
-  const assets: DramaAsset[] = project ? project[assetSection] : []
   const overview = project?.overview ?? {}
   const display = (key: keyof DramaOverview, fallback = '等待解析结果') => overview[key]?.trim() || fallback
-  const styleOptions = Array.from(new Set([...stylePresets, project?.style, overview.videoStyle].filter((item): item is string => Boolean(item)))).map((item) => ({ value: item, label: item }))
   if (searchParams.get('canvas') === '1' && project) return <DramaAssetCanvas project={project} />
   const videoEpisodeId = searchParams.get('episode')
   if (section === 'videoEpisodes' && videoEpisodeId && project) return <>{contextHolder}<DramaVideoEpisodeStudio project={project} episodeId={videoEpisodeId} /></>
@@ -198,7 +184,7 @@ export function DramaProjectPage() {
       {section === 'overview' ? <section className="drama-overview" aria-label="剧本概览内容">
         <div className="drama-overview-toolbar">
           <div className="drama-overview-controls">
-            <label><span>视频风格</span><Select value={editing ? draft.videoStyle : display('videoStyle', project.style)} options={styleOptions} onChange={(value) => changeSelection('videoStyle', value)} /></label>
+            <label><span>视频风格</span><DramaStylePicker value={editing ? draft.styleId || draft.videoStyle : project.styleId || project.style} onChange={(style) => { setEditing(true); setDraft((current) => ({ ...(editing ? current : project.overview), aspectRatio: editing ? current.aspectRatio : selectedAspectRatio(project), styleId: style.id, videoStyle: style.name })) }} /></label>
             <label><span>画面比例</span><Select value={editing ? draft.aspectRatio : selectedAspectRatio(project)} options={ratioOptions} onChange={(value) => changeSelection('aspectRatio', value)} /></label>
           </div>
           <div className="drama-overview-actions">{editing ? <><Button onClick={() => setEditing(false)}>取消</Button><Button type="primary" loading={saving} onClick={() => void save()}>保存修改</Button></> : <><Button loading={reanalyzing} disabled={project.status === 'queued' || project.status === 'running' || (project.status === 'failed' && !overview.protagonist)} onClick={() => void reanalyze()}>AI重新解析</Button><Button onClick={beginEditing}>编辑概览</Button></>}</div>
@@ -214,17 +200,7 @@ export function DramaProjectPage() {
         <div className="drama-overview-panels">
           {([{ key: 'background', label: '故事背景' }, { key: 'setting', label: '故事设定' }] as const).map((field) => <article key={field.key} className="drama-overview-panel"><span className="drama-field-label">{field.label}</span>{editing ? <Input.TextArea autoSize={{ minRows: 5, maxRows: 12 }} value={draft[field.key] ?? ''} onChange={(event) => changeDraft(field.key, event.target.value)} /> : <p>{display(field.key)}</p>}</article>)}
         </div>
-      </section> : section === 'episodes' ? <DramaBatchWorkspace project={project} batches={batches} onBatchesChange={(items) => { setBatches(items); void getDramaProject(project.id).then(setProject).catch(() => {}) }} /> : section === 'assets' ? <section aria-label="角色、场景、道具">
-          <div className="drama-asset-top-tools"><DramaImageSettingsButton /></div>
-        <div className="drama-asset-tabs" role="tablist" aria-label="资产类型">
-          {([{ key: 'characters', label: '角色', count: project.characters.length }, { key: 'scenes', label: '场景', count: project.scenes.length }, { key: 'props', label: '道具', count: project.props.length }] as const).map((item) =>
-            <button key={item.key} type="button" role="tab" aria-selected={assetSection === item.key} className={assetSection === item.key ? 'active' : ''} onClick={() => selectAssetSection(item.key)}>{item.label}<span>{item.count}</span></button>
-          )}
-        </div>
-        <div role="tabpanel" aria-label={assetSection === 'characters' ? '角色' : assetSection === 'scenes' ? '场景' : '道具'}>
-          {assets.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，内容会出现在这里" /></div> : <DramaAssetGallery projectId={project.id} kind={assetSection === 'characters' ? 'character' : assetSection === 'scenes' ? 'scene' : 'prop'} assets={assets} />}
-        </div>
-      </section> : <DramaVideoEpisodes projectId={project.id} />}
+      </section> : section === 'episodes' ? <DramaBatchWorkspace project={project} batches={batches} onBatchesChange={(items) => { setBatches(items); void getDramaProject(project.id).then(setProject).catch(() => {}) }} /> : section === 'assets' ? <DramaProjectAssets project={project} batches={batches} /> : <DramaVideoEpisodes projectId={project.id} />}
     </>}</main>
     <Drawer title={project?.sourceMode === 'generate' ? '生成剧本' : '完整原文'} open={sourceOpen} onClose={() => setSourceOpen(false)} size={760}>{sourceLoading ? <Skeleton active /> : <pre className="drama-source-text">{sourceText}</pre>}</Drawer>
   </div>

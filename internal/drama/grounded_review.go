@@ -95,12 +95,24 @@ func mergeReview(reply groundedReview, history []ReviewIssue, episode EpisodeDra
 		if strings.TrimSpace(finding.Message) == "" || utf8.RuneCountInString(finding.Message) > 1200 {
 			return nil, errors.New("审校缺少明确问题描述")
 		}
-		index := strings.Index(original, finding.SourceQuote)
+		quoteStart, quoteEnd, quoteFound := locateQuote(original, finding.SourceQuote)
+		index := -1
+		if quoteFound {
+			index = quoteStart
+			finding.SourceQuote = string([]rune(original)[quoteStart:quoteEnd])
+		}
 		if finding.Severity == "blocking" && (strings.TrimSpace(finding.SourceQuote) == "" || index < 0) {
 			return nil, errors.New("阻断问题必须引用当前集原文的真实依据")
 		}
 		if finding.SourceQuote != "" && index < 0 {
 			return nil, errors.New("审校引用了本集原文以外的依据")
+		}
+		if finding.ScriptQuote != "" {
+			if start, end, ok := locateQuote(episode.ScriptText, finding.ScriptQuote); ok {
+				finding.ScriptQuote = string([]rune(episode.ScriptText)[start:end])
+			} else if start, end, ok := locateQuote(episode.Synopsis, finding.ScriptQuote); ok {
+				finding.ScriptQuote = string([]rune(episode.Synopsis)[start:end])
+			}
 		}
 		if finding.ScriptQuote != "" && !strings.Contains(episode.ScriptText, finding.ScriptQuote) && !strings.Contains(episode.Synopsis, finding.ScriptQuote) && !strings.Contains(string(whole), finding.ScriptQuote) {
 			return nil, errors.New("审校指控的剧本文字不存在")
@@ -119,7 +131,7 @@ func mergeReview(reply groundedReview, history []ReviewIssue, episode EpisodeDra
 		}
 		position := start
 		if finding.SourceQuote != "" {
-			position += utf8.RuneCountInString(original[:index])
+			position += index
 		}
 		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(job.Batch.AnalysisRunID+hash+fmt.Sprint(number)+key)).String()
 		out = append(out, ReviewIssue{ID: id, RunID: job.Batch.AnalysisRunID, EpisodeNumber: number, ContextHash: hash, Key: key, Category: finding.Category, Severity: finding.Severity, Message: finding.Message, SourceQuote: finding.SourceQuote, ScriptQuote: finding.ScriptQuote, SourceStart: position, SourceEnd: position + utf8.RuneCountInString(finding.SourceQuote), Status: "open"})
@@ -163,10 +175,17 @@ func patchEpisode(before EpisodeDraft, patch scriptPatch, assets BatchDraft, ori
 		return after, errors.New("局部修正必须返回replacements数组")
 	}
 	for _, change := range patch.Replacements {
-		if change.OldText == "" || utf8.RuneCountInString(change.OldText) > 2000 || strings.Count(after.ScriptText, change.OldText) != 1 {
-			return before, errors.New("局部替换须匹配唯一的现有片段，且每段不超过2000字")
+		if change.OldText == "" || utf8.RuneCountInString(change.OldText) > 2000 {
+			return before, errors.New("局部替换须提供不超过2000字的现有片段")
 		}
-		after.ScriptText = strings.Replace(after.ScriptText, change.OldText, change.NewText, 1)
+		start, end, ok := locateQuote(after.ScriptText, change.OldText)
+		source, _, _ := normalizedQuote(after.ScriptText)
+		needle, _, _ := normalizedQuote(strings.TrimSpace(change.OldText))
+		if !ok || needle == "" || strings.Count(source, needle) != 1 {
+			return before, errors.New("局部替换须匹配唯一片段，不能匹配不存在或重复的文字")
+		}
+		text := []rune(after.ScriptText)
+		after.ScriptText = string(text[:start]) + change.NewText + string(text[end:])
 	}
 	if patch.Synopsis != nil {
 		after.Synopsis = *patch.Synopsis

@@ -7,6 +7,7 @@ import '@xyflow/react/dist/style.css'
 import { ApiError } from '../api/client'
 import { deriveDramaForm, editDramaForm, generateDramaImage, getDramaCanvas, saveDramaCanvasLayout, type DramaAssetForm, type DramaCanvasLayout, type DramaProject } from '../api/drama'
 import { DramaImageModelSelect, useDramaCanvas } from './DramaImageTools'
+import { DramaStylePicker } from './DramaStylePicker'
 import './drama-canvas.css'
 
 type AssetNode = Node<{ form: DramaAssetForm; edit: (id: string) => void; derive: (id: string) => void; preview: (id: string) => void }, 'asset'>
@@ -46,7 +47,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   const [preview, setPreview] = useState<DramaAssetForm | null>(null)
   const [working, setWorking] = useState(false)
   const [prompt, setPrompt] = useState('')
-  const [style, setStyle] = useState('')
+  const [style, setStyle] = useState({ id: '', name: '' })
   const [ratio, setRatio] = useState<DramaAssetForm['aspectRatio']>('9:16')
   const [saveStatus, setSaveStatus] = useState('已保存')
   const [saveError, setSaveError] = useState('')
@@ -111,7 +112,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     if (target) { choose(target.id); void flow.fitView({ nodes: [{ id: target.id }], maxZoom: 0.85, padding: 0.5 }) }
     else { if (restored) setSelectedId(restored.id); void flow.setViewport(viewport.current) }
   }, [measured, flow, params, query.data])
-  useEffect(() => { setPrompt(selected?.description || ''); setStyle(selected?.style || ''); setRatio(selected?.aspectRatio || '9:16') }, [selectedId, selected?.revision])
+  useEffect(() => { setPrompt(selected?.description || ''); setStyle({ id: selected?.styleId || '', name: selected?.style || '' }); setRatio(selected?.aspectRatio || '9:16') }, [selectedId, selected?.revision])
   useEffect(() => {
     function beforeUnload(event: BeforeUnloadEvent) { if (pending.current || saving.current) { event.preventDefault(); event.returnValue = '' } }
     window.addEventListener('beforeunload', beforeUnload)
@@ -128,7 +129,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     if (!current || working || busy(current)) return
     setWorking(true)
     try {
-      if (current.style !== style || current.aspectRatio !== ratio) await editDramaForm(project.id, { ...current, style, aspectRatio: ratio })
+      if ((current.styleId || current.style) !== (style.id || style.name) || current.aspectRatio !== ratio) await editDramaForm(project.id, { ...current, styleId: style.id, style: style.name, aspectRatio: ratio })
       await generateDramaImage(project.id, current.id, prompt); await query.refetch(); messageApi.success('图片生成任务已开始，可以继续操作画布')
     } catch (error) { await query.refetch(); messageApi.error(error instanceof Error ? error.message : '图片生成失败') } finally { setWorking(false) }
   }
@@ -153,11 +154,11 @@ function AssetCanvas({ project }: { project: DramaProject }) {
         <div className="drama-canvas-generation-heading"><span>{kindIcons[selected.kind]} {selected.assetName} · {selected.name}</span><Button type="text" size="small" icon={<EditOutlined />} disabled={busy(selected)} onClick={() => setEditing({ ...selected })}>编辑形象</Button></div>
         {selected.imageError && <div className="drama-canvas-generation-error">{selected.imageError}</div>}
         <Input.TextArea aria-label="本次生成描述" value={prompt} onChange={(event) => setPrompt(event.target.value)} autoSize={{ minRows: 2, maxRows: 4 }} placeholder="描述当前形象。本次修改只用于生成，编辑形象可保存长期描述。" maxLength={10000} disabled={busy(selected)} />
-        <div className="drama-canvas-generation-toolbar"><Input aria-label="生成风格" value={style} placeholder="画面风格" maxLength={120} onChange={(event) => setStyle(event.target.value)} disabled={busy(selected)} /><Select aria-label="生成比例" value={ratio} onChange={setRatio} disabled={busy(selected)} options={[{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }, { value: '1:1', label: '方图 1:1' }]} /><span>{selected.parentId ? '使用原始形象作为参考图' : '生成原始形象'}</span><Button type="primary" icon={<PictureOutlined />} loading={working || busy(selected)} disabled={!prompt.trim() || !!saveError} onClick={() => void generate()}>{selected.imageUrl ? '重新生成图片' : '生成图片'}</Button></div>
+        <div className="drama-canvas-generation-toolbar"><DramaStylePicker value={style.id || style.name} onChange={(value) => setStyle({ id: value.id, name: value.name })} disabled={busy(selected)} /><Select aria-label="生成比例" value={ratio} onChange={setRatio} disabled={busy(selected)} options={[{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }, { value: '1:1', label: '方图 1:1' }]} /><span>{selected.parentId ? '使用原始形象作为参考图' : '生成原始形象'}</span><Button type="primary" icon={<PictureOutlined />} loading={working || busy(selected)} disabled={!prompt.trim() || !!saveError} onClick={() => void generate()}>{selected.imageUrl ? '重新生成图片' : '生成图片'}</Button></div>
       </div>}
     </>}
     <Modal title={editing ? `编辑${kindNames[editing.kind]}形象` : '编辑形象'} open={!!editing} onCancel={() => setEditing(null)} onOk={() => void saveForm()} confirmLoading={working} okText="保存" cancelText="取消" destroyOnHidden>
-      {editing && <div className="drama-canvas-edit-form"><label>形象名称<Input value={editing.name} maxLength={80} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label><label>形象描述<Input.TextArea value={editing.description} maxLength={10000} showCount rows={7} onChange={(event) => setEditing({ ...editing, description: event.target.value })} /></label><div>{editing.kind === 'character' && <label>性别<Select value={editing.gender} onChange={(value) => setEditing({ ...editing, gender: value })} options={[{ value: 'unspecified', label: '未指定' }, { value: 'male', label: '男' }, { value: 'female', label: '女' }, { value: 'other', label: '其他' }]} /></label>}<label>风格<Input value={editing.style} maxLength={120} onChange={(event) => setEditing({ ...editing, style: event.target.value })} /></label><label>比例<Select value={editing.aspectRatio} onChange={(value) => setEditing({ ...editing, aspectRatio: value })} options={['9:16', '16:9', '1:1'].map((value) => ({ value, label: value }))} /></label></div></div>}
+      {editing && <div className="drama-canvas-edit-form"><label>形象名称<Input value={editing.name} maxLength={80} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label><label>形象描述<Input.TextArea value={editing.description} maxLength={10000} showCount rows={7} onChange={(event) => setEditing({ ...editing, description: event.target.value })} /></label><div>{editing.kind === 'character' && <label>性别<Select value={editing.gender} onChange={(value) => setEditing({ ...editing, gender: value })} options={[{ value: 'unspecified', label: '未指定' }, { value: 'male', label: '男' }, { value: 'female', label: '女' }, { value: 'other', label: '其他' }]} /></label>}<label>风格<DramaStylePicker value={editing.styleId || editing.style} onChange={(style) => setEditing({ ...editing, styleId: style.id, style: style.name })} /></label><label>比例<Select value={editing.aspectRatio} onChange={(value) => setEditing({ ...editing, aspectRatio: value })} options={['9:16', '16:9', '1:1'].map((value) => ({ value, label: value }))} /></label></div></div>}
     </Modal>
     <Modal title={preview ? `${preview.assetName} · ${preview.name}` : '图片预览'} open={!!preview} footer={null} width={850} onCancel={() => setPreview(null)}>{preview?.imageUrl ? <img className="drama-canvas-preview-image" src={preview.imageUrl} alt={`${preview.assetName} · ${preview.name}`} /> : <Empty description="尚未生成图片" />}</Modal>
   </div>

@@ -1,7 +1,7 @@
 import { PictureOutlined, EyeOutlined, GiftOutlined, NodeIndexOutlined, UserOutlined } from '@ant-design/icons'
-import { Alert, Button, Modal, Tag, Tooltip, message } from 'antd'
+import { Alert, Button, Modal, Tooltip, message } from 'antd'
 import { useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { generateDramaImage, type DramaAsset, type DramaAssetKind } from '../api/drama'
 import { useDramaCanvas } from './DramaImageTools'
@@ -10,13 +10,6 @@ type GalleryAsset = DramaAsset & { stateLabel?: string; assetId?: string }
 
 const kindNames: Record<DramaAssetKind, string> = { character: '角色', scene: '场景', prop: '道具' }
 const kindIcons = { character: <UserOutlined />, scene: <PictureOutlined />, prop: <GiftOutlined /> }
-
-function BatchTags({ asset, projectId }: { asset: DramaAsset; projectId: string }) {
-  return <div className="drama-asset-batch-tags">
-    <div><span>来源</span>{asset.sourceBatch ? <Tag color="blue" title={`第 ${asset.sourceBatch.number} 批`}><Link to={`/ai-apps/drama/projects/${projectId}?section=episodes&batch=${asset.sourceBatch.id}`}>{asset.sourceBatch.name}</Link></Tag> : <small>未记录来源</small>}</div>
-    <div><span>应用</span>{asset.usedInBatches?.length ? asset.usedInBatches.map((batch) => <Tag key={batch.id} title={`第 ${batch.number} 批`}><Link to={`/ai-apps/drama/projects/${projectId}?section=episodes&batch=${batch.id}`}>{batch.name}</Link></Tag>) : <small>暂无应用</small>}</div>
-  </div>
-}
 
 // 资产关联保持不变；图片及派生形象从项目画布读取。
 export function DramaAssetGallery({ assets, kind, projectId, compact = false }: { assets: GalleryAsset[]; kind: DramaAssetKind; projectId: string; compact?: boolean }) {
@@ -37,7 +30,7 @@ export function DramaAssetGallery({ assets, kind, projectId, compact = false }: 
     <div className={`drama-asset-gallery ${kind}${compact ? ' compact' : ''}`}>
       {assets.map((asset, index) => <article className="drama-asset-tile" key={asset.id || `${asset.name}-${index}`} aria-label={`${kindNames[kind]}：${asset.name}`}>
         <div className="drama-asset-cover">
-          {formFor(asset)?.imageUrl ? <img className="drama-asset-image" src={formFor(asset)?.imageUrl} alt={asset.name} loading="lazy" /> : <div className="drama-asset-placeholder" aria-hidden="true">{kindIcons[kind]}<span>{formFor(asset)?.imageStatus === 'running' || formFor(asset)?.imageStatus === 'queued' ? '正在生成…' : '暂无图片'}</span></div>}
+          {formFor(asset)?.imageUrl ? <img className="drama-asset-image" src={formFor(asset)?.imageUrl} alt={asset.name} loading="lazy" /> : <div className="drama-asset-placeholder" aria-hidden="true">{kindIcons[kind]}<strong>{asset.name}</strong>{(formFor(asset)?.imageStatus === 'running' || formFor(asset)?.imageStatus === 'queued') && <small>正在生成…</small>}</div>}
           <span className="drama-asset-form-count">共 {countFor(asset)} 个形象</span>
           <span className="drama-asset-kind-label">{kindNames[kind]}</span>
           <div className="drama-asset-cover-overlay">
@@ -48,12 +41,12 @@ export function DramaAssetGallery({ assets, kind, projectId, compact = false }: 
             <p>{asset.description || asset.appearanceDescription || '暂无描述'}</p>
           </div>
         </div>
-        <h4 title={asset.name}>{asset.name}</h4>
+        {formFor(asset)?.imageUrl && <h4 title={asset.name}>{asset.name}</h4>}
         {asset.stateLabel && <p className="drama-asset-state-label" title={asset.stateLabel}>{asset.stateLabel}</p>}
-        {!compact && <><div className="drama-asset-tile-buttons">
-          <Button type="primary" icon={<PictureOutlined />} loading={starting === formFor(asset)?.id || formFor(asset)?.imageStatus === 'queued' || formFor(asset)?.imageStatus === 'running'} disabled={!formFor(asset)} onClick={() => void generate(asset)}>生成图片</Button>
-          <Button icon={<NodeIndexOutlined />} onClick={() => enterCanvas(asset)}>进入画布</Button>
-        </div>{formFor(asset)?.imageError && <Tooltip title={formFor(asset)?.imageError}><p className="drama-asset-image-error">生成失败：{formFor(asset)?.imageError}</p></Tooltip>}<BatchTags asset={asset} projectId={projectId} /></>}
+        {!compact && <>{!formFor(asset)?.imageUrl && <div className="drama-asset-tile-buttons">
+          <Button type="primary" icon={<PictureOutlined />} loading={starting === formFor(asset)?.id || formFor(asset)?.imageStatus === 'queued' || formFor(asset)?.imageStatus === 'running'} disabled={!formFor(asset)} onClick={() => void generate(asset)}>{starting === formFor(asset)?.id || formFor(asset)?.imageStatus === 'queued' || formFor(asset)?.imageStatus === 'running' ? '生成中' : '生成图片'}</Button>
+        </div>}{formFor(asset)?.imageError && <Tooltip title={formFor(asset)?.imageError}><p className="drama-asset-image-error">生成失败：{formFor(asset)?.imageError}</p></Tooltip>}</>}
+
       </article>)}
     </div>
     <Modal title={preview ? `${preview.name} · ${kindNames[kind]}` : '资产预览'} open={preview !== null} onCancel={() => setPreview(null)} footer={<Button onClick={() => setPreview(null)}>关闭</Button>} width={760}>
@@ -63,7 +56,6 @@ export function DramaAssetGallery({ assets, kind, projectId, compact = false }: 
           <div><h4>资产描述</h4><p>{preview.description || '暂无描述'}</p></div>
           {kind === 'character' && <><div><h4>外貌</h4><p>{preview.appearanceDescription || '暂无外貌描述'}</p></div><div><h4>音色</h4><p>{preview.voiceDescription || '暂无音色描述'}</p></div></>}
           {preview.stateLabel && <div><h4>本集状态</h4><p>{preview.stateLabel}</p></div>}
-          {!compact && <BatchTags asset={preview} projectId={projectId} />}
         </div>
       </div>}
     </Modal>

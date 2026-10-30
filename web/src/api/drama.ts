@@ -11,6 +11,7 @@ export interface DramaBatchReference { id: string; name: string; number: number 
 export interface DramaAsset { id?: string; name: string; description: string; appearanceDescription?: string; voiceDescription?: string; sourceBatch?: DramaBatchReference | null; usedInBatches?: DramaBatchReference[] }
 export interface DramaEpisode { title: string; synopsis: string }
 export interface DramaOverview {
+  styleId?: string
   videoStyle?: string
   aspectRatio?: string
   protagonist?: string
@@ -25,6 +26,7 @@ export interface DramaProject {
   sourceName: string
   sourceLength: number
   sourceMode: 'upload' | 'generate'
+  styleId?: string
   style: string
   aspectRatio: '9:16' | '16:9'
   modelCode: string
@@ -44,7 +46,8 @@ export interface CreateDramaInput {
   sourceName: string
   sourceText: string
   sourceMode: 'upload' | 'generate'
-  style: string
+  styleId?: string
+  style?: string
   aspectRatio: '9:16' | '16:9'
 }
 
@@ -136,7 +139,7 @@ export interface DramaBatchResult {
   episodes: DramaScriptEpisode[]
 }
 export interface DramaBatchStep {
-  stage: 'art' | 'story' | 'context' | 'plan' | 'name' | 'director' | 'review' | 'repair'
+  stage: 'art' | 'story' | 'evidence' | 'context' | 'plan' | 'name' | 'director' | 'review' | 'repair'
   chunkNumber: number
   chunkTotal: number
   status: 'running' | 'completed' | 'failed'
@@ -145,7 +148,8 @@ export interface DramaBatchStep {
   startedAt: string
   updatedAt: string
 }
-export interface DramaSourceFact { id: string; unitId: number; claim: string; quote: string; startOffset: number; endOffset: number }
+export interface DramaSourceReference { id?: string; quote: string; startOffset: number; endOffset: number }
+export interface DramaSourceFact { sourceIds?: string[]; references?: DramaSourceReference[]; id: string; unitId: number; claim: string; quote: string; startOffset: number; endOffset: number }
 export interface DramaGroundedContext { startOffset: number; endOffset: number; precedingStart: number; precedingEnd: number; summary: string; background: string; setting: string; continuity: string }
 export interface DramaReviewIssue { id: string; episodeNumber: number; category: 'fact' | 'continuity' | 'causality' | 'style'; severity: 'blocking' | 'suggestion'; message: string; sourceQuote: string; scriptQuote: string; sourceStart: number; sourceEnd: number; status: 'open' | 'resolved'; createdAt: string; updatedAt: string }
 export interface DramaEpisodePlan { title: string; synopsis: string; hook: string; startUnit: number; endUnit: number; factIds?: string[]; sources?: DramaSourceFact[] }
@@ -195,7 +199,7 @@ export const getDramaVideoEpisodeWorkspace = (projectId: string, episodeId: stri
 export interface DramaAssetForm {
   id: string; assetId: string; assetName: string; kind: DramaAssetKind; parentId?: string
   name: string; description: string; gender: 'unspecified' | 'male' | 'female' | 'other'
-  style: string; aspectRatio: '9:16' | '16:9' | '1:1'; x: number; y: number; revision: number
+  styleId?: string; style: string; aspectRatio: '9:16' | '16:9' | '1:1'; x: number; y: number; revision: number
   imageUrl?: string; imageStatus: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed'; imageError?: string
 }
 export interface DramaCanvas { forms: DramaAssetForm[]; x: number; y: number; zoom: number; revision: number }
@@ -207,9 +211,12 @@ export const saveDramaCanvasLayout = (id: string, input: DramaCanvasLayout) => r
   method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })
 export const editDramaForm = (id: string, form: DramaAssetForm) => request<{ saved: boolean }>(`${visualBase(id)}/forms/${form.id}`, {
-  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(form),
+  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision: form.revision, name: form.name, description: form.description, gender: form.gender, ...(form.styleId ? { styleId: form.styleId } : { style: form.style }), aspectRatio: form.aspectRatio }),
 })
 export const deriveDramaForm = (id: string, formId: string) => request<{ id: string }>(`${visualBase(id)}/forms/${formId}/derive`, { method: 'POST', headers: csrfHeaders() })
 export const generateDramaImage = (id: string, formId: string, prompt = '') => request<DramaImageJob>(`${visualBase(id)}/forms/${formId}/images`, {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ prompt }),
 })
+
+export interface DramaStyleOption { id: string; name: string; category: string; previewUrl: string; previewX: number; previewY: number }
+export const listDramaStyles = () => request<DramaStyleOption[]>('/api/v1/ai-drama/styles')

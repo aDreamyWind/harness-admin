@@ -31,19 +31,20 @@ func (r *DramaRepository) ReadCanvas(ctx context.Context, org, user, project str
 		return drama.Canvas{}, err
 	}
 	// 解析得到的新资产首次进入画廊时建立默认形象；后续不覆盖人工编辑。
-	if _, err = tx.Exec(ctx, `INSERT INTO drama_asset_forms(id,asset_id,name,description,style,aspect_ratio,position_x,position_y)
+	if _, err = tx.Exec(ctx, `INSERT INTO drama_asset_forms(id,asset_id,name,description,style,aspect_ratio,position_x,position_y,style_id)
  SELECT a.id,a.id,'默认形象',concat_ws(E'\n',NULLIF(a.description,''),NULLIF(a.appearance_description,'')),p.style,
  CASE a.kind WHEN 'character' THEN '9:16' WHEN 'scene' THEN '16:9' ELSE '1:1' END,
  CASE a.kind WHEN 'character' THEN 0 WHEN 'scene' THEN 800 ELSE 1280 END,
- (row_number() OVER(PARTITION BY a.kind ORDER BY a.created_at,a.id)-1)*CASE a.kind WHEN 'character' THEN 620 WHEN 'scene' THEN 360 ELSE 440 END
- FROM drama_assets a JOIN drama_projects p ON p.id=a.project_id WHERE p.id=$1 ON CONFLICT DO NOTHING`, project); err != nil {
+ (row_number() OVER(PARTITION BY a.kind ORDER BY a.created_at,a.id)-1)*CASE a.kind WHEN 'character' THEN 620 WHEN 'scene' THEN 360 ELSE 440 END,s.id
+ FROM drama_assets a JOIN drama_projects p ON p.id=a.project_id
+ LEFT JOIN drama_visual_styles s ON s.id=p.style_id OR(p.style_id IS NULL AND s.name=p.style) WHERE p.id=$1 ON CONFLICT DO NOTHING`, project); err != nil {
 		return drama.Canvas{}, err
 	}
 	out := drama.Canvas{Forms: []drama.AssetForm{}}
 	if err = tx.QueryRow(ctx, `SELECT viewport_x,viewport_y,viewport_zoom,revision FROM drama_canvas_boards WHERE project_id=$1`, project).Scan(&out.X, &out.Y, &out.Zoom, &out.Revision); err != nil {
 		return out, err
 	}
-	rows, err := tx.Query(ctx, `SELECT f.id,f.asset_id,a.name,a.kind,COALESCE(f.parent_id::text,''),f.name,f.description,f.gender,f.style,f.aspect_ratio,f.position_x,f.position_y,f.revision,COALESCE(f.current_image_id::text,''),COALESCE(j.status,'idle'),COALESCE(j.error_message,'')
+	rows, err := tx.Query(ctx, `SELECT f.id,f.asset_id,a.name,a.kind,COALESCE(f.parent_id::text,''),f.name,f.description,f.gender,f.style,f.aspect_ratio,f.position_x,f.position_y,f.revision,COALESCE(f.current_image_id::text,''),COALESCE(j.status,'idle'),COALESCE(j.error_message,''),COALESCE(f.style_id,'')
  FROM drama_asset_forms f JOIN drama_assets a ON a.id=f.asset_id
  LEFT JOIN LATERAL(SELECT status,error_message FROM drama_image_jobs WHERE form_id=f.id ORDER BY created_at DESC,id DESC LIMIT 1) j ON true
  WHERE a.project_id=$1 ORDER BY a.kind,a.created_at,a.id,f.created_at,f.id`, project)
@@ -52,7 +53,7 @@ func (r *DramaRepository) ReadCanvas(ctx context.Context, org, user, project str
 	}
 	for rows.Next() {
 		var f drama.AssetForm
-		if err = rows.Scan(&f.ID, &f.AssetID, &f.AssetName, &f.Kind, &f.ParentID, &f.Name, &f.Description, &f.Gender, &f.Style, &f.AspectRatio, &f.X, &f.Y, &f.Revision, &f.CurrentImageID, &f.ImageStatus, &f.ImageError); err != nil {
+		if err = rows.Scan(&f.ID, &f.AssetID, &f.AssetName, &f.Kind, &f.ParentID, &f.Name, &f.Description, &f.Gender, &f.Style, &f.AspectRatio, &f.X, &f.Y, &f.Revision, &f.CurrentImageID, &f.ImageStatus, &f.ImageError, &f.StyleID); err != nil {
 			rows.Close()
 			return out, err
 		}
@@ -98,7 +99,7 @@ func (r *DramaRepository) SaveCanvasLayout(ctx context.Context, org, user, proje
 }
 func lockVisualForm(ctx context.Context, tx pgx.Tx, org, user, project, form string) (drama.AssetForm, error) {
 	var f drama.AssetForm
-	err := tx.QueryRow(ctx, `SELECT f.id,f.asset_id,a.name,a.kind,COALESCE(f.parent_id::text,''),f.name,f.description,f.gender,f.style,f.aspect_ratio,f.position_x,f.position_y,f.revision,COALESCE(f.current_image_id::text,'') FROM drama_asset_forms f JOIN drama_assets a ON a.id=f.asset_id JOIN drama_projects p ON p.id=a.project_id WHERE f.id=$1 AND p.id=$2 AND p.organization_id=$3 AND p.owner_id=$4 FOR UPDATE OF f`, form, project, org, user).Scan(&f.ID, &f.AssetID, &f.AssetName, &f.Kind, &f.ParentID, &f.Name, &f.Description, &f.Gender, &f.Style, &f.AspectRatio, &f.X, &f.Y, &f.Revision, &f.CurrentImageID)
+	err := tx.QueryRow(ctx, `SELECT f.id,f.asset_id,a.name,a.kind,COALESCE(f.parent_id::text,''),f.name,f.description,f.gender,f.style,f.aspect_ratio,f.position_x,f.position_y,f.revision,COALESCE(f.current_image_id::text,''),COALESCE(f.style_id,'') FROM drama_asset_forms f JOIN drama_assets a ON a.id=f.asset_id JOIN drama_projects p ON p.id=a.project_id WHERE f.id=$1 AND p.id=$2 AND p.organization_id=$3 AND p.owner_id=$4 FOR UPDATE OF f`, form, project, org, user).Scan(&f.ID, &f.AssetID, &f.AssetName, &f.Kind, &f.ParentID, &f.Name, &f.Description, &f.Gender, &f.Style, &f.AspectRatio, &f.X, &f.Y, &f.Revision, &f.CurrentImageID, &f.StyleID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = drama.ErrNotFound
 	}
@@ -131,7 +132,7 @@ func (r *DramaRepository) EditAssetForm(ctx context.Context, org, user, project,
 	if err = visualBusy(ctx, tx, form); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE drama_asset_forms SET name=$2,description=$3,gender=$4,style=$5,aspect_ratio=$6,revision=revision+1,updated_at=now() WHERE id=$1`, form, in.Name, in.Description, in.Gender, in.Style, in.AspectRatio)
+	_, err = tx.Exec(ctx, `UPDATE drama_asset_forms SET name=$2,description=$3,gender=$4,style=$5,aspect_ratio=$6,style_id=COALESCE(NULLIF($7::text,''),(SELECT id FROM drama_visual_styles WHERE name=$5 AND enabled)),revision=revision+1,updated_at=now() WHERE id=$1`, form, in.Name, in.Description, in.Gender, in.Style, in.AspectRatio, in.StyleID)
 	if err != nil {
 		return err
 	}
@@ -161,7 +162,7 @@ func (r *DramaRepository) DeriveAssetForm(ctx context.Context, org, user, projec
 	if count >= 50 {
 		return "", drama.ErrInvalidInput
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO drama_asset_forms(id,asset_id,parent_id,name,description,gender,style,aspect_ratio,position_x,position_y) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, f.AssetID, parent, fmt.Sprintf("形象 %d", count+1), f.Description, f.Gender, f.Style, f.AspectRatio, f.X+360, f.Y+float64(count-1)*80)
+	_, err = tx.Exec(ctx, `INSERT INTO drama_asset_forms(id,asset_id,parent_id,name,description,gender,style,aspect_ratio,position_x,position_y,style_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''))`, id, f.AssetID, parent, fmt.Sprintf("形象 %d", count+1), f.Description, f.Gender, f.Style, f.AspectRatio, f.X+360, f.Y+float64(count-1)*80, f.StyleID)
 	if err != nil {
 		return "", err
 	}
@@ -196,15 +197,13 @@ func (r *DramaRepository) QueueImage(ctx context.Context, org, user, project, fo
 	if description == "" {
 		return job, drama.ErrInvalidInput
 	}
-	composition := map[string]string{"character": "单个人物，全身形象，清晰完整，简洁背景，无文字无水印。", "scene": "完整场景环境概念图，空间关系清晰，无文字无水印。", "prop": "单个道具，完整物体，简洁背景，无文字无水印。"}[f.Kind]
-	job.Prompt = fmt.Sprintf("%s\n资产：%s\n形象：%s\n描述：%s\n风格：%s", composition, f.AssetName, f.Name, description, f.Style)
-	if f.Gender != "unspecified" && f.Kind == "character" {
-		job.Prompt += "\n性别：" + map[string]string{"male": "男", "female": "女", "other": "其他"}[f.Gender]
+	style, err := readVisualStyle(tx.QueryRow(ctx, `SELECT id,name,category,preview_url,preview_x,preview_y,image_prompt,video_prompt FROM drama_visual_styles WHERE enabled AND (id=NULLIF($1::text,'') OR ($1::text='' AND name=$2)) LIMIT 1`, f.StyleID, f.Style))
+	if err != nil {
+		return job, err
 	}
-	if job.ReferenceID != "" {
-		job.Prompt += "\n参考原始形象保持身份一致，仅按照当前形象描述调整状态、服装或外貌。"
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO drama_image_jobs(id,form_id,model_code,form_revision,prompt,aspect_ratio,reference_id,status) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,'')::uuid,'queued')`, job.ID, form, model, f.Revision, job.Prompt, job.AspectRatio, job.ReferenceID)
+	job.StyleID = style.ID
+	job.Prompt = drama.BuildAssetImagePrompt(f, description, style, job.ReferenceID != "")
+	_, err = tx.Exec(ctx, `INSERT INTO drama_image_jobs(id,form_id,model_code,form_revision,prompt,aspect_ratio,reference_id,status,style_id) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,'')::uuid,'queued',$8)`, job.ID, form, model, f.Revision, job.Prompt, job.AspectRatio, job.ReferenceID, job.StyleID)
 	if err != nil {
 		return job, err
 	}

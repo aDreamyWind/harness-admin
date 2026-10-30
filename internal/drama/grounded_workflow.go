@@ -13,13 +13,21 @@ import (
 
 const BatchPrecedingRuneLimit = 6000
 
-type SourceFact struct {
-	ID          string `json:"id"`
-	UnitID      int    `json:"unitId"`
-	Claim       string `json:"claim"`
+type SourceReference struct {
+	ID          string `json:"id,omitempty"`
 	Quote       string `json:"quote"`
 	StartOffset int    `json:"startOffset"`
 	EndOffset   int    `json:"endOffset"`
+}
+type SourceFact struct {
+	SourceIDs   []string          `json:"sourceIds,omitempty"`
+	References  []SourceReference `json:"references,omitempty"`
+	ID          string            `json:"id"`
+	UnitID      int               `json:"unitId"`
+	Claim       string            `json:"claim"`
+	Quote       string            `json:"quote"`
+	StartOffset int               `json:"startOffset"`
+	EndOffset   int               `json:"endOffset"`
 }
 type GroundedContext struct {
 	StartOffset    int    `json:"startOffset"`
@@ -55,31 +63,7 @@ func formatOnly(overview json.RawMessage) json.RawMessage {
 	return out
 }
 func groundedEvidence(raw json.RawMessage, units []sourceUnit, base int) (json.RawMessage, error) {
-	var digest evidenceDigest
-	if err := json.Unmarshal(raw, &digest); err != nil {
-		return nil, err
-	}
-	if len(digest.Units) != len(units) {
-		return nil, errors.New("证据单元数量与原文不一致")
-	}
-	for i, unit := range units {
-		beat := &digest.Units[i]
-		if beat.ID != unit.ID || strings.TrimSpace(beat.Event) == "" || utf8.RuneCountInString(beat.Event) > 500 || len(beat.Facts) == 0 || len(beat.Facts) > 6 {
-			return nil, errors.New("每个单元必须按原顺序返回摘要及1至6条原文证据")
-		}
-		for j := range beat.Facts {
-			f := &beat.Facts[j]
-			index := strings.Index(unit.Text, f.Quote)
-			if strings.TrimSpace(f.Claim) == "" || utf8.RuneCountInString(f.Claim) > 240 || strings.TrimSpace(f.Quote) == "" || utf8.RuneCountInString(f.Quote) > 300 || index < 0 {
-				return nil, fmt.Errorf("单元%d的证据必须逐字引用本单元原文，不能补写事实", unit.ID)
-			}
-			f.ID = fmt.Sprintf("U%dF%d", unit.ID, j+1)
-			f.UnitID = unit.ID
-			f.StartOffset = base + unit.Start + utf8.RuneCountInString(unit.Text[:index])
-			f.EndOffset = f.StartOffset + utf8.RuneCountInString(f.Quote)
-		}
-	}
-	return json.Marshal(digest)
+	return normalizeEvidence(raw, units, base)
 }
 func groundPlan(raw json.RawMessage, units []sourceUnit, facts map[string]SourceFact) (json.RawMessage, error) {
 	var result episodePlanResult
@@ -138,7 +122,7 @@ func validateGroundedEpisode(e EpisodeDraft, assets BatchDraft, original string)
 	}
 	for _, refs := range [][]EpisodeAssetDraft{e.Characters, e.Scenes, e.Props} {
 		for _, ref := range refs {
-			if strings.TrimSpace(ref.SourceQuote) == "" || !strings.Contains(original, ref.SourceQuote) {
+			if strings.TrimSpace(ref.SourceQuote) == "" || !quoteExists(original, ref.SourceQuote) {
 				return fmt.Errorf("资产%s缺少本集原文中可核对的引用依据", ref.Name)
 			}
 		}
@@ -187,14 +171,12 @@ func (s *Service) analyzeGroundedWorkflow(job BatchAnalysisJob) error {
 			}
 			return json.Unmarshal(raw, &arts[i])
 		}}, workflowTask{run: func() error {
-			normalize := func(raw json.RawMessage) (json.RawMessage, error) {
-				return groundedEvidence(raw, group, job.Batch.StartOffset)
-			}
-			raw, err := w.runStep("story", i+1, len(groups), fmt.Sprintf(groundedStoryPrompt, sourceUnitsText(group)), func(raw json.RawMessage) error { _, err := normalize(raw); return err }, false, normalize)
+			digest, err := w.readStoryGroup(group, i+1, len(groups), len(units))
 			if err != nil {
 				return err
 			}
-			return json.Unmarshal(raw, &stories[i])
+			stories[i] = digest
+			return nil
 		}})
 	}
 	if err = w.schedule(tasks); err != nil {
@@ -292,8 +274,11 @@ const groundedArtPrompt = `你是漫剧美术指导。只依据当前输入原�
 返回JSON：{"characters":[{"name":"简短名称","description":"有原文依据的身份与关系","appearanceDescription":"外貌依据","voiceDescription":"音色依据"}],"scenes":[{"name":"名称","description":"环境"}],"props":[{"name":"名称","description":"外观用途"}]}。
 创作格式（不提供剧情事实）：%s
 当前原文：%s`
-const groundedStoryPrompt = `你是原文事实整理员。按每个单元提取事件与关键因果，禁止引用其他单元或作品常识。返回JSON：{"units":[{"id":原单元编号,"event":"不超过200字摘要","facts":[{"claim":"不超过240字的具体事实","quote":"从当前单元逐字复制的连续原文，不超过300字"}]}]}。每单元1至6条关键证据，必须完整覆盖输入单元及顺序。标题单元也可引用标题，不能编造引文。引文保留原文字词及标点。
-原文单元：%s`
+const groundedStoryPrompt = `你是原文事实整理员。只依据当前输入单元提取事件与关键因果，禁止引用其他单元、作品常识或未来章节。
+每个原文句段已经由程序分配引用编号，例如U1S1。只返回编号，不抄写引文；程序会根据编号提取真实原文。一个事实由多处支持时在sourceIds中分别列出，不得把不连续原文拼接成一段引文。引用编号只能来自当前事实所属单元。
+返回严格JSON：{"units":[{"id":1,"event":"本单元不超过200字的摘要","facts":[{"claim":"不超过240字的具体事实","sourceIds":["U1S1"]}]}]}。
+id必须为原单元编号的整数；每单元1至6条关键事实，每条引用1至8个编号。完整覆盖输入单元，禁止遗漏、重复或新增单元；标题也可以作为事实依据。不要返回quote、原文位置或解释文字。
+编号原文：%s`
 const groundedContextPrompt = `只依据本批事件整理本批上下文，不沿用小说开头的概览，不推测未读章节。上下文供本批概览查阅，不能改变单集的事实范围。
 返回JSON：{"summary":"本批剧情概况","background":"本批可确认的背景","setting":"本批可确认的设定","continuity":"仅依据起点前原文说明承接；没有依据则明确未知"}。
 本批事件：%s
