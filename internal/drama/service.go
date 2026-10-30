@@ -79,6 +79,8 @@ type Repository interface {
 	GetBatch(context.Context, string, string, string, string) (Batch, error)
 	CreateBatch(context.Context, string, string, Batch) (Batch, error)
 	UpdateBatchRange(context.Context, string, string, string, string, BatchRangeChange) (Batch, error)
+	RenameBatch(context.Context, string, string, string, string, string) (Batch, error)
+	SaveGeneratedBatchName(context.Context, BatchAnalysisJob, string) error
 	QueueBatchAnalysis(context.Context, string, string, string, string, BatchRunOptions) (Batch, error)
 	SaveBatchResult(context.Context, string, string, string, string, int, BatchDraft) error
 	ListBatchSteps(context.Context, string, string, string, string) ([]BatchStep, error)

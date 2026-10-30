@@ -230,6 +230,16 @@ func TestDramaBatchEndpointsRequireSessionAndCSRF(t *testing.T) {
 	if got := call(http.MethodPost, base+"/batches", `{"mode":"beginning"}`, true, true); got.Code != http.StatusCreated {
 		t.Fatalf("创建批次失败: %d %s", got.Code, got.Body.String())
 	}
+	namePath := base + "/batches/3a364763-e0df-4cb4-9c55-88ab0a11ff94/name"
+	if got := call(http.MethodPatch, namePath, `{"name":"新名称"}`, false, false); got.Code != 401 {
+		t.Fatal("未登录不能改名")
+	}
+	if got := call(http.MethodPatch, namePath, `{"name":"新名称"}`, true, false); got.Code != 403 {
+		t.Fatal("改名必须验证CSRF")
+	}
+	if got := call(http.MethodPatch, namePath, `{"name":"新名称"}`, true, true); got.Code != 200 || !bytes.Contains(got.Body.Bytes(), []byte("新名称")) {
+		t.Fatal("批次名称接口未返回新名称")
+	}
 	if got := call(http.MethodPatch, base+"/batches/3a364763-e0df-4cb4-9c55-88ab0a11ff94/range", `{"startOffset":0,"endOffset":4,"revision":1}`, true, false); got.Code != http.StatusForbidden {
 		t.Fatalf("缺少 CSRF 仍可改批次: %d", got.Code)
 	}
@@ -338,4 +348,8 @@ func (s *dramaServiceStub) ResumeBatchAnalysis(context.Context, string, string, 
 }
 func (s *dramaServiceStub) BatchEvents(context.Context, string, string, string, string, int64) (drama.BatchEventPage, error) {
 	return drama.BatchEventPage{Status: "failed", Events: []drama.BatchEvent{{ID: 1, Stage: "review", Kind: "failed", Message: "审校失败"}}}, nil
+}
+
+func (s *dramaServiceStub) RenameBatch(_ context.Context, _, _, project, batch, name string) (drama.Batch, error) {
+	return drama.Batch{ID: batch, ProjectID: project, Name: name, NameManuallyEdited: true}, nil
 }

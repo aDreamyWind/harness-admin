@@ -52,9 +52,9 @@ func (r *DramaRepository) SaveSettings(ctx context.Context, item drama.Settings)
 
 const dramaColumns = `id, organization_id, owner_id, title, source_name, source_text, source_length, source_mode,
  style, aspect_ratio, model_code, status, phase, error_message, protagonist, genre, synopsis, background, setting,
- COALESCE((SELECT jsonb_agg(jsonb_build_object('name', a.name, 'description', a.description, 'appearanceDescription', a.appearance_description, 'voiceDescription', a.voice_description) ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='character'), '[]'::jsonb),
- COALESCE((SELECT jsonb_agg(jsonb_build_object('name', a.name, 'description', a.description) ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='scene'), '[]'::jsonb),
- COALESCE((SELECT jsonb_agg(jsonb_build_object('name', a.name, 'description', a.description) ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='prop'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(` + dramaAssetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='character'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(` + dramaAssetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='scene'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(` + dramaAssetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='prop'), '[]'::jsonb),
  COALESCE((SELECT jsonb_agg(jsonb_build_object('title', e.title, 'synopsis', e.synopsis) ORDER BY b.batch_number NULLS FIRST, e.number, e.created_at) FROM drama_script_episodes e LEFT JOIN drama_batches b ON b.id=e.batch_id WHERE e.project_id=drama_projects.id), '[]'::jsonb),
  created_at, updated_at`
 

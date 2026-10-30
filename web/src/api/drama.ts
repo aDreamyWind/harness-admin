@@ -7,7 +7,8 @@ export interface DramaSettings {
   videoModelCode: string
   updatedAt?: string
 }
-export interface DramaAsset { name: string; description: string; appearanceDescription?: string; voiceDescription?: string }
+export interface DramaBatchReference { id: string; name: string; number: number }
+export interface DramaAsset { id?: string; name: string; description: string; appearanceDescription?: string; voiceDescription?: string; sourceBatch?: DramaBatchReference | null; usedInBatches?: DramaBatchReference[] }
 export interface DramaEpisode { title: string; synopsis: string }
 export interface DramaOverview {
   videoStyle?: string
@@ -83,6 +84,8 @@ export interface DramaBatchSelection {
 }
 export interface DramaBatchSuggestion { startOffset: number; endOffset: number; boundary: 'episode' | 'chapter' | 'paragraph' | 'limit' | 'end' }
 export interface DramaBatch {
+  name: string
+  nameManuallyEdited: boolean
   id: string
   projectId: string
   number: number
@@ -112,12 +115,15 @@ export const suggestDramaBatch = (id: string, input: Omit<DramaBatchSelection, '
 export const createDramaBatch = (id: string, input: DramaBatchSelection) => request<DramaBatch>(`/api/v1/ai-drama/projects/${id}/batches`, {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })
+export const renameDramaBatch = (id: string, batchId: string, name: string) => request<DramaBatch>(`/api/v1/ai-drama/projects/${id}/batches/${batchId}/name`, {
+  method: 'PATCH', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ name }),
+})
 export const updateDramaBatchRange = (id: string, batchId: string, input: DramaBatchRangeChange) => request<DramaBatch>(`/api/v1/ai-drama/projects/${id}/batches/${batchId}/range`, {
   method: 'PATCH', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })
 
 export type DramaAssetKind = 'character' | 'scene' | 'prop'
-export interface DramaCatalogAsset { id: string; kind: DramaAssetKind; name: string; description: string; appearanceDescription: string; voiceDescription: string }
+export interface DramaCatalogAsset extends DramaAsset { id: string; kind: DramaAssetKind; name: string; description: string; appearanceDescription: string; voiceDescription: string }
 // id 为本集关联记录标识，assetId 为项目资产目录中的真实主键。
 export interface DramaEpisodeAsset extends DramaCatalogAsset { assetId: string; stateLabel: string }
 export interface DramaScriptEpisode {
@@ -130,7 +136,7 @@ export interface DramaBatchResult {
   episodes: DramaScriptEpisode[]
 }
 export interface DramaBatchStep {
-  stage: 'art' | 'story' | 'plan' | 'director' | 'review'
+  stage: 'art' | 'story' | 'plan' | 'name' | 'director' | 'review'
   chunkNumber: number
   chunkTotal: number
   status: 'running' | 'completed' | 'failed'

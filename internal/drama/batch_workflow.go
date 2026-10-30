@@ -60,7 +60,7 @@ type batchWorkflow struct {
 	slowThreshold time.Duration
 }
 
-var stageLabels = map[string]string{"art": "美术指导", "story": "剧情整理", "plan": "分集规划", "director": "导演", "review": "剧本审校"}
+var stageLabels = map[string]string{"art": "美术指导", "story": "剧情整理", "plan": "分集规划", "name": "批次命名", "director": "导演", "review": "剧本审校"}
 
 type BatchEventPage struct {
 	Events []BatchEvent
@@ -378,6 +378,9 @@ func (s *Service) analyzeWorkflow(job BatchAnalysisJob) error {
 	if err = json.Unmarshal(raw, &plan); err != nil {
 		return s.failBatch(job, err)
 	}
+	if err = w.nameBatch(string(raw)); err != nil {
+		return s.failBatch(job, err)
+	}
 	catalog, _ := json.Marshal(assets)
 	result := assets
 	result.Episodes = []EpisodeDraft{}
@@ -677,3 +680,36 @@ const reviewWorkflowPrompt = `你是剧本审校。逐项核对剧本与本集�
 上一集梗概：%s
 本集原文：%s
 待审剧本：%s`
+
+func (w *batchWorkflow) nameBatch(material string) error {
+	if w.job.Batch.NameManuallyEdited {
+		return nil
+	}
+	var result struct {
+		Name string `json:"name"`
+	}
+	_, err := w.runStep("name", 1, 1, fmt.Sprintf(`你是漫剧编辑。请根据下方当前批次的全部分集规划，给这一批剧情起一个简短、具体的中文名称。突出本批核心事件或剧情弧，不用作品总名，不写“第N批”，不添加说明、引号或 Markdown，建议4至12个汉字，不得超过80字符。只返回 JSON：{"name":"批次名称"}。
+作品：%s
+本批分集规划：%s`, w.job.ProjectTitle, material), func(raw json.RawMessage) error {
+		result.Name = ""
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return err
+		}
+		result.Name = strings.TrimSpace(result.Name)
+		if result.Name == "" || utf8.RuneCountInString(result.Name) > 80 {
+			return errors.New("批次名称不能为空，且不得超过80字符")
+		}
+		return nil
+	}, false)
+	if err != nil {
+		return err
+	}
+	if err = w.service.repository.SaveGeneratedBatchName(w.ctx, w.job, result.Name); err != nil {
+		return err
+	}
+	current, err := w.service.repository.GetBatch(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.Batch.ProjectID, w.job.Batch.ID)
+	if err != nil {
+		return err
+	}
+	return w.emit("name", 1, "named", "当前批次名称："+current.Name)
+}

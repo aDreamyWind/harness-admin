@@ -19,21 +19,23 @@ var ErrBatchNotReady = errors.New("请先完成剧本概览解析")
 var ErrBatchConflict = errors.New("批次已被修改，请刷新后重试")
 
 type Batch struct {
-	AnalysisContext  string    `json:"-"`
-	ID               string    `json:"id"`
-	ProjectID        string    `json:"projectId"`
-	Number           int       `json:"number"`
-	StartOffset      int       `json:"startOffset"`
-	EndOffset        int       `json:"endOffset"`
-	SelectionMode    string    `json:"selectionMode"`
-	PreviousBatchID  string    `json:"previousBatchId,omitempty"`
-	Boundary         string    `json:"boundary"`
-	Status           string    `json:"status"`
-	ErrorMessage     string    `json:"errorMessage,omitempty"`
-	Revision         int       `json:"revision"`
-	AnalysisRevision int       `json:"analysisRevision"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	Name               string    `json:"name"`
+	NameManuallyEdited bool      `json:"nameManuallyEdited"`
+	AnalysisContext    string    `json:"-"`
+	ID                 string    `json:"id"`
+	ProjectID          string    `json:"projectId"`
+	Number             int       `json:"number"`
+	StartOffset        int       `json:"startOffset"`
+	EndOffset          int       `json:"endOffset"`
+	SelectionMode      string    `json:"selectionMode"`
+	PreviousBatchID    string    `json:"previousBatchId,omitempty"`
+	Boundary           string    `json:"boundary"`
+	Status             string    `json:"status"`
+	ErrorMessage       string    `json:"errorMessage,omitempty"`
+	Revision           int       `json:"revision"`
+	AnalysisRevision   int       `json:"analysisRevision"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 type SourceRange struct {
@@ -221,4 +223,17 @@ func (s *Service) UpdateBatchRange(ctx context.Context, organizationID, ownerID,
 		return Batch{}, ErrInvalidInput
 	}
 	return s.repository.UpdateBatchRange(ctx, organizationID, ownerID, projectID, batchID, input)
+}
+
+func (s *Service) RenameBatch(ctx context.Context, org, owner, project, batch, name string) (Batch, error) {
+	for _, id := range []string{project, batch} {
+		if _, err := uuid.Parse(id); err != nil {
+			return Batch{}, ErrInvalidInput
+		}
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > 80 {
+		return Batch{}, ErrInvalidInput
+	}
+	return s.repository.RenameBatch(ctx, org, owner, project, batch, name)
 }

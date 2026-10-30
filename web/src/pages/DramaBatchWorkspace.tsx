@@ -1,10 +1,10 @@
 import { ArrowLeftOutlined, ExclamationCircleFilled, FileSearchOutlined, PlusOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Empty, Modal, Select, Tag, Tooltip, message } from 'antd'
+import { Alert, Button, Card, Empty, Input, Modal, Select, Tag, Tooltip, message } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import {
-  createDramaBatch, listDramaBatches, suggestDramaBatch, updateDramaBatchRange, analyzeDramaBatch, resumeDramaBatch, getDramaBatchResult, getDramaBatchProgress, listDramaAssets, addDramaEpisodeAsset, removeDramaEpisodeAsset,
+  createDramaBatch, listDramaBatches, suggestDramaBatch, updateDramaBatchRange, renameDramaBatch, analyzeDramaBatch, resumeDramaBatch, getDramaBatchResult, getDramaBatchProgress, listDramaAssets, addDramaEpisodeAsset, removeDramaEpisodeAsset,
   type DramaBatch, type DramaBatchMode, type DramaProject, type DramaBatchResult, type DramaBatchProgress, type DramaBatchEvent, type DramaAssetKind, type DramaCatalogAsset,
 } from '../api/drama'
 import { DramaSourceReader } from './DramaSourceReader'
@@ -19,7 +19,7 @@ const boundaryNames: Record<DramaBatch['boundary'], string> = {
   episode: '完整分集', chapter: '章节结尾', paragraph: '段落结尾', limit: '10 万字上限', end: '原文末尾', manual: '手动标记',
 }
 const statusNames: Record<DramaBatch['status'], string> = { pending: '待解析', running: '解析中', failed: '解析失败', stale: '范围需核对', ready: '已解析' }
-const stageNames: Record<string, string> = { art: '美术指导', story: '剧情整理', plan: '分集规划', director: '导演', review: '剧本审校' }
+const stageNames: Record<string, string> = { art: '美术指导', story: '剧情整理', plan: '分集规划', name: '批次命名', director: '导演', review: '剧本审校' }
 const assetSections = [{ key: 'character', field: 'characters', title: '角色' }, { key: 'scene', field: 'scenes', title: '场景' }, { key: 'prop', field: 'props', title: '道具' }] as const
 
 export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props) {
@@ -28,6 +28,11 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
   const [result, setResult] = useState<DramaBatchResult | null>(null)
   const [progress, setProgress] = useState<DramaBatchProgress | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const [nameSaving, setNameSaving] = useState(false)
+  const renameInFlight = useRef(false)
+  const cancelledRename = useRef(false)
   const [events, setEvents] = useState<DramaBatchEvent[]>([])
   const [liveScript, setLiveScript] = useState('')
   const [streamHint, setStreamHint] = useState('')
@@ -56,6 +61,26 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
   const pickerField = assetSections.find((item) => item.key === assetPicker?.kind)?.field
   const pickerEpisode = result?.episodes.find((item) => item.id === assetPicker?.episodeId)
   const linkedAssetIds = new Set(pickerField && pickerEpisode ? pickerEpisode[pickerField].map((asset) => asset.assetId) : [])
+  useEffect(() => { setEditingName(false) }, [selectedId])
+  function beginRename() {
+    if (!selected || nameSaving) return
+    cancelledRename.current = false
+    setNameDraft(selected.name || '未命名批次')
+    setEditingName(true)
+  }
+  async function saveBatchName() {
+    if (!selected || !editingName || cancelledRename.current || renameInFlight.current) return
+    const name = nameDraft.trim()
+    if (!name) { messageApi.warning('批次名称不能为空'); setEditingName(false); return }
+    if (name === selected.name) { setEditingName(false); return }
+    renameInFlight.current = true; setNameSaving(true)
+    try {
+      const updated = await renameDramaBatch(project.id, selected.id, name)
+      onBatchesChange(batches.map((item) => item.id === updated.id ? updated : item))
+      setEditingName(false); messageApi.success('批次名称已更新')
+    } catch (error) { messageApi.error(error instanceof Error ? error.message : '修改批次名称失败') }
+    finally { renameInFlight.current = false; setNameSaving(false) }
+  }
   function selectBatch(value: string | null) {
     setSearchParams((current) => {
       const next = new URLSearchParams(current)
@@ -254,13 +279,12 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
       <div className="drama-section-head drama-batches-head"><div><h2>剧本分集</h2><p>按原文范围建立批次，确认每一批的开头和结尾。</p></div><Tooltip title={project.status !== 'ready' ? '请先完成剧本概览解析' : ''}><span><Button type="primary" icon={<PlusOutlined />} disabled={project.status !== 'ready'} onClick={() => { setMode('beginning'); setPreviousBatchId(undefined); setChoiceOpen(true) }}>新建批次</Button></span></Tooltip></div>
       {batches.length === 0 ? <div className="drama-empty"><Empty description="还没有批次，点击右上角新建批次" /></div> : <div className="drama-batch-grid">{batches.map((batch) => <button type="button" key={batch.id} className="drama-batch-card" onClick={() => selectBatch(batch.id)}>
         <div><span>第 {batch.number} 批</span><Tag color={batch.status === 'stale' ? 'warning' : batch.status === 'ready' ? 'success' : batch.status === 'failed' ? 'error' : batch.status === 'running' ? 'processing' : 'default'}>{statusNames[batch.status]}</Tag></div>
-        <strong>{(batch.endOffset - batch.startOffset).toLocaleString()} 字符</strong>
-        <p>原文 {(batch.startOffset + 1).toLocaleString()}—{batch.endOffset.toLocaleString()} 字符</p>
-        <small>终点：{boundaryNames[batch.boundary]}</small>
+        <strong>{batch.name || '未命名批次'}</strong>
+        <p>{(batch.endOffset - batch.startOffset).toLocaleString()} 字符</p>
       </button>)}</div>}
     </> : <>
       <div className="drama-batch-detail-head"><Button type="text" icon={<ArrowLeftOutlined />} onClick={() => selectBatch(null)}>返回批次</Button><Tag color={selected.status === 'stale' ? 'warning' : selected.status === 'ready' ? 'success' : selected.status === 'failed' ? 'error' : selected.status === 'running' ? 'processing' : 'default'}>{statusNames[selected.status]}</Tag></div>
-      <div className="drama-batch-detail-title"><div><h2>第 {selected.number} 批</h2><p>原文 {(selected.startOffset + 1).toLocaleString()}—{selected.endOffset.toLocaleString()} 字符 · 共 {(selected.endOffset - selected.startOffset).toLocaleString()} 字符 · {boundaryNames[selected.boundary]}</p></div><div className="drama-batch-detail-actions"><Button icon={<FileSearchOutlined />} onClick={() => openExistingReader(selected)}>查看在剧本中的位置</Button><Button type="primary" loading={analyzing || selected.status === 'running'} disabled={selected.status === 'running' || project.status !== 'ready'} onClick={() => void startAnalysis()}>{selected.status === 'running' ? '解析中' : selected.analysisRevision > 0 || selected.status === 'ready' ? '重新解析' : 'AI解析'}</Button></div></div>
+      <div className="drama-batch-detail-title"><div>{editingName ? <Input className="drama-batch-name-input" aria-label="批次名称" autoFocus maxLength={80} disabled={nameSaving} value={nameDraft} onFocus={(event) => event.target.select()} onChange={(event) => setNameDraft(event.target.value)} onPressEnter={() => void saveBatchName()} onBlur={() => void saveBatchName()} onKeyDown={(event) => { if (event.key === 'Escape') { cancelledRename.current = true; setEditingName(false) } }} /> : <h2 className="drama-batch-name" title="双击修改批次名称" tabIndex={0} role="button" aria-label={`批次名称：${selected.name || '未命名批次'}，双击修改`} onDoubleClick={beginRename} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); beginRename() } }}>{selected.name || '未命名批次'}</h2>}<p>原文 {(selected.startOffset + 1).toLocaleString()}—{selected.endOffset.toLocaleString()} 字符 · 共 {(selected.endOffset - selected.startOffset).toLocaleString()} 字符 · {boundaryNames[selected.boundary]}</p></div><div className="drama-batch-detail-actions"><Button icon={<FileSearchOutlined />} onClick={() => openExistingReader(selected)}>查看在剧本中的位置</Button><Button type="primary" loading={analyzing || selected.status === 'running'} disabled={selected.status === 'running' || project.status !== 'ready'} onClick={() => void startAnalysis()}>{selected.status === 'running' ? '解析中' : selected.analysisRevision > 0 || selected.status === 'ready' ? '重新解析' : 'AI解析'}</Button></div></div>
       {selected.status === 'stale' && <Alert type="warning" showIcon message="上游批次范围已调整，请核对本批次起止位置" />}
       {selected.status === 'failed' && <Alert type="error" showIcon message="本批解析失败" description={selected.errorMessage?.includes('文本模型响应超时') ? '模型响应超时，已完成的阶段成果已保留。可从失败步骤继续。' : selected.errorMessage || '请重试'} />}
       {selected.status === 'running' && <Alert type="info" showIcon message="正在逐段解析本批原文，已完成的阶段成果会显示在下方" />}
@@ -273,10 +297,10 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
       {progress && progress.steps.length > 0 && <Card className="drama-batch-progress" aria-live="polite">
         <h3>解析进度</h3>
         <div className="drama-batch-progress-counts">
-          {Object.entries(stageNames).filter(([stage]) => progress.steps.some((step) => step.stage === stage)).map(([stage, name]) => <span key={stage}>{name} {progress.steps.filter((step) => step.stage === stage && step.status === 'completed').length}/{progress.steps.find((step) => step.stage === stage)?.chunkTotal} {stage === 'director' || stage === 'review' ? '集' : stage === 'plan' ? '项' : '段'}</span>)}
+          {Object.entries(stageNames).filter(([stage]) => progress.steps.some((step) => step.stage === stage)).map(([stage, name]) => <span key={stage}>{name} {progress.steps.filter((step) => step.stage === stage && step.status === 'completed').length}/{progress.steps.find((step) => step.stage === stage)?.chunkTotal} {stage === 'director' || stage === 'review' ? '集' : stage === 'plan' || stage === 'name' ? '项' : '段'}</span>)}
         </div>
         <ol className="drama-batch-step-list">{progress.steps.map((step) => <li key={`${step.stage}-${step.chunkNumber}`} className={step.status}>
-          <span>{stageNames[step.stage]} · 第 {step.chunkNumber}/{step.chunkTotal} {step.stage === 'director' || step.stage === 'review' ? '集' : step.stage === 'plan' ? '项' : '段'}</span>
+          <span>{stageNames[step.stage]} · 第 {step.chunkNumber}/{step.chunkTotal} {step.stage === 'director' || step.stage === 'review' ? '集' : step.stage === 'plan' || step.stage === 'name' ? '项' : '段'}</span>
           <strong>{step.status === 'completed' ? '已完成' : step.status === 'failed' ? '需重试' : '进行中'}</strong>
           {step.status === 'completed' && <small>{Math.round(step.durationMs / 1000)} 秒</small>}
           {step.status === 'running' && <small>已用 {Math.max(0, Math.round((now - new Date(step.startedAt).getTime()) / 1000))} 秒</small>}

@@ -28,6 +28,7 @@ type DramaService interface {
 	SourcePage(context.Context, string, string, string, int, int) (drama.SourceRange, error)
 	ListBatches(context.Context, string, string, string) ([]drama.Batch, error)
 	SuggestBatch(context.Context, string, string, string, drama.BatchSelection) (drama.BatchSuggestion, error)
+	RenameBatch(context.Context, string, string, string, string, string) (drama.Batch, error)
 	CreateBatch(context.Context, string, string, string, drama.BatchSelection) (drama.Batch, error)
 	UpdateBatchRange(context.Context, string, string, string, string, drama.BatchRangeChange) (drama.Batch, error)
 	StartBatchAnalysis(context.Context, string, string, string, string) (drama.BatchAnalysisJob, error)
@@ -214,6 +215,22 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 			return
 		}
 		httpx.OK(ctx, http.StatusCreated, item)
+	})
+	group.PATCH("/projects/:id/batches/:batchId/name", requireCSRF(deps), func(ctx *gin.Context) {
+		var input struct {
+			Name string `json:"name"`
+		}
+		if err := ctx.ShouldBindJSON(&input); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "请填写有效的批次名称")
+			return
+		}
+		session := currentSession(ctx)
+		item, err := deps.Drama.RenameBatch(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), ctx.Param("batchId"), input.Name)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, item)
 	})
 	group.PATCH("/projects/:id/batches/:batchId/range", requireCSRF(deps), func(ctx *gin.Context) {
 		var input drama.BatchRangeChange

@@ -14,7 +14,7 @@ func (r *DramaRepository) ListBatchSteps(ctx context.Context, org, owner, projec
 	rows, err := r.db.Query(ctx, `SELECT s.stage,s.chunk_number,s.chunk_total,s.status,s.result_text,s.error_message,s.duration_ms,s.updated_at,s.started_at
       FROM drama_batch_steps s JOIN drama_batches b ON b.id=s.batch_id
       WHERE s.batch_id=$1 AND s.analysis_revision=b.analysis_revision
-      ORDER BY CASE s.stage WHEN 'art' THEN 0 WHEN 'story' THEN 1 WHEN 'plan' THEN 2 ELSE 3 END,s.chunk_number,CASE s.stage WHEN 'director' THEN 0 ELSE 1 END`, batch)
+      ORDER BY CASE s.stage WHEN 'art' THEN 0 WHEN 'story' THEN 1 WHEN 'plan' THEN 2 WHEN 'name' THEN 3 ELSE 4 END,s.chunk_number,CASE s.stage WHEN 'director' THEN 0 ELSE 1 END`, batch)
 	if err != nil {
 		return nil, fmt.Errorf("读取剧本解析步骤失败: %w", err)
 	}

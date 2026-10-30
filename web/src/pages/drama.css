@@ -190,3 +190,15 @@
 .drama-asset-picker-item > span { flex: 1; min-width: 0; }
 .drama-asset-linked-label { flex: none; color: #7f8c9e; font-size: 12px; }
 .drama-asset-tooltip-state { white-space: pre-wrap; }
+
+.drama-batch-name { display: inline-block; max-width: 100%; cursor: text; overflow-wrap: anywhere; }
+.drama-batch-name:hover { text-decoration: underline; text-decoration-style: dotted; text-decoration-color: #a8b5cd; text-underline-offset: 6px; }
+.drama-batch-name:focus-visible { outline: 2px solid #315fbd; outline-offset: 4px; border-radius: 4px; }
+.drama-batch-name-input { width: min(520px, 65vw); margin-bottom: 7px; font-size: 22px; font-weight: 600; }
+.drama-batch-card strong { overflow-wrap: anywhere; }
+.drama-asset-batch-tags { display: grid; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #edf0f5; }
+.drama-asset-batch-tags > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px; }
+.drama-asset-batch-tags > div > span:first-child { flex: 0 0 30px; color: #8290a4; font-size: 12px; }
+.drama-asset-batch-tags small { color: #a0a9b8; font-size: 12px; }
+.drama-asset-batch-tags .ant-tag { margin: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.drama-asset-batch-tags a { color: inherit; }

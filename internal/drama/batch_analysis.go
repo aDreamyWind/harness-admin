@@ -16,13 +16,21 @@ const BatchAnalysisChunkLimit = 5000
 
 var ErrBatchRunning = errors.New("当前批次正在解析")
 
+type BatchReference struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Number int    `json:"number"`
+}
+
 type Asset struct {
-	ID                    string `json:"id"`
-	Kind                  string `json:"kind"`
-	Name                  string `json:"name"`
-	Description           string `json:"description"`
-	AppearanceDescription string `json:"appearanceDescription"`
-	VoiceDescription      string `json:"voiceDescription"`
+	SourceBatch           *BatchReference  `json:"sourceBatch"`
+	UsedInBatches         []BatchReference `json:"usedInBatches"`
+	ID                    string           `json:"id"`
+	Kind                  string           `json:"kind"`
+	Name                  string           `json:"name"`
+	Description           string           `json:"description"`
+	AppearanceDescription string           `json:"appearanceDescription"`
+	VoiceDescription      string           `json:"voiceDescription"`
 }
 
 type EpisodeAsset struct {
@@ -370,7 +378,7 @@ func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, pr
 						continue
 					}
 					seen[key] = true
-					asset := Asset{Kind: group.kind, Name: item.Name, Description: item.Description, AppearanceDescription: item.AppearanceDescription, VoiceDescription: item.VoiceDescription}
+					asset := Asset{UsedInBatches: []BatchReference{}, Kind: group.kind, Name: item.Name, Description: item.Description, AppearanceDescription: item.AppearanceDescription, VoiceDescription: item.VoiceDescription}
 					switch group.kind {
 					case "character":
 						progress.Assets.Characters = append(progress.Assets.Characters, asset)

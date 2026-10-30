@@ -12,13 +12,13 @@ import (
 )
 
 const dramaBatchColumns = `b.id, b.project_id, b.batch_number, b.start_offset, b.end_offset,
- b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at, b.analysis_context`
+ b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at, b.analysis_context,b.name,b.name_manually_edited`
 
 func scanDramaBatch(row pgx.Row) (drama.Batch, error) {
 	var item drama.Batch
 	var previous sql.NullString
 	err := row.Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-		&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.AnalysisContext)
+		&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.AnalysisContext, &item.Name, &item.NameManuallyEdited)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return drama.Batch{}, drama.ErrNotFound
 	}
@@ -115,10 +115,10 @@ func (r *DramaRepository) CreateBatch(ctx context.Context, organizationID, owner
 		(id, project_id, batch_number, start_offset, end_offset, selection_mode, previous_batch_id, boundary, status)
 		VALUES ($1, $2, (SELECT COALESCE(MAX(batch_number), 0) + 1 FROM drama_batches WHERE project_id=$2), $3, $4, $5, $6, $7, 'pending')
 		RETURNING id, project_id, batch_number, start_offset, end_offset, selection_mode,
-		previous_batch_id, boundary, status, error_message, revision, analysis_revision, created_at, updated_at`,
+		previous_batch_id, boundary, status, error_message, revision, analysis_revision, created_at, updated_at,name,name_manually_edited`,
 		item.ID, item.ProjectID, item.StartOffset, item.EndOffset, item.SelectionMode, previous, item.Boundary).
 		Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-			&item.SelectionMode, &previousID, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt)
+			&item.SelectionMode, &previousID, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.Name, &item.NameManuallyEdited)
 	if err != nil {
 		return drama.Batch{}, fmt.Errorf("创建剧本批次失败: %w", err)
 	}
@@ -144,10 +144,10 @@ func (r *DramaRepository) UpdateBatchRange(ctx context.Context, organizationID, 
 		FROM drama_projects p WHERE p.id=b.project_id AND p.organization_id=$1 AND p.owner_id=$2
 		AND p.id=$3 AND b.id=$4 AND b.revision=$7
 		RETURNING b.id, b.project_id, b.batch_number, b.start_offset, b.end_offset,
-		b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at`,
+		b.selection_mode, b.previous_batch_id, b.boundary, b.status, b.error_message, b.revision, b.analysis_revision, b.created_at, b.updated_at,b.name,b.name_manually_edited`,
 		organizationID, ownerID, projectID, batchID, change.StartOffset, change.EndOffset, change.Revision).
 		Scan(&item.ID, &item.ProjectID, &item.Number, &item.StartOffset, &item.EndOffset,
-			&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt)
+			&item.SelectionMode, &previous, &item.Boundary, &item.Status, &item.ErrorMessage, &item.Revision, &item.AnalysisRevision, &item.CreatedAt, &item.UpdatedAt, &item.Name, &item.NameManuallyEdited)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, lookupErr := r.GetBatch(ctx, organizationID, ownerID, projectID, batchID); lookupErr != nil {
 			return drama.Batch{}, lookupErr
@@ -173,4 +173,27 @@ func (r *DramaRepository) UpdateBatchRange(ctx context.Context, organizationID, 
 		return drama.Batch{}, fmt.Errorf("提交批次范围修改失败: %w", err)
 	}
 	return item, nil
+}
+
+func (r *DramaRepository) RenameBatch(ctx context.Context, org, owner, project, batch, name string) (drama.Batch, error) {
+	item, err := scanDramaBatch(r.db.QueryRow(ctx, `UPDATE drama_batches b SET name=$5,name_manually_edited=true,updated_at=NOW()
+ FROM drama_projects p WHERE p.id=b.project_id AND p.organization_id=$1 AND p.owner_id=$2 AND p.id=$3 AND b.id=$4
+ RETURNING `+dramaBatchColumns, org, owner, project, batch, name))
+	if err != nil && !errors.Is(err, drama.ErrNotFound) {
+		return drama.Batch{}, fmt.Errorf("修改批次名称失败: %w", err)
+	}
+	return item, err
+}
+func (r *DramaRepository) SaveGeneratedBatchName(ctx context.Context, job drama.BatchAnalysisJob, name string) error {
+	tag, err := r.db.Exec(ctx, `UPDATE drama_batches b SET name=CASE WHEN b.name_manually_edited THEN b.name ELSE $6 END,
+ updated_at=CASE WHEN b.name_manually_edited THEN b.updated_at ELSE NOW() END
+ FROM drama_projects p WHERE p.id=b.project_id AND p.organization_id=$1 AND p.owner_id=$2 AND p.id=$3 AND b.id=$4
+ AND b.status='running' AND b.revision=$5 AND b.analysis_revision=$5`, job.OrganizationID, job.OwnerID, job.Batch.ProjectID, job.Batch.ID, job.Batch.AnalysisRevision, name)
+	if err != nil {
+		return fmt.Errorf("保存 AI 批次名称失败: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return drama.ErrBatchConflict
+	}
+	return nil
 }

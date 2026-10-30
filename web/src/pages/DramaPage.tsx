@@ -4,7 +4,7 @@ import {
 } from '@ant-design/icons'
 import { Button, Card, Drawer, Empty, Input, Select, Skeleton, Tag, Typography, message } from 'antd'
 import { useEffect, useState, type ReactNode } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import {
   getDramaProject, getDramaSource, listDramaBatches, reanalyzeDramaOverview, retryDramaProject, updateDramaOverview,
@@ -96,6 +96,12 @@ export function DramaProjectPage() {
     return () => window.clearInterval(timer)
   }, [id, project])
 
+  useEffect(() => {
+    if (section !== 'assets') return
+    let active = true
+    void getDramaProject(id).then((item) => { if (active) setProject(item) }).catch((error) => { if (active) messageApi.error(error instanceof Error ? error.message : '刷新资产来源失败') })
+    return () => { active = false }
+  }, [id, section, messageApi])
   function beginEditing() {
     if (!project) return
     setDraft({ ...project.overview, videoStyle: project.overview?.videoStyle || project.style, aspectRatio: selectedAspectRatio(project) })
@@ -205,7 +211,10 @@ export function DramaProjectPage() {
           )}
         </div>
         <div role="tabpanel" aria-label={assetSection === 'characters' ? '角色' : assetSection === 'scenes' ? '场景' : '道具'}>
-          {assets.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，内容会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={`${item.name}-${index}`}><div className="drama-asset-icon">{assetSection === 'characters' ? <TeamOutlined /> : assetSection === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p>{assetSection === 'characters' && item.appearanceDescription && <p>外貌：{item.appearanceDescription}</p>}{assetSection === 'characters' && item.voiceDescription && <p>音色：{item.voiceDescription}</p>}</Card>)}</div>}
+          {assets.length === 0 ? <div className="drama-empty"><Empty description="剧本解析完成后，内容会出现在这里" /></div> : <div className="drama-asset-grid">{assets.map((item, index) => <Card key={item.id || `${item.name}-${index}`}><div className="drama-asset-icon">{assetSection === 'characters' ? <TeamOutlined /> : assetSection === 'scenes' ? <BgColorsOutlined /> : <SettingOutlined />}</div><Typography.Title level={4}>{item.name}</Typography.Title><p>{item.description || '暂无描述'}</p>{assetSection === 'characters' && item.appearanceDescription && <p>外貌：{item.appearanceDescription}</p>}{assetSection === 'characters' && item.voiceDescription && <p>音色：{item.voiceDescription}</p>}<div className="drama-asset-batch-tags">
+            <div><span>来源</span>{item.sourceBatch ? <Tag color="blue" title={`第 ${item.sourceBatch.number} 批`}><Link to={`/ai-apps/drama/projects/${project.id}?section=episodes&batch=${item.sourceBatch.id}`}>{item.sourceBatch.name}</Link></Tag> : <small>未记录来源</small>}</div>
+            <div><span>应用</span>{item.usedInBatches?.length ? item.usedInBatches.map((batch) => <Tag key={batch.id} title={`第 ${batch.number} 批`}><Link to={`/ai-apps/drama/projects/${project.id}?section=episodes&batch=${batch.id}`}>{batch.name}</Link></Tag>) : <small>暂无应用</small>}</div>
+          </div></Card>)}</div>}
         </div>
       </section> : <section>
         <div className="drama-section-head"><h2>{navItems.find((item) => item.key === section)?.label}</h2></div>

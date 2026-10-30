@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -175,5 +176,109 @@ func TestDramaBatchResultDatabaseRoundTrip(t *testing.T) {
 	steps, err = repo.ListBatchSteps(ctx, org, owner, id, batch.ID)
 	if err != nil || len(steps) != 2 || steps[0].Status != "completed" || batch.AnalysisContext == "" {
 		t.Fatalf("续跑丢失检查点或上下文：%v %+v", err, steps)
+	}
+}
+
+func TestDramaBatchNamesAndAssetProvenance(t *testing.T) {
+	url := os.Getenv("HARNESS_TEST_WRITE_DATABASE_URL")
+	if url == "" {
+		t.Skip("设置专用测试数据库后验证批次名称及来源")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	var org, owner string
+	if err = pool.QueryRow(ctx, `SELECT o.id,u.id FROM organizations o CROSS JOIN users u LIMIT 1`).Scan(&org, &owner); err != nil {
+		t.Skipf("无测试企业或用户: %v", err)
+	}
+	repo := NewDramaRepository(pool)
+	project := uuid.NewString()
+	_, err = repo.Create(ctx, drama.Project{ID: project, OrganizationID: org, OwnerID: owner, Title: "批次名称与资产来源测试", SourceText: "张三走入竹林", SourceLength: 6, SourceMode: "upload", Style: "国风", AspectRatio: "9:16", ModelCode: "writer", Status: "ready", Phase: "overview_done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM drama_projects WHERE id=$1`, project)
+	batch1, err := repo.CreateBatch(ctx, org, owner, drama.Batch{ID: uuid.NewString(), ProjectID: project, EndOffset: 6, SelectionMode: "beginning", Boundary: "end"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch2, err := repo.CreateBatch(ctx, org, owner, drama.Batch{ID: uuid.NewString(), ProjectID: project, EndOffset: 6, SelectionMode: "beginning", Boundary: "end"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := drama.BatchDraft{Characters: []drama.AssetDraft{{Name: "张三", Description: "主角"}}, Scenes: []drama.AssetDraft{{Name: "竹林", Description: "竹林"}}, Props: []drama.AssetDraft{{Name: "竹杖", Description: "竹制手杖"}}, Episodes: []drama.EpisodeDraft{{Title: "入林", Synopsis: "进入竹林", ScriptText: "【竹林 外 日】张三握住竹杖。", Characters: []drama.EpisodeAssetDraft{{Name: "张三"}}, Scenes: []drama.EpisodeAssetDraft{{Name: "竹林"}}, Props: []drama.EpisodeAssetDraft{{Name: "竹杖"}}}}}
+	batch1, err = repo.QueueBatchAnalysis(ctx, org, owner, project, batch1.ID, drama.BatchRunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := drama.BatchAnalysisJob{OrganizationID: org, OwnerID: owner, Batch: batch1}
+	if err = repo.SaveGeneratedBatchName(ctx, job, "AI生成名称"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.GetBatch(ctx, org, owner, project, batch1.ID)
+	if err != nil || current.Name != "AI生成名称" || current.NameManuallyEdited {
+		t.Fatalf("AI命名未保存：%v %+v", err, current)
+	}
+	batch1, err = repo.RenameBatch(ctx, org, owner, project, batch1.ID, "雨夜来信")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.SaveGeneratedBatchName(ctx, job, "自动覆盖名称"); err != nil {
+		t.Fatal(err)
+	}
+	current, err = repo.GetBatch(ctx, org, owner, project, batch1.ID)
+	if err != nil || current.Name != "雨夜来信" || !current.NameManuallyEdited {
+		t.Fatal("AI不得覆盖手动改名")
+	}
+	if err = repo.SaveBatchResult(ctx, org, owner, project, batch1.ID, batch1.AnalysisRevision, draft); err != nil {
+		t.Fatal(err)
+	}
+	batch2, err = repo.QueueBatchAnalysis(ctx, org, owner, project, batch2.ID, drama.BatchRunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.RenameBatch(ctx, org, owner, project, batch2.ID, "重返竹林"); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.SaveBatchResult(ctx, org, owner, project, batch2.ID, batch2.AnalysisRevision, draft); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.RenameBatch(ctx, org, owner, project, batch1.ID, "改名后的起点"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := repo.Get(ctx, org, owner, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range [][]byte{p.Characters, p.Scenes, p.Props} {
+		var assets []drama.Asset
+		if err = json.Unmarshal(raw, &assets); err != nil {
+			t.Fatal(err)
+		}
+		if len(assets) != 1 || assets[0].SourceBatch == nil || assets[0].SourceBatch.ID != batch1.ID || assets[0].SourceBatch.Name != "改名后的起点" || len(assets[0].UsedInBatches) != 2 || assets[0].UsedInBatches[0].Name != "改名后的起点" || assets[0].UsedInBatches[1].Name != "重返竹林" {
+			t.Fatalf("来源或应用未按ID关联最新批次名称：%+v", assets)
+		}
+	}
+	assets, err := repo.ListProjectAssets(ctx, org, owner, project, "prop", "")
+	if err != nil || len(assets) != 1 || len(assets[0].UsedInBatches) != 2 {
+		t.Fatal("目录查询应返回相同来源与应用")
+	}
+	result, err := repo.GetBatchResult(ctx, org, owner, project, batch2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.RemoveEpisodeAsset(ctx, org, owner, project, result.Episodes[0].ID, result.Episodes[0].Props[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	assets, err = repo.ListProjectAssets(ctx, org, owner, project, "prop", "")
+	if err != nil || len(assets[0].UsedInBatches) != 1 || assets[0].SourceBatch.ID != batch1.ID {
+		t.Fatal("应用应随实际引用变化，来源应保留")
+	}
+	if _, err = repo.RenameBatch(ctx, org, uuid.NewString(), project, batch1.ID, "越权名称"); !errors.Is(err, drama.ErrNotFound) {
+		t.Fatal("不可修改其他用户批次")
 	}
 }

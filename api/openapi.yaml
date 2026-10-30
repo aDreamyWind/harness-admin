@@ -234,6 +234,26 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 概览尚未完成。 }
+  /ai-drama/projects/{id}/batches/{batchId}/name:
+    patch:
+      summary: 修改批次名称并保护手动名称
+      operationId: renameDramaBatch
+      description: 名称与批次编号、原文范围独立。手动修改后，后续 AI 命名不会覆盖；资产来源和应用标签按批次ID读取最新名称。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 80 } } } } }
+      responses:
+        '200':
+          description: 已更新的批次。
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DramaBatch' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/batches/{batchId}/range:
     patch:
       summary: 修改批次的原文范围
@@ -3219,11 +3239,22 @@ components:
         synopsis: { type: string }
         background: { type: string }
         setting: { type: string }
+    DramaBatchReference:
+      type: object
+      required: [id, name, number]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, description: 当前批次名称，通过主键实时读取。 }
+        number: { type: integer, minimum: 1, description: 固定递增的批次编号。 }
     DramaAsset:
       type: object
       properties:
         name: { type: string }
         description: { type: string }
+        sourceBatch:
+          description: 首次提取该资产的批次，无法追溯时为空。
+          anyOf: [{ $ref: '#/components/schemas/DramaBatchReference' }, { type: 'null' }]
+        usedInBatches: { type: array, items: { $ref: '#/components/schemas/DramaBatchReference' }, description: 实际在剧集内引用该资产的批次，按ID去重。 }
         appearanceDescription: { type: string, description: 角色外貌与服饰描述。 }
         voiceDescription: { type: string, description: 角色音色与说话特征描述。 }
     DramaEpisode:
@@ -3247,6 +3278,10 @@ components:
         kind: { type: string, enum: [character, scene, prop] }
         name: { type: string }
         description: { type: string }
+        sourceBatch:
+          description: 首次提取该资产的批次，无法追溯时为空。
+          anyOf: [{ $ref: '#/components/schemas/DramaBatchReference' }, { type: 'null' }]
+        usedInBatches: { type: array, items: { $ref: '#/components/schemas/DramaBatchReference' }, description: 实际在剧集内引用该资产的批次，按ID去重。 }
         appearanceDescription: { type: string, description: 角色外貌与服饰描述，非角色为空字符串。 }
         voiceDescription: { type: string, description: 角色音色与说话特征描述，非角色为空字符串。 }
     DramaEpisodeAsset:
@@ -3286,14 +3321,14 @@ components:
         id: { type: integer, minimum: 1 }
         stage: { type: string }
         stepNumber: { type: integer, minimum: 0 }
-        kind: { type: string, enum: [started, receiving, delta, completed, assets, repair, retry, schedule, failed] }
+        kind: { type: string, enum: [started, receiving, delta, completed, assets, repair, retry, schedule, named, failed] }
         message: { type: string }
         createdAt: { type: string, format: date-time }
     DramaBatchStep:
       type: object
       required: [stage, chunkNumber, chunkTotal, status, durationMs, startedAt, updatedAt]
       properties:
-        stage: { type: string, enum: [art, story, plan, director, review] }
+        stage: { type: string, enum: [art, story, plan, name, director, review] }
         chunkNumber: { type: integer, minimum: 1 }
         chunkTotal: { type: integer, minimum: 1 }
         status: { type: string, enum: [running, completed, failed] }
@@ -3360,10 +3395,12 @@ components:
         revision: { type: integer, minimum: 1 }
     DramaBatch:
       type: object
-      required: [id, projectId, number, startOffset, endOffset, selectionMode, boundary, status, revision, createdAt, updatedAt]
+      required: [id, projectId, name, nameManuallyEdited, number, startOffset, endOffset, selectionMode, boundary, status, revision, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         projectId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        nameManuallyEdited: { type: boolean, description: 手动命名后 AI 不覆盖。 }
         number: { type: integer, minimum: 1 }
         startOffset: { type: integer, minimum: 0 }
         endOffset: { type: integer, minimum: 1 }

@@ -19,6 +19,7 @@ func workflowFixture(source string) (*fakeRepository, *fakeWriter, *Service) {
 
 const workflowArt = `{"characters":[],"scenes":[],"props":[]}`
 const workflowStory = `{"units":[{"id":1,"event":"甲走入屋中"},{"id":2,"event":"甲发现信件"}]}`
+const workflowName = `{"name":"雨夜来信"}`
 const workflowPlan = `{"episodes":[{"title":"入屋","synopsis":"甲走入屋中","hook":"发现声响","startUnit":1,"endUnit":1},{"title":"信件","synopsis":"甲发现信件","hook":"发现秘密","startUnit":2,"endUnit":2}]}`
 const workflowFirst = `{"episodes":[{"title":"入屋","synopsis":"甲走入屋中","scriptText":"【屋内 日】甲推开门。","characters":[],"scenes":[],"props":[]}]}`
 const workflowSecond = `{"episodes":[{"title":"信件","synopsis":"甲发现信件","scriptText":"【屋内 日】甲打开信件。","characters":[],"scenes":[],"props":[]}]}`
@@ -27,8 +28,8 @@ const workflowPassed = `{"passed":true,"issues":[]}`
 func TestWorkflowPlansWholeBatchBeforeWritingAndResumesFailedEpisode(t *testing.T) {
 	repo, writer, service := workflowFixture(strings.Repeat("甲", 1100))
 	id := repo.project.ID
-	writer.replies = []string{workflowArt, workflowStory, workflowPlan, workflowFirst, workflowPassed}
-	writer.errors = []error{nil, nil, nil, nil, nil, errors.New("临时供应商故障")}
+	writer.replies = []string{workflowArt, workflowStory, workflowPlan, workflowName, workflowFirst, workflowPassed}
+	writer.errors = []error{nil, nil, nil, nil, nil, nil, errors.New("临时供应商故障")}
 	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +41,7 @@ func TestWorkflowPlansWholeBatchBeforeWritingAndResumesFailedEpisode(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(progress.Plans) != 2 || len(progress.Episodes) != 1 || len(repo.steps) != 6 {
+	if len(progress.Plans) != 2 || len(progress.Episodes) != 1 || len(repo.steps) != 7 {
 		t.Fatalf("全局规划或阶段成果丢失：%+v", progress)
 	}
 	repo.settings.TextModelCode = "changed-model"
@@ -55,17 +56,17 @@ func TestWorkflowPlansWholeBatchBeforeWritingAndResumesFailedEpisode(t *testing.
 	if err = service.AnalyzeBatch(job); err != nil {
 		t.Fatal(err)
 	}
-	if len(writer.prompts) != 8 || len(repo.batchDraft.Episodes) != 2 {
+	if len(writer.prompts) != 9 || len(repo.batchDraft.Episodes) != 2 {
 		t.Fatalf("续跑应只执行未完成的第二集及审校：%d", len(writer.prompts))
 	}
-	if !strings.Contains(writer.prompts[2], "整批") || !strings.Contains(writer.prompts[3], "已经确定的本集规划") {
+	if !strings.Contains(writer.prompts[2], "整批") || !strings.Contains(writer.prompts[4], "已经确定的本集规划") {
 		t.Fatal("必须先整批规划再逐集写作")
 	}
 }
 func TestWorkflowRepairsOnlyEpisodeRejectedByReview(t *testing.T) {
 	repo, writer, service := workflowFixture(strings.Repeat("甲", 1100))
 	id := repo.project.ID
-	writer.replies = []string{workflowArt, workflowStory, workflowPlan, workflowFirst, workflowPassed, workflowSecond, `{"passed":false,"issues":["信件内容与原文不符"]}`, workflowSecond, workflowPassed}
+	writer.replies = []string{workflowArt, workflowStory, workflowPlan, workflowName, workflowFirst, workflowPassed, workflowSecond, `{"passed":false,"issues":["信件内容与原文不符"]}`, workflowSecond, workflowPassed}
 	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +74,7 @@ func TestWorkflowRepairsOnlyEpisodeRejectedByReview(t *testing.T) {
 	if err = service.AnalyzeBatch(job); err != nil {
 		t.Fatal(err)
 	}
-	if len(writer.prompts) != 9 || !strings.Contains(writer.prompts[7], "信件内容与原文不符") || len(repo.batchDraft.Episodes) != 2 {
+	if len(writer.prompts) != 10 || !strings.Contains(writer.prompts[8], "信件内容与原文不符") || len(repo.batchDraft.Episodes) != 2 {
 		t.Fatal("审校应仅修正对应剧集并重新检查")
 	}
 }
@@ -169,7 +170,7 @@ func TestReviewFailureRemainsResumableWithoutRewritingApprovedEpisodes(t *testin
 	repo, writer, service := workflowFixture(strings.Repeat("甲", 1100))
 	id := repo.project.ID
 	rejected := `{"passed":false,"issues":["事件与原文不符"]}`
-	writer.replies = []string{workflowArt, workflowStory, workflowPlan, workflowFirst, workflowPassed, workflowSecond, rejected, workflowSecond, rejected}
+	writer.replies = []string{workflowArt, workflowStory, workflowPlan, workflowName, workflowFirst, workflowPassed, workflowSecond, rejected, workflowSecond, rejected}
 	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +195,7 @@ func TestReviewFailureRemainsResumableWithoutRewritingApprovedEpisodes(t *testin
 	if err = service.AnalyzeBatch(job); err != nil {
 		t.Fatal(err)
 	}
-	if len(writer.prompts) != 10 || len(repo.batchDraft.Episodes) != 2 {
+	if len(writer.prompts) != 11 || len(repo.batchDraft.Episodes) != 2 {
 		t.Fatal("续跑应保留完成的剧本，仅继续审校")
 	}
 }
@@ -205,5 +206,28 @@ func TestPlanCannotMergeAcrossExplicitEpisodeHeadings(t *testing.T) {
 	}
 	if !strings.Contains(unitLengths(units), "第2集") {
 		t.Fatal("整批规划必须包含原集界信息")
+	}
+}
+
+func TestManualBatchNameSkipsAINameCall(t *testing.T) {
+	repo, writer, service := workflowFixture(strings.Repeat("甲", 1100))
+	id := repo.project.ID
+	repo.batches[0].Name = "用户定义名称"
+	repo.batches[0].NameManuallyEdited = true
+	writer.replies = []string{workflowArt, workflowStory, workflowPlan, workflowFirst, workflowPassed, workflowSecond, workflowPassed}
+	job, err := service.StartBatchAnalysis(context.Background(), "org", "user", id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.AnalyzeBatch(job); err != nil {
+		t.Fatal(err)
+	}
+	if len(writer.prompts) != 7 || repo.batches[0].Name != "用户定义名称" {
+		t.Fatal("已手动命名不应重新调用AI起名")
+	}
+	for _, name := range []string{"", "   ", strings.Repeat("甲", 81)} {
+		if _, err := service.RenameBatch(context.Background(), "org", "user", id, id, name); !errors.Is(err, ErrInvalidInput) {
+			t.Fatal("应拒绝空或过长名称")
+		}
 	}
 }

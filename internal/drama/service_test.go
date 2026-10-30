@@ -622,3 +622,25 @@ func (r *fakeRepository) FailBatchStep(_ context.Context, _ BatchAnalysisJob, st
 	}
 	return ErrNotFound
 }
+
+func (r *fakeRepository) RenameBatch(_ context.Context, _, _, _, id, name string) (Batch, error) {
+	for i := range r.batches {
+		if r.batches[i].ID == id {
+			r.batches[i].Name = name
+			r.batches[i].NameManuallyEdited = true
+			return r.batches[i], nil
+		}
+	}
+	return Batch{}, ErrNotFound
+}
+func (r *fakeRepository) SaveGeneratedBatchName(_ context.Context, job BatchAnalysisJob, name string) error {
+	for i := range r.batches {
+		if r.batches[i].ID == job.Batch.ID {
+			if !r.batches[i].NameManuallyEdited {
+				r.batches[i].Name = name
+			}
+			return nil
+		}
+	}
+	return ErrNotFound
+}

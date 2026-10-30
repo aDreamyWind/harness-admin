@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -129,13 +130,14 @@ func (r *DramaRepository) SaveBatchResult(ctx context.Context, org, owner, proje
 			return id, nil
 		}
 		id := uuid.NewString()
-		err := tx.QueryRow(ctx, `INSERT INTO drama_assets (id,project_id,kind,name,description,appearance_description,voice_description) VALUES ($1,$2,$3,$4,$5,$6,$7)
+		err := tx.QueryRow(ctx, `INSERT INTO drama_assets (id,project_id,kind,name,description,appearance_description,voice_description,origin_batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
    ON CONFLICT (project_id,kind,name) DO UPDATE SET
+    origin_batch_id=COALESCE(drama_assets.origin_batch_id,EXCLUDED.origin_batch_id),
     description=CASE WHEN EXCLUDED.description<>'' THEN EXCLUDED.description ELSE drama_assets.description END,
     appearance_description=CASE WHEN EXCLUDED.appearance_description<>'' THEN EXCLUDED.appearance_description ELSE drama_assets.appearance_description END,
     voice_description=CASE WHEN EXCLUDED.voice_description<>'' THEN EXCLUDED.voice_description ELSE drama_assets.voice_description END,
     updated_at=NOW()
-   RETURNING id`, id, project, kind, name, description, appearance, voice).Scan(&id)
+   RETURNING id`, id, project, kind, name, description, appearance, voice, batch).Scan(&id)
 		if err != nil {
 			return "", fmt.Errorf("保存%s资产失败: %w", kind, err)
 		}
@@ -191,8 +193,21 @@ func (r *DramaRepository) SaveBatchResult(ctx context.Context, org, owner, proje
 
 func scanAsset(row pgx.Row) (drama.Asset, error) {
 	var a drama.Asset
-	err := row.Scan(&a.ID, &a.Kind, &a.Name, &a.Description, &a.AppearanceDescription, &a.VoiceDescription)
-	return a, err
+	var source, used []byte
+	err := row.Scan(&a.ID, &a.Kind, &a.Name, &a.Description, &a.AppearanceDescription, &a.VoiceDescription, &source, &used)
+	if err != nil {
+		return a, err
+	}
+	a.UsedInBatches = []drama.BatchReference{}
+	if len(source) > 0 {
+		if err = json.Unmarshal(source, &a.SourceBatch); err != nil {
+			return a, fmt.Errorf("读取资产来源批次失败: %w", err)
+		}
+	}
+	if err = json.Unmarshal(used, &a.UsedInBatches); err != nil {
+		return a, fmt.Errorf("读取资产应用批次失败: %w", err)
+	}
+	return a, nil
 }
 func (r *DramaRepository) ListProjectAssets(ctx context.Context, org, owner, project, kind, query string) ([]drama.Asset, error) {
 	var exists bool
@@ -203,7 +218,7 @@ func (r *DramaRepository) ListProjectAssets(ctx context.Context, org, owner, pro
 	if !exists {
 		return nil, drama.ErrNotFound
 	}
-	rows, err := r.db.Query(ctx, `SELECT id,kind,name,description,appearance_description,voice_description FROM drama_assets WHERE project_id=$1 AND kind=$2 AND name ILIKE '%'||$3||'%' ORDER BY name LIMIT 200`, project, kind, query)
+	rows, err := r.db.Query(ctx, `SELECT `+dramaAssetSelect+` FROM drama_assets a WHERE a.project_id=$1 AND a.kind=$2 AND a.name ILIKE '%'||$3||'%' ORDER BY name LIMIT 200`, project, kind, query)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +239,7 @@ func (r *DramaRepository) GetBatchResult(ctx context.Context, org, owner, projec
 		return drama.BatchResult{}, err
 	}
 	result := drama.BatchResult{Batch: batch, Assets: drama.BatchAssets{Characters: []drama.Asset{}, Scenes: []drama.Asset{}, Props: []drama.Asset{}}, Episodes: []drama.ScriptEpisode{}}
-	rows, err := r.db.Query(ctx, `SELECT a.id,a.kind,a.name,a.description,a.appearance_description,a.voice_description FROM drama_assets a JOIN drama_batch_assets ba ON ba.asset_id=a.id WHERE ba.batch_id=$1 ORDER BY a.kind,a.name`, batchID)
+	rows, err := r.db.Query(ctx, `SELECT `+dramaAssetSelect+` FROM drama_assets a JOIN drama_batch_assets ba ON ba.asset_id=a.id WHERE ba.batch_id=$1 ORDER BY a.kind,a.name`, batchID)
 	if err != nil {
 		return result, err
 	}
