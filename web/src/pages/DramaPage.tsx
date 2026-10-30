@@ -12,6 +12,8 @@ import {
 } from '../api/drama'
 import { DramaVideoEpisodes } from './DramaVideoEpisodes'
 import { DramaVideoEpisodeStudio } from './DramaVideoEpisodeStudio'
+import { DramaAssetCanvas } from './DramaAssetCanvas'
+import { DramaImageSettingsButton } from './DramaImageTools'
 import { DramaAssetGallery } from './DramaAssetGallery'
 import { DramaBatchWorkspace } from './DramaBatchWorkspace'
 import './drama.css'
@@ -158,6 +160,7 @@ export function DramaProjectPage() {
   const overview = project?.overview ?? {}
   const display = (key: keyof DramaOverview, fallback = '等待解析结果') => overview[key]?.trim() || fallback
   const styleOptions = Array.from(new Set([...stylePresets, project?.style, overview.videoStyle].filter((item): item is string => Boolean(item)))).map((item) => ({ value: item, label: item }))
+  if (searchParams.get('canvas') === '1' && project) return <DramaAssetCanvas project={project} />
   const videoEpisodeId = searchParams.get('episode')
   if (section === 'videoEpisodes' && videoEpisodeId && project) return <>{contextHolder}<DramaVideoEpisodeStudio project={project} episodeId={videoEpisodeId} /></>
   return <div className="drama-workspace">
@@ -212,6 +215,7 @@ export function DramaProjectPage() {
           {([{ key: 'background', label: '故事背景' }, { key: 'setting', label: '故事设定' }] as const).map((field) => <article key={field.key} className="drama-overview-panel"><span className="drama-field-label">{field.label}</span>{editing ? <Input.TextArea autoSize={{ minRows: 5, maxRows: 12 }} value={draft[field.key] ?? ''} onChange={(event) => changeDraft(field.key, event.target.value)} /> : <p>{display(field.key)}</p>}</article>)}
         </div>
       </section> : section === 'episodes' ? <DramaBatchWorkspace project={project} batches={batches} onBatchesChange={(items) => { setBatches(items); void getDramaProject(project.id).then(setProject).catch(() => {}) }} /> : section === 'assets' ? <section aria-label="角色、场景、道具">
+          <div className="drama-asset-top-tools"><DramaImageSettingsButton /></div>
         <div className="drama-asset-tabs" role="tablist" aria-label="资产类型">
           {([{ key: 'characters', label: '角色', count: project.characters.length }, { key: 'scenes', label: '场景', count: project.scenes.length }, { key: 'props', label: '道具', count: project.props.length }] as const).map((item) =>
             <button key={item.key} type="button" role="tab" aria-selected={assetSection === item.key} className={assetSection === item.key ? 'active' : ''} onClick={() => selectAssetSection(item.key)}>{item.label}<span>{item.count}</span></button>

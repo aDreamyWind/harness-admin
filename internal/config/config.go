@@ -11,6 +11,7 @@ import (
 )
 
 type Config struct {
+	DramaMediaDirectory   string
 	AppName               string
 	Environment           string
 	HTTPAddress           string
@@ -65,6 +66,7 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
+		DramaMediaDirectory:   value("DRAMA_MEDIA_DIRECTORY", "./data/drama-media"),
 		AppName:               value("APP_NAME", "Harness Admin"),
 		Environment:           value("APP_ENV", "development"),
 		HTTPAddress:           value("HTTP_ADDR", ":8080"),

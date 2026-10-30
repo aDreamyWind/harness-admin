@@ -125,6 +125,9 @@ type Model struct {
 type Service struct {
 	repository Repository
 	writer     Writer
+	visual     VisualRepository
+	images     ImageGenerator
+	files      ImageFiles
 }
 
 func NewService(repository Repository, writer Writer) *Service {
@@ -135,7 +138,13 @@ func (s *Service) Recover(ctx context.Context) error {
 	if err := s.repository.FailInterrupted(ctx); err != nil {
 		return err
 	}
-	return s.repository.FailInterruptedBatches(ctx)
+	if err := s.repository.FailInterruptedBatches(ctx); err != nil {
+		return err
+	}
+	if s.visual != nil {
+		return s.visual.FailInterruptedImages(ctx)
+	}
+	return nil
 }
 
 func (s *Service) AvailableModels(ctx context.Context, organizationID, userID string) ([]Model, error) {

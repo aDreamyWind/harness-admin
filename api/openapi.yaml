@@ -6,6 +6,160 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /ai-drama/projects/{id}/canvas:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 读取项目自由画布与形象生成状态
+      operationId: getDramaCanvas
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 操作成功。图片任务在后台执行，状态由画布接口轮询，失败保留已有图片。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaCanvas' }
+        '400': { description: 参数无效或模型不可用。 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: CSRF 校验失败。 }
+        '404': { description: 项目或形象不存在，或不属于当前用户。 }
+        '409': { description: 内容版本冲突、正在生成、未配置图片模型或来源图片尚未生成。 }
+  /ai-drama/projects/{id}/canvas/layout:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: 保存画布位置及视口（使用版本防止覆盖）
+      operationId: saveDramaCanvasLayout
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaCanvasLayout' }
+      responses:
+        '200':
+          description: 操作成功。图片任务在后台执行，状态由画布接口轮询，失败保留已有图片。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaCanvasRevision' }
+        '400': { description: 参数无效或模型不可用。 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: CSRF 校验失败。 }
+        '404': { description: 项目或形象不存在，或不属于当前用户。 }
+        '409': { description: 内容版本冲突、正在生成、未配置图片模型或来源图片尚未生成。 }
+  /ai-drama/projects/{id}/forms/{formId}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: formId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: 编辑资产形象（生成中禁止编辑）
+      operationId: editDramaAssetForm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaFormEdit' }
+      responses:
+        '200':
+          description: 操作成功。图片任务在后台执行，状态由画布接口轮询，失败保留已有图片。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaVisualSaved' }
+        '400': { description: 参数无效或模型不可用。 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: CSRF 校验失败。 }
+        '404': { description: 项目或形象不存在，或不属于当前用户。 }
+        '409': { description: 内容版本冲突、正在生成、未配置图片模型或来源图片尚未生成。 }
+  /ai-drama/projects/{id}/forms/{formId}/derive:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: formId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 创建同一资产的派生形象
+      operationId: deriveDramaAssetForm
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      responses:
+        '201':
+          description: 操作成功。图片任务在后台执行，状态由画布接口轮询，失败保留已有图片。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaDerivedForm' }
+        '400': { description: 参数无效或模型不可用。 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: CSRF 校验失败。 }
+        '404': { description: 项目或形象不存在，或不属于当前用户。 }
+        '409': { description: 内容版本冲突、正在生成、未配置图片模型或来源图片尚未生成。 }
+  /ai-drama/projects/{id}/forms/{formId}/images:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: formId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 异步生成当前形象图片（使用当前用户图片模型设置）
+      operationId: generateDramaAssetImage
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaImageInput' }
+      responses:
+        '202':
+          description: 操作成功。图片任务在后台执行，状态由画布接口轮询，失败保留已有图片。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaImageJob' }
+        '400': { description: 参数无效或模型不可用。 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: CSRF 校验失败。 }
+        '404': { description: 项目或形象不存在，或不属于当前用户。 }
+        '409': { description: 内容版本冲突、正在生成、未配置图片模型或来源图片尚未生成。 }
+  /ai-drama/projects/{id}/images/{imageId}/content:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 读取当前用户项目中成功生成的历史图片
+      operationId: getDramaImageContent
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 图片文件内容，不公开本地存储路径。使用 private no-store 缓存控制。
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: 图片不存在、任务未成功或不属于当前用户。 }
   /ai-drama/models:
     get:
       summary: 查询当前用户可调用的已启用文本、图片和视频模型
@@ -3231,6 +3385,95 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
+    DramaAssetForm:
+      type: object
+      required: [id, assetId, assetName, kind, name, description, gender, style, aspectRatio, x, y, revision, imageStatus]
+      properties:
+        id: { type: string, format: uuid }
+        assetId: { type: string, format: uuid, description: 始终关联真实项目资产，多个形象共享同一资产。 }
+        assetName: { type: string }
+        kind: { type: string, enum: [character, scene, prop] }
+        parentId: { type: string, format: uuid, description: 同一资产的来源形象，默认形象省略。 }
+        name: { type: string }
+        description: { type: string }
+        gender: { type: string, enum: [unspecified, male, female, other] }
+        style: { type: string }
+        aspectRatio: { type: string, enum: ['9:16', '16:9', '1:1'] }
+        x: { type: number }
+        y: { type: number }
+        revision: { type: integer }
+        imageUrl: { type: string, description: 需要项目所有者登录后读取的图片接口地址。 }
+        imageStatus: { type: string, enum: [idle, queued, running, succeeded, failed] }
+        imageError: { type: string }
+    DramaCanvas:
+      type: object
+      required: [forms, x, y, zoom, revision]
+      properties:
+        forms: { type: array, items: { $ref: '#/components/schemas/DramaAssetForm' } }
+        x: { type: number }
+        y: { type: number }
+        zoom: { type: number }
+        revision: { type: integer }
+    DramaCanvasLayout:
+      type: object
+      required: [revision, x, y, zoom, positions]
+      properties:
+        revision: { type: integer, minimum: 1 }
+        x: { type: number, minimum: -1000000, maximum: 1000000 }
+        y: { type: number, minimum: -1000000, maximum: 1000000 }
+        zoom: { type: number, minimum: 0.05, maximum: 2 }
+        positions:
+          type: array
+          maxItems: 10000
+          items:
+            type: object
+            required: [id, x, y]
+            properties:
+              id: { type: string, format: uuid }
+              x: { type: number, minimum: -1000000, maximum: 1000000 }
+              y: { type: number, minimum: -1000000, maximum: 1000000 }
+    DramaCanvasRevision:
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: integer }
+    DramaFormEdit:
+      type: object
+      required: [revision, name, description, gender, style, aspectRatio]
+      properties:
+        revision: { type: integer, minimum: 1 }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, minLength: 1, maxLength: 10000 }
+        gender: { type: string, enum: [unspecified, male, female, other] }
+        style: { type: string, maxLength: 120 }
+        aspectRatio: { type: string, enum: ['9:16', '16:9', '1:1'] }
+    DramaImageInput:
+      type: object
+      properties:
+        prompt: { type: string, maxLength: 10000, description: 本次描述覆盖，省略或留空时使用形象描述，不修改长期形象内容。 }
+    DramaVisualSaved:
+      type: object
+      required: [saved]
+      properties:
+        saved: { type: boolean }
+    DramaDerivedForm:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+    DramaImageJob:
+      type: object
+      required: [id, projectId, formId, modelCode, prompt, aspectRatio, status]
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        formId: { type: string, format: uuid }
+        modelCode: { type: string }
+        prompt: { type: string }
+        aspectRatio: { type: string }
+        referenceId: { type: string, format: uuid }
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        error: { type: string }
     DramaModel:
       type: object
       required: [code, name, modelType]

@@ -91,7 +91,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient), modelPolicyRepository)
 	modelPolicyService := modelgateway.NewPolicyService(modelPolicyRepository)
 	modelForwarder := modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts)
-	dramaService := drama.NewService(pgstore.NewDramaRepository(db), &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder})
+	dramaRepository := pgstore.NewDramaRepository(db)
+	dramaService := drama.NewService(dramaRepository, &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder}).WithVisuals(dramaRepository, &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}, &dramaMediaFiles{directory: cfg.DramaMediaDirectory})
 	if err := dramaService.Recover(startupCtx); err != nil {
 		redisClient.Close()
 		db.Close()
@@ -150,6 +151,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		MCPConnections:        mcpConnectionService,
 		Skills:                skillService,
 		Drama:                 dramaService,
+		DramaVisual:           dramaService,
 		MCPToolCaller:         mcpUpstream,
 		GatewayForwarder:      modelForwarder,
 		OIDCAdmin:             oidcService,

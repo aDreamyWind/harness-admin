@@ -259,3 +259,11 @@
 .drama-plan-evidence blockquote p { margin: 4px 0; }
 
 .drama-review-issue.suggestion:not(.resolved) { border-color: #e1e7f0; background: #f8fafd; }
+
+.drama-asset-image { width:100%; height:100%; object-fit:contain; display:block; background:#fafbff; }
+.drama-asset-gallery.scene .drama-asset-image {object-fit:cover;}
+.drama-asset-form-count {position:absolute; bottom:10px; left:10px; padding:2px 7px; border-radius:5px; color:#327441; background:#eef9ee; border:1px solid #c4e7c7; font-size:11px; z-index:1;}
+.drama-asset-tile-buttons {display:flex; gap:8px; margin:12px 0;}
+.drama-asset-tile-buttons .ant-btn {flex:1; padding-inline:8px;}
+.drama-asset-image-error {font-size:12px; color:#c84438; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.drama-asset-top-tools {display:flex; justify-content:flex-end; margin-bottom:12px;}

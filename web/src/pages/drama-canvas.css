@@ -1,0 +1,54 @@
+.drama-canvas-shell { position:fixed; inset:0; z-index:100; background:#f5f7fc; color:#243149; }
+.drama-canvas-header { position:absolute; inset:0 0 auto; height:68px; z-index:10; padding:12px 22px; display:flex; align-items:center; justify-content:space-between; gap:16px; pointer-events:none; }
+.drama-canvas-header>div {display:flex; gap:12px; align-items:center; padding:7px 12px; border:1px solid #e7ebf4; border-radius:14px; background:rgba(255,255,255,.95); box-shadow:0 4px 20px #27355006; pointer-events:auto;}
+.drama-canvas-header strong {font-size:14px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.drama-canvas-header span.save-error {color:#ce5548;}
+.drama-canvas-header>div>span {font-size:12px; color:#7f8ba0;}
+.drama-canvas-node {position:relative; width:280px; padding-top:38px; color:#29364b;}
+.drama-canvas-node.scene {width:400px;}
+.drama-canvas-node-caption {position:absolute; top:0; left:0; display:flex; align-items:center; gap:8px; max-width:100%; height:30px; background:#ffffffed; border:1px solid #e9eaf3; border-radius:9px; padding:0 12px; font-size:12px;}
+.drama-canvas-node-caption>span:last-child {white-space:nowrap; text-overflow:ellipsis; overflow:hidden;}
+.drama-canvas-node-caption .anticon {color:#7a65c7;}
+.drama-canvas-node.scene .drama-canvas-node-caption .anticon {color:#4a9383;}
+.drama-canvas-node.prop .drama-canvas-node-caption .anticon {color:#5e86bb;}
+.drama-canvas-node-body {border:1px solid #e0e5ef; border-radius:14px; background:#fff; box-shadow:0 4px 12px #27355005; position:relative;}
+.drama-canvas-node.selected .drama-canvas-node-body {border-color:#8067d8; box-shadow:0 0 0 1px #8067d8;}
+.drama-canvas-node-image {position:relative; height:400px; margin:6px; overflow:hidden; border-radius:10px; background:linear-gradient(140deg,#f8f7ff,#edf3fc);}
+.drama-canvas-node.scene .drama-canvas-node-image {height:218px;}
+.drama-canvas-node.prop .drama-canvas-node-image {height:268px;}
+.drama-canvas-node-image img {width:100%; height:100%; object-fit:contain; display:block;}
+.drama-canvas-node.scene .drama-canvas-node-image img {object-fit:cover;}
+.drama-canvas-node-image>.ant-tag {position:absolute; bottom:10px; left:10px;}
+.drama-canvas-node-placeholder {display:flex; height:100%; align-items:center; justify-content:center; flex-direction:column; gap:16px; color:#96a5bd; font-size:12px;}
+.drama-canvas-node-placeholder .anticon {font-size:40px; color:#b9c7dd;}
+.drama-canvas-node-copy {padding:8px 14px 14px;}
+.drama-canvas-node-copy>strong {font-size:13px;}
+.drama-canvas-node-copy>.ant-btn {float:right;}
+.drama-canvas-node-copy p {font-size:12px; line-height:1.6; color:#7b879b; height:38px; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; margin:8px 0;}
+.drama-canvas-node-copy small {font-size:11px; padding:3px 6px; background:#f1f4fa; border-radius:5px; color:#7a88a0;}
+.drama-canvas-node-error {display:block; color:#c65345; font-size:11px; margin-top:8px;}
+.drama-canvas-derive {position:absolute; top:48%; right:-21px; width:34px; height:34px; display:grid; place-items:center; border:1px solid #e8eaf2; border-radius:50%; background:#fff; box-shadow:0 2px 8px #31446912; cursor:pointer; color:#4b5468;}
+.drama-canvas-derive:hover {color:#8067d8; border-color:#8067d8;}
+.drama-canvas-preview {position:absolute; top:10px; right:10px; border:0; border-radius:6px; padding:5px 7px; background:#ffffffd9; color:#66758b; opacity:0; cursor:pointer;}
+.drama-canvas-node:hover .drama-canvas-preview {opacity:1;}
+.drama-canvas-node .react-flow__handle {border:0; background:#b7a8e4; width:6px; height:6px;}
+.drama-canvas-generation {position:absolute; z-index:8; bottom:25px; left:50%; transform:translateX(-50%); width:min(920px,calc(100% - 420px)); padding:12px 18px 16px; background:#fffffff5; border:1px solid #e4e8f4; border-radius:18px; box-shadow:0 8px 32px #29345f12;}
+.drama-canvas-generation-heading {display:flex; align-items:center; justify-content:space-between; font-size:12px; color:#68758b; margin-bottom:6px;}
+.drama-canvas-generation .ant-input {border:0; background:transparent; box-shadow:none; font-size:13px;}
+.drama-canvas-generation-toolbar {display:flex; align-items:center; gap:10px; margin-top:10px;}
+.drama-canvas-generation-toolbar>.ant-input {width:170px; border:1px solid #e5e9f2; background:#fff;}
+.drama-canvas-generation-toolbar>.ant-select {width:130px;}
+.drama-canvas-generation-toolbar>span {font-size:11px; color:#8995a8; flex:1;}
+.drama-canvas-generation-error {color:#c45346; font-size:12px; margin-bottom:6px; max-height:50px; overflow:auto;}
+.drama-canvas-edit-form {display:flex; flex-direction:column; gap:20px; padding:12px 0;}
+.drama-canvas-edit-form label {display:flex; flex-direction:column; gap:8px; font-size:13px; color:#4e5c73;}
+.drama-canvas-edit-form>div {display:flex; gap:14px;}
+.drama-canvas-edit-form>div>label {flex:1; min-width:0;}
+.drama-canvas-preview-image {display:block; width:100%; max-height:75vh; object-fit:contain;}
+.drama-canvas-save-alert {position:absolute; top:80px; left:50%; transform:translateX(-50%); z-index:20; width:min(800px,90%);}
+.drama-canvas-loading {margin:120px auto; padding:32px; width:min(700px,90%); background:white; border-radius:16px;}
+.drama-canvas-empty {position:absolute; top:45%; left:50%; transform:translate(-50%,-50%); pointer-events:none;}
+.drama-canvas-shell .react-flow__controls {left:20px; bottom:25px; box-shadow:0 2px 14px #29345f0c;}
+.drama-canvas-shell .react-flow__minimap {bottom:20px; right:20px; border:1px solid #e4e8f1; border-radius:12px; overflow:hidden;}
+@media(max-width:1050px) {.drama-canvas-generation {width:calc(100% - 90px); left:55%; max-width:800px;}.drama-canvas-shell .react-flow__minimap {display:none;}.drama-canvas-header {padding-inline:10px; gap:8px;}.drama-canvas-header>div {gap:6px;}.drama-canvas-header strong {max-width:140px;}}
+@media(max-width:650px) {.drama-canvas-generation {left:50%; width:calc(100% - 30px); bottom:70px; padding:10px;}.drama-canvas-generation-toolbar {flex-wrap:wrap;}.drama-canvas-generation-toolbar>span {display:none;}.drama-canvas-header>div:first-child>span {display:none;}.drama-canvas-header>div:last-child>.ant-btn {display:none;}.drama-canvas-header .ant-select {min-width:140px!important;}.drama-canvas-header strong {max-width:90px;}}

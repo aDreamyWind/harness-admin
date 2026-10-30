@@ -428,6 +428,8 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 
 func handleDramaError(ctx *gin.Context, deps Dependencies, err error) {
 	switch {
+	case errors.Is(err, drama.ErrCanvasConflict), errors.Is(err, drama.ErrImageBusy), errors.Is(err, drama.ErrImageModelMissing), errors.Is(err, drama.ErrParentImageMissing):
+		httpx.Fail(ctx, http.StatusConflict, "drama_canvas_conflict", err.Error())
 	case errors.Is(err, drama.ErrInvalidInput):
 		httpx.Fail(ctx, http.StatusBadRequest, "invalid_drama_project", err.Error())
 	case errors.Is(err, drama.ErrModelUnavailable):

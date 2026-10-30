@@ -191,3 +191,25 @@ export interface DramaVideoEpisodeWorkspace {
 }
 export const listDramaVideoEpisodes = (projectId: string) => request<DramaVideoEpisode[]>(`/api/v1/ai-drama/projects/${projectId}/video-episodes`)
 export const getDramaVideoEpisodeWorkspace = (projectId: string, episodeId: string) => request<DramaVideoEpisodeWorkspace>(`/api/v1/ai-drama/projects/${projectId}/video-episodes/${episodeId}`)
+
+export interface DramaAssetForm {
+  id: string; assetId: string; assetName: string; kind: DramaAssetKind; parentId?: string
+  name: string; description: string; gender: 'unspecified' | 'male' | 'female' | 'other'
+  style: string; aspectRatio: '9:16' | '16:9' | '1:1'; x: number; y: number; revision: number
+  imageUrl?: string; imageStatus: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed'; imageError?: string
+}
+export interface DramaCanvas { forms: DramaAssetForm[]; x: number; y: number; zoom: number; revision: number }
+export interface DramaCanvasLayout { x: number; y: number; zoom: number; revision: number; positions: { id: string; x: number; y: number }[] }
+export interface DramaImageJob { id: string; formId: string; projectId: string; status: string; modelCode: string }
+const visualBase = (id: string) => `/api/v1/ai-drama/projects/${id}`
+export const getDramaCanvas = (id: string) => request<DramaCanvas>(`${visualBase(id)}/canvas`)
+export const saveDramaCanvasLayout = (id: string, input: DramaCanvasLayout) => request<{ revision: number }>(`${visualBase(id)}/canvas/layout`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
+})
+export const editDramaForm = (id: string, form: DramaAssetForm) => request<{ saved: boolean }>(`${visualBase(id)}/forms/${form.id}`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(form),
+})
+export const deriveDramaForm = (id: string, formId: string) => request<{ id: string }>(`${visualBase(id)}/forms/${formId}/derive`, { method: 'POST', headers: csrfHeaders() })
+export const generateDramaImage = (id: string, formId: string, prompt = '') => request<DramaImageJob>(`${visualBase(id)}/forms/${formId}/images`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ prompt }),
+})
