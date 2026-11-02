@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -203,8 +202,8 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 		}
 		prompt := func() string {
 			plan, _ := json.Marshal(seg)
-			return `你是分镜编写师。仅编写当前片段，不改写小剧本剧情。一个镜头承载可连续完成的可见动作；合理设计景别、表演和运镜。保留全部关键事件、台词和顺序。画面描述不是旁白；声音区分对白dialogue、内心os、画外音vo。台词text必须是sourceLine原行中的连续子串，长台词可按顺序分配到多个镜头，禁止删除或重复。sourceLines引用当前范围L编号，覆盖分配的全部行。formIds只能选给定目录中的真实形象ID，不能创造资产。返回JSON {"formIds":[],"notes":"","shots":[{"description":"主体动作与空间关系","shotSize":"中景","camera":"固定","sound":"环境/动作音","duration":4,"sourceLines":[1],"utterances":[{"kind":"dialogue","speaker":"姓名","text":"完整台词或连续分句","sourceLine":1}]}]}。duration是0.5至60秒数值。中文按约4字/秒、拉丁语约3词/秒，再给每条台词至少0.5秒停顿，优先保证念得完；按快节奏漫剧组织普通动作，避免重复铺垫，同一信息可用连续镜头表现；无台词的关键动作、悬念和情绪停顿须保留，不为省时新增旁白。notes不宣称尚未执行的修改。8～15秒是片段规划目标，不是禁止延长的硬上限。不能编造图片或媒体已生成。
-前片段末态：` + previous + "\n当前规划和已有草稿：" + string(plan) + "\n真实资产形象：" + string(forms) + "\n本片段剧本：\n" + numbered(seg.StartLine, seg.EndLine) + "\n中心修正要求：" + feedbacks[i]
+			return `你是分镜编写师。仅编写当前片段，不改写小剧本剧情。一个镜头承载可连续完成的可见动作；合理设计景别、表演和运镜。保留全部关键事件、台词和顺序。画面描述不是旁白；声音区分对白dialogue、内心os、画外音vo。未经节奏优化的台词text必须是sourceLine原行中的连续子串，长台词可按顺序分配到多个镜头，禁止删除或重复；已有精简/转画面的旁白须保留其sourceText与delivery，不得恢复为重复口播。sourceLines引用当前范围L编号，覆盖分配的全部行。formIds只能选给定目录中的真实形象ID，不能创造资产。返回JSON {"formIds":[],"notes":"","shots":[{"description":"主体动作与空间关系","shotSize":"中景","camera":"固定","sound":"环境/动作音","duration":4,"sourceLines":[1],"utterances":[{"kind":"dialogue","speaker":"姓名","text":"完整台词或连续分句","sourceLine":1}]}]}。duration是0.5至60秒数值。中文按约4字/秒、拉丁语约3词/秒，再给每条台词至少0.5秒停顿，优先保证念得完；按快节奏漫剧组织普通动作，避免重复铺垫，同一信息可用连续镜头表现；无台词的关键动作、悬念和情绪停顿须保留，不为省时新增旁白。notes不宣称尚未执行的修改。8～15秒是片段规划目标，不是禁止延长的硬上限。不能编造图片或媒体已生成。
+前片段末态：` + previous + "\n真实声音字段契约（已采纳的精简旁白须保留sourceText与表达方式）：" + storyboardVoiceContract + "\n当前规划和已有草稿：" + string(plan) + "\n真实资产形象：" + string(forms) + "\n本片段剧本：\n" + numbered(seg.StartLine, seg.EndLine) + "\n中心修正要求：" + feedbacks[i]
 		}
 
 		revisePlan := func() error {
@@ -293,7 +292,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				if invalidReview != "" {
 					reviewPhase += "格式修正"
 				}
-				review, e := call(reviewPhase, `你是分镜审阅师。只依据给定剧本与前段状态检查：关键剧情或台词是否被改变、遗漏，动作和空间状态是否明显矛盾，台词是否能念完。合理构图/表演不要求逐字来自剧本。审美偏好只作为建议，不凭空制造阻断。8～15秒是软目标，不因延长就报错；尚未接入视频模型，不捏造模型能力限制。返回JSON {"blocking":[{"shot":1,"field":"字段名","message":"具体问题","evidence":"剧本依据","fix":"最小修正建议"}],"suggestions":[]}。另返回pacing数组，专门列需要执行的节奏优化：[{"kind":"repeated_exposition或idle_hold","action":"merge或shorten","shots":[1,2],"reason":"具体哪些动作/信息重复或无信息停留过长","fix":"保留哪些关键动作并如何合并/缩短"}]。同一信息反复交代、普通上工/回忆铺垫过长应列pacing，而非仅在suggestions中建议。不得因没有台词或总时长大就直接要求压缩；重要动作、悬念、情绪变化可保留必要停顿。合并只引用当前片段内连续镜头。审美偏好仍放suggestions。无问题时blocking、suggestions、pacing均为空数组，禁止返回null。\n前段状态：`+previous+"\n剧本："+numbered(seg.StartLine, seg.EndLine)+"\n实际节奏统计："+storyboardPacingStats(seg)+"\n当前草稿："+string(draft)+"\n本次审阅格式修正要求："+reviewFeedback+"\n上次未能读取的审阅（只修正审阅格式，禁止因此重写镜头）："+invalidReview)
+				review, e := call(reviewPhase, `你是分镜审阅师。只依据给定剧本与前段状态检查：关键剧情或台词是否被改变、遗漏，动作和空间状态是否明显矛盾，台词是否能念完。合理构图/表演不要求逐字来自剧本。审美偏好只作为建议，不凭空制造阻断。8～15秒是软目标，不因延长就报错；尚未接入视频模型，不捏造模型能力限制。返回JSON {"blocking":[{"shot":1,"field":"字段名","message":"具体问题","evidence":"剧本依据","fix":"最小修正建议"}],"suggestions":[]}。另返回pacing数组，专门列需要执行的节奏优化：[{"kind":"repeated_exposition或idle_hold","action":"merge或shorten","shots":[1,2],"reason":"具体哪些动作/信息重复或无信息停留过长","fix":"保留哪些关键动作并如何合并/缩短"}]。同一信息反复交代、普通上工/回忆铺垫过长应列pacing，而非仅在suggestions中建议。不得因没有台词或总时长大就直接要求压缩；重要动作、悬念、情绪变化可保留必要停顿。合并只引用当前片段内连续镜头。用户允许压缩冗余解释性旁白或改用画面表达。请主动检查旁白文字是否重复解释同一事实：即使当前秒数恰好够念完，仍应将可安全精简的重复旁白列入pacing，kind=repeated_exposition、action=shorten、shots列具体镜头，不能把口播下界当作禁止精简旁白的理由。关键身份、条件、因果及情绪线索必须保留。旁白精简/转画面时sourceText保留原句，delivery=visual表示只在画面表达、不计入口播；角色对白与心声不得改写。节奏判断应结合逐镜口播下界，不能要求压缩角色台词或把台词已占满的镜头当成无信息停留。审美偏好仍放suggestions。无问题时blocking、suggestions、pacing均为空数组，禁止返回null。\n前段状态：`+previous+"\n剧本："+numbered(seg.StartLine, seg.EndLine)+"\n实际节奏统计："+storyboardPacingStats(seg)+"\n逐镜口播下界："+storyboardSpeechBounds(seg)+"\n当前草稿："+string(draft)+"\n本次审阅格式修正要求："+reviewFeedback+"\n上次未能读取的审阅（只修正审阅格式，禁止因此重写镜头）："+invalidReview)
 				if e != nil {
 					return e
 				}
@@ -328,7 +327,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				break
 			}
 			var pacingProblem *workflowProblem
-			if pacingOnly && errors.As(problem, &pacingProblem) && (pacingProblem.Code == "content_validation" || pacingProblem.Code == "speech_duration" || pacingProblem.Code == "review_content") {
+			if pacingOnly && errors.As(problem, &pacingProblem) && (pacingProblem.Code == "content_validation" || pacingProblem.Code == "review_content") {
 				return fmt.Errorf("当前片段内容未通过复核，未执行节奏改动：%w", problem)
 			}
 			if errors.Is(problem, context.Canceled) || errors.Is(problem, ErrStoryboardConflict) {
@@ -346,6 +345,8 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				ticket, err = center.route(fmt.Sprintf("片段%d；%s", i+1, problem.Error()), "分镜检查", string(state)+invalidReview, "reviewer", "只修正审阅输出格式，blocking和suggestions均为数组。保留具体问题，禁止把格式问题当作镜头错误。原始错误："+problem.Error())
 			} else if errors.As(problem, &diagnostic) && diagnostic.Code == "speech_duration" {
 				ticket, err = center.route(problem.Error(), "分镜检查", string(state), "timing", "保持原有画面、完整台词与资产关联，按程序估时下界延长；超过60秒才交编写节点按语义拆镜。")
+			} else if errors.As(problem, &diagnostic) && (diagnostic.Code == "voice_kind" || diagnostic.Code == "utterance_source" || diagnostic.Code == "utterance_text" || diagnostic.Code == "speech_requires_split") {
+				ticket, err = center.route(problem.Error(), "分镜检查", string(state), "writer", problem.Error()+"\n"+storyboardVoiceContract+"\n只修正明确字段，超过单镜时长按语义拆镜；不能添加voice必填字段。")
 			} else if errors.As(problem, &diagnostic) && diagnostic.Code == "generation_format" {
 				ticket, err = center.route(problem.Error(), "分镜检查", string(state), "writer", "修正分镜生成JSON结构："+problem.Error())
 			} else {
@@ -361,19 +362,10 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 			problem = nil
 			switch ticket.Node {
 			case "timing":
-				for j := range seg.Shots {
-					needed := 0.0
-					for _, u := range seg.Shots[j].Utterances {
-						needed += estimateStoryboardSpeech(u.Text) + 0.5
-					}
-					if needed > 60 {
-						feedbacks[i] += "\n该镜台词超过60秒，按语义拆为多个镜头，保持台词连续完整。"
-						problem = write()
-						break
-					}
-					if needed > seg.Shots[j].Duration {
-						seg.Shots[j].Duration = math.Ceil(needed*2) / 2
-					}
+				problem = repairStoryboardTiming(&seg)
+				if problem != nil {
+					feedbacks[i] += "\n" + problem.Error()
+					problem = write()
 				}
 			case "writer":
 				problem = write()

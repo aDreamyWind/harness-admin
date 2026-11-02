@@ -106,16 +106,19 @@ func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project,
 	if err != nil {
 		return out, err
 	}
-	rows, err = r.db.Query(ctx, `SELECT u.shot_id,u.kind,u.speaker,u.text,u.source_line FROM drama_storyboard_utterances u JOIN drama_storyboard_shots x ON x.id=u.shot_id JOIN drama_storyboard_segments s ON s.id=x.segment_id WHERE s.run_id=$1 ORDER BY s.number,x.number,u.number`, id)
+	rows, err = r.db.Query(ctx, `SELECT u.shot_id,u.kind,u.speaker,u.text,u.source_line,u.source_text,u.delivery,u.adaptation_reason FROM drama_storyboard_utterances u JOIN drama_storyboard_shots x ON x.id=u.shot_id JOIN drama_storyboard_segments s ON s.id=x.segment_id WHERE s.run_id=$1 ORDER BY s.number,x.number,u.number`, id)
 	if err != nil {
 		return out, err
 	}
 	for rows.Next() {
 		var shot string
 		var u drama.StoryboardUtterance
-		if err = rows.Scan(&shot, &u.Kind, &u.Speaker, &u.Text, &u.SourceLine); err != nil {
+		if err = rows.Scan(&shot, &u.Kind, &u.Speaker, &u.Text, &u.SourceLine, &u.SourceText, &u.Delivery, &u.AdaptationReason); err != nil {
 			rows.Close()
 			return out, err
+		}
+		if u.Delivery == "spoken" {
+			u.Delivery = ""
 		}
 		at := shots[shot]
 		v := &out.Segments[at.segment].Shots[at.index]
@@ -266,7 +269,11 @@ func (r *DramaRepository) writeStoryboardSegment(ctx context.Context, tx pgx.Tx,
 			}
 		}
 		for j, u := range shot.Utterances {
-			if _, err := tx.Exec(ctx, `INSERT INTO drama_storyboard_utterances(id,shot_id,number,kind,speaker,text,source_line) VALUES($1,$2,$3,$4,$5,$6,$7)`, uuid.NewString(), id, j+1, u.Kind, u.Speaker, u.Text, u.SourceLine); err != nil {
+			delivery := u.Delivery
+			if delivery == "" {
+				delivery = "spoken"
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO drama_storyboard_utterances(id,shot_id,number,kind,speaker,text,source_line,source_text,delivery,adaptation_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, uuid.NewString(), id, j+1, u.Kind, u.Speaker, u.Text, u.SourceLine, u.SourceText, delivery, u.AdaptationReason); err != nil {
 				return err
 			}
 		}
@@ -367,12 +374,15 @@ func (r *DramaRepository) FinishStoryboard(ctx context.Context, id, status, mess
 	return tx.Commit(ctx)
 }
 func (r *DramaRepository) EditStoryboard(ctx context.Context, org, user string, in drama.StoryboardRun, revision int) (drama.StoryboardRun, error) {
-	return r.cloneStoryboardVersion(ctx, org, user, in, revision, "")
+	return r.cloneStoryboardVersion(ctx, org, user, in, revision, "", false)
 }
 func (r *DramaRepository) QueueStoryboardPacing(ctx context.Context, org, user string, in drama.StoryboardRun, revision int, segmentID string) (drama.StoryboardRun, error) {
-	return r.cloneStoryboardVersion(ctx, org, user, in, revision, segmentID)
+	return r.cloneStoryboardVersion(ctx, org, user, in, revision, segmentID, false)
 }
-func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user string, in drama.StoryboardRun, revision int, pacingSegment string) (drama.StoryboardRun, error) {
+func (r *DramaRepository) QueueStoryboardContinuation(ctx context.Context, org, user string, in drama.StoryboardRun, revision int) (drama.StoryboardRun, error) {
+	return r.cloneStoryboardVersion(ctx, org, user, in, revision, "", true)
+}
+func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user string, in drama.StoryboardRun, revision int, pacingSegment string, continuation bool) (drama.StoryboardRun, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return in, err
@@ -397,13 +407,23 @@ func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user 
 	if latestID != in.ID || rev != revision || status == "running" || status == "queued" {
 		return in, drama.ErrStoryboardConflict
 	}
-	// 编辑和节奏优化均生成完整独立版本，旧镜头、绑定和事件保持原样。
+	// 编辑、节奏优化与续跑均生成完整独立版本，旧镜头、绑定和事件保持原样。
 	old, err := r.GetStoryboard(ctx, org, user, in.ProjectID, in.EpisodeID, in.ID)
 	if err != nil {
 		return in, err
 	}
 	phase, message, newStatus := "人工编辑", "人工编辑已保存，待确认", "ready"
 	in.PacingTarget = 0
+	if continuation {
+		if status != "failed" && status != "partial" {
+			return in, drama.ErrStoryboardConflict
+		}
+		// 从库内最新快照复制，绝不采用调用方提交的镜头或更换原模型。
+		in = old
+		in.Segments = old.Segments
+		in.PacingTarget = 0
+		phase, message, newStatus = "续跑", "已保留完成片段与待修正草稿，等待继续未完成片段", "queued"
+	}
 	if pacingSegment != "" {
 		if status != "ready" && status != "confirmed" && status != "partial" && status != "failed" {
 			return in, drama.ErrStoryboardConflict
@@ -436,7 +456,7 @@ func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user 
 			}
 		}
 		segmentStatus := "ready"
-		if pacingSegment != "" {
+		if pacingSegment != "" || continuation {
 			segmentStatus = seg.Status
 		}
 		if seg.ID == pacingSegment {
@@ -446,7 +466,12 @@ func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user 
 		if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_segments(id,run_id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$12,$11)`, seg.ID, in.ID, i+1, seg.Title, seg.Scene, seg.Purpose, seg.StartLine, seg.EndLine, seg.StartState, seg.EndState, seg.Notes, segmentStatus); err != nil {
 			return in, err
 		}
-		if err = r.writeStoryboardSegment(ctx, tx, in, seg, bindings, pacingSegment == ""); err != nil {
+		if err = r.writeStoryboardSegment(ctx, tx, in, seg, bindings, pacingSegment == "" && !continuation); err != nil {
+			return in, err
+		}
+	}
+	if continuation {
+		if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_events(run_id,message) VALUES($1,$2)`, in.ID, fmt.Sprintf("从版本%d继续：旧版修正预算已满；已复制规划、完成镜头、待修正草稿和采用图片，旧记录保留在历史版本。", old.Version)); err != nil {
 			return in, err
 		}
 	}

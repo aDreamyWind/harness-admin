@@ -222,7 +222,7 @@ export const generateDramaImage = (id: string, formId: string, prompt = '') => r
 export interface DramaStyleOption { id: string; name: string; category: string; previewUrl: string; previewX: number; previewY: number }
 export const listDramaStyles = () => request<DramaStyleOption[]>('/api/v1/ai-drama/styles')
 
-export interface DramaStoryboardUtterance { kind: 'dialogue' | 'os' | 'vo'; speaker: string; text: string; sourceLine: number }
+export interface DramaStoryboardUtterance { kind: 'dialogue' | 'os' | 'vo'; speaker: string; text: string; sourceLine: number; sourceText?: string; delivery?: 'spoken' | 'visual'; adaptationReason?: string }
 export interface DramaStoryboardShot { id: string; number: number; description: string; shotSize: string; camera: string; sound: string; duration: number; sourceLines: number[]; utterances: DramaStoryboardUtterance[] }
 export interface DramaStoryboardSegment { id: string; number: number; title: string; scene: string; purpose: string; startLine: number; endLine: number; startState: string; endState: string; status: string; notes: string; formIds: string[]; bindings: {formId: string; imageId: string}[]; shots: DramaStoryboardShot[] }
 export interface DramaStoryboardRun { pacingTarget?: number; repairs?: DramaRepairTicket[]; id: string; episodeId: string; projectId: string; version: number; revision: number; status: string; phase: string; message: string; error: string; scriptText: string; modelCode: string; styleId: string; aspectRatio: string; createdAt: string; updatedAt: string; stale: boolean; segments: DramaStoryboardSegment[]; events: {id: number; message: string; createdAt: string}[] }

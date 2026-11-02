@@ -462,7 +462,7 @@ paths:
     post:
       summary: 新建分镜拆分或从失败片段继续
       operationId: startDramaStoryboard
-      description: resume为false时创建独立新版本；true时必须来源未变化且最新运行失败，复用已通过片段与原模型，保留待修正草稿和中心派工预算。检查失败先报告中心，由中心选择合法责任节点，修正后返回原检查点。跨前段修正会重查后续依赖。只生成文字分镜，不生成媒体。
+      description: resume为false时创建独立新版本；true时必须来源未变化且最新运行失败或部分完成，复用已通过片段与原模型，保留待修正草稿。旧运行尚有修正预算时沿用同一运行；预算耗尽时创建独立续跑版本，复制规划、全部片段及采用图片，从首个未完成片段继续，旧预算和派工记录保留在历史版本。检查失败先报告中心，由中心选择合法责任节点，修正后返回原检查点。跨前段修正会重查后续依赖。只生成文字分镜，不生成媒体。
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -3835,8 +3835,11 @@ components:
       properties:
         kind: { type: string, enum: [dialogue, os, vo] }
         speaker: { type: string }
-        text: { type: string, minLength: 1 }
+        text: { type: string, description: 实际口播；delivery为visual时必须为空，其余情况必须非空。 }
         sourceLine: { type: integer, minimum: 1 }
+        sourceText: { type: string, description: 旁白精简或转画面前的真实原句。节奏优化时由程序保留，不能借此修改角色对白或心声。 }
+        delivery: { type: string, enum: [spoken, visual], default: spoken, description: 省略或spoken为口播；visual仅用于有原句依据的解释性旁白转画面，不计入口播时长。 }
+        adaptationReason: { type: string, description: 冗余旁白精简或转画面的说明。 }
     DramaStoryboardShot:
       type: object
       required: [id, number, description, shotSize, camera, sound, duration, sourceLines, utterances]

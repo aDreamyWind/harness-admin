@@ -73,10 +73,13 @@ type StoryboardShot struct {
 	Utterances  []StoryboardUtterance `json:"utterances"`
 }
 type StoryboardUtterance struct {
-	Kind       string `json:"kind"`
-	Speaker    string `json:"speaker"`
-	Text       string `json:"text"`
-	SourceLine int    `json:"sourceLine"`
+	SourceText       string `json:"sourceText,omitempty"`
+	Delivery         string `json:"delivery,omitempty"`
+	AdaptationReason string `json:"adaptationReason,omitempty"`
+	Kind             string `json:"kind"`
+	Speaker          string `json:"speaker"`
+	Text             string `json:"text"`
+	SourceLine       int    `json:"sourceLine"`
 }
 type StoryboardEvent struct {
 	ID        int64     `json:"id"`
@@ -101,6 +104,7 @@ type StoryboardEdit struct {
 	Segments []StoryboardSegment `json:"segments"`
 }
 type StoryboardRepository interface {
+	QueueStoryboardContinuation(context.Context, string, string, StoryboardRun, int) (StoryboardRun, error)
 	SaveStoryboardPacingResult(context.Context, string, StoryboardSegment, string, RepairResult) error
 	QueueStoryboardPacing(context.Context, string, string, StoryboardRun, int, string) (StoryboardRun, error)
 	ListStoryboards(context.Context, string, string, string, string) ([]StoryboardRun, error)
@@ -239,7 +243,11 @@ func (s *Service) StartStoryboard(ctx context.Context, org, user, project, episo
 	if !allowed {
 		return StoryboardJob{}, ErrModelUnavailable
 	}
-	run, err = s.storyboards.QueueStoryboard(ctx, org, user, run, resume)
+	if resume && errors.Is(storyboardResumeBudget(run), ErrRepairLimit) {
+		run, err = s.storyboards.QueueStoryboardContinuation(ctx, org, user, run, run.Revision)
+	} else {
+		run, err = s.storyboards.QueueStoryboard(ctx, org, user, run, resume)
+	}
 	return StoryboardJob{Run: run, OrganizationID: org, OwnerID: user}, err
 }
 
@@ -360,15 +368,36 @@ func validateStoryboardSegment(seg *StoryboardSegment, lines []string, forms []A
 			coverage[n] = true
 		}
 		speechSeconds := 0.0
-		for _, u := range shot.Utterances {
-			if !refs[u.SourceLine] || strings.TrimSpace(u.Text) == "" || (u.Kind != "dialogue" && u.Kind != "os" && u.Kind != "vo") {
-				return errors.New("台词来源或声音类型不正确")
+		for j, u := range shot.Utterances {
+			field := fmt.Sprintf("utterances[%d]", j+1)
+			if u.Kind != "dialogue" && u.Kind != "os" && u.Kind != "vo" {
+				return &workflowProblem{Origin: "程序校验", Code: "voice_kind", Field: field + ".kind", Shot: i + 1, Cause: fmt.Errorf("实际kind=%q；%s", u.Kind, storyboardVoiceContract)}
 			}
-			if strict && !strings.Contains(lines[u.SourceLine-1], u.Text) {
-				return errors.New("台词必须来自本集剧本，不得编造或改写")
+			if !refs[u.SourceLine] {
+				return &workflowProblem{Origin: "程序校验", Code: "utterance_source", Field: field + ".sourceLine", Shot: i + 1, Cause: fmt.Errorf("来源行%d不在当前镜头sourceLines=%v中，请按本片段原文修正引用", u.SourceLine, shot.SourceLines)}
 			}
-			spoken[u.SourceLine] += u.Text
-			speechSeconds += estimateStoryboardSpeech(u.Text) + 0.5
+			if u.Delivery != "" && u.Delivery != "spoken" && u.Delivery != "visual" {
+				return errors.New("声音表达方式只允许spoken或visual")
+			}
+			if u.Delivery == "visual" && (u.Text != "" || u.SourceText == "") {
+				return errors.New("旁白转画面须保留原句且不再生成口播")
+			}
+			original := originalStoryboardSpeech(u)
+			if u.SourceText != "" {
+				if !narrationSpeaker(u) || !narrationSource(lines[u.SourceLine-1], forms) || !strings.Contains(lines[u.SourceLine-1], u.SourceText) {
+					return errors.New("只有有真实原句依据的解释性旁白可以精简或转画面，不能改变角色对白或心声")
+				}
+			}
+			if u.Delivery != "visual" && strings.TrimSpace(u.Text) == "" {
+				return &workflowProblem{Origin: "程序校验", Code: "utterance_text", Field: field + ".text", Shot: i + 1, Cause: errors.New("实际口播不能为空")}
+			}
+			if strict && u.SourceText == "" && !strings.Contains(lines[u.SourceLine-1], u.Text) {
+				return errors.New("角色台词必须来自本集剧本，旁白改写须保留真实原句")
+			}
+			spoken[u.SourceLine] += original
+			if u.Delivery != "visual" {
+				speechSeconds += estimateStoryboardSpeech(u.Text) + .5
+			}
 		}
 
 		if strict && speechSeconds > shot.Duration+0.25 {

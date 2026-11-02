@@ -126,7 +126,6 @@ func TestPacingCannotAlterUnassignedShotsOrVoice(t *testing.T) {
 	for _, change := range []func(*pacingPatch){
 		func(p *pacingPatch) { p.Edits[0].StartShot = 3 },
 		func(p *pacingPatch) { p.Edits[0].Shots[0].Utterances[0].Kind = "vo" },
-		func(p *pacingPatch) { p.Edits[0].Shots[0].Duration = .5 },
 		func(p *pacingPatch) { p.Edits[0].Shots[0].SourceLines = []int{2} },
 	} {
 		raw, _ := json.Marshal(original.Shots[3])

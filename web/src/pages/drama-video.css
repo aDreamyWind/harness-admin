@@ -119,3 +119,7 @@
 .drama-storyboard-pacing-history article + article { margin-top:10px; padding-top:10px; border-top:1px solid #e9edf4; }
 .drama-storyboard-pacing-history p { margin:7px 0 0; font-size:12px; color:#66758b; }
 .drama-storyboard-pacing-history span { font-size:12px; }
+
+.drama-storyboard-narration-source {margin:0 10px 12px; color:#65748b; font-size:12px;}
+.drama-storyboard-narration-source summary {cursor:pointer;}
+.drama-storyboard-narration-source p {margin:8px 0; white-space:pre-wrap;}

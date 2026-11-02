@@ -11,18 +11,23 @@ import (
 	"harness-admin/internal/modelprovider"
 	"harness-admin/internal/secret"
 	pgstore "harness-admin/internal/store/postgres"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 // 只在显式指定参考项目时调用真实文本模型，临时数据独立创建和清理，不生成图片或视频。
 func TestStoryboardConfiguredModelSmoke(t *testing.T) { configuredStoryboardSample(t, false) }
 func TestStoryboardPacingConfiguredModelSmoke(t *testing.T) {
 	configuredStoryboardSample(t, false, true)
+}
+func TestStoryboardNarrationConfiguredModelSmoke(t *testing.T) {
+	configuredStoryboardSample(t, false, true, true)
 }
 
 // 同一虚构小剧本，比较供应商默认思考与按角色策略；不是完整历史版本的性能基准。
@@ -62,6 +67,7 @@ func (w *meteredDramaWriter) CompleteObserved(ctx context.Context, org, user, mo
 }
 func configuredStoryboardSample(t *testing.T, baseline bool, pacingCase ...bool) {
 	pacingSample := len(pacingCase) > 0 && pacingCase[0]
+	narrationSample := len(pacingCase) > 1 && pacingCase[1]
 	reference := os.Getenv("HARNESS_TEST_DRAMA_MODEL_PROJECT_ID")
 	if reference == "" {
 		t.Skip("设置参考项目后才执行真实模型流式联调")
@@ -103,6 +109,9 @@ func configuredStoryboardSample(t *testing.T, baseline bool, pacingCase ...bool)
 	if pacingSample {
 		script = "【旧书店 内 夜】\n林夏进门拿起抹布。\n林夏走到书桌。\n林夏擦好桌面，整理好纸笔。\n林夏：准备好了。"
 	}
+	if narrationSample {
+		script = "【旧书店 内 夜】\n旁白：她在等待，她仍然在等待，她一直坐在窗边等待，她在窗边等到天亮再出发。\n林夏：天亮就走。"
+	}
 	_, err = repo.Create(ctx, drama.Project{ID: project, OrganizationID: org, OwnerID: owner, Title: "分镜真实联调（临时）", SourceText: script, SourceLength: len([]rune(script)), SourceMode: "upload", Style: "日系动漫", StyleID: "anime-2d", AspectRatio: "9:16", ModelCode: "writer", Status: "ready", Phase: "overview_done"})
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +141,7 @@ func configuredStoryboardSample(t *testing.T, baseline bool, pacingCase ...bool)
 		if ok, e := repo.ClaimStoryboard(ctx, job.Run.ID); e != nil || !ok {
 			t.Fatal(e)
 		}
-		if err = repo.SaveStoryboardPlan(ctx, job.Run.ID, []drama.StoryboardSegment{{Title: "整理书店", StartLine: 1, EndLine: 5, StartState: "书店门口", EndState: "书桌前准备完毕"}}); err != nil {
+		if err = repo.SaveStoryboardPlan(ctx, job.Run.ID, []drama.StoryboardSegment{{Title: "整理书店", StartLine: 1, EndLine: len(drama.StoryboardLines(script)), StartState: "书店内", EndState: "书店内等待天亮"}}); err != nil {
 			t.Fatal(err)
 		}
 		original, e := repo.GetStoryboard(ctx, org, owner, project, episode, job.Run.ID)
@@ -147,10 +156,23 @@ func configuredStoryboardSample(t *testing.T, baseline bool, pacingCase ...bool)
 			{Description: "林夏擦好桌面，整理好纸笔。", ShotSize: "中景", Camera: "固定", Duration: 6, SourceLines: []int{4}, Utterances: []drama.StoryboardUtterance{}},
 			{Description: "林夏开口。", ShotSize: "近景", Camera: "固定", Duration: 3, SourceLines: []int{5}, Utterances: []drama.StoryboardUtterance{{Kind: "dialogue", Speaker: "林夏", Text: "准备好了。", SourceLine: 5}}},
 		}
+		if narrationSample {
+			voice := strings.TrimPrefix(drama.StoryboardLines(script)[1], "旁白：")
+			count := 0
+			for _, ch := range voice {
+				if unicode.Is(unicode.Han, ch) {
+					count++
+				}
+			}
+			seg.Shots = []drama.StoryboardShot{
+				{Description: "林夏坐在窗边等待天亮再出发，窗外仍暗。", ShotSize: "中景", Camera: "固定", Duration: math.Ceil((float64(count)/4+.5)*2) / 2, SourceLines: []int{1, 2}, Utterances: []drama.StoryboardUtterance{{Kind: "vo", Speaker: "旁白", Text: voice, SourceLine: 2}}},
+				{Description: "林夏看向窗外开口。", ShotSize: "近景", Camera: "固定", Duration: 2, SourceLines: []int{3}, Utterances: []drama.StoryboardUtterance{{Kind: "dialogue", Speaker: "林夏", Text: "天亮就走。", SourceLine: 3}}},
+			}
+		}
 		if err = repo.SaveStoryboardSegment(ctx, original.ID, seg); err != nil {
 			t.Fatal(err)
 		}
-		if err = repo.FinishStoryboard(ctx, original.ID, "ready", "临时原稿21秒"); err != nil {
+		if err = repo.FinishStoryboard(ctx, original.ID, "ready", "临时已知冗余原稿"); err != nil {
 			t.Fatal(err)
 		}
 		original, e = repo.GetStoryboard(ctx, org, owner, project, episode, original.ID)
@@ -186,6 +208,25 @@ func configuredStoryboardSample(t *testing.T, baseline bool, pacingCase ...bool)
 		if !applied {
 			t.Fatalf("真实模型没有完成可采纳的节奏优化：%+v", r.Repairs)
 		}
+	}
+	if narrationSample {
+		adapted, dialogue := false, false
+		for _, segment := range r.Segments {
+			for _, shot := range segment.Shots {
+				for _, u := range shot.Utterances {
+					if u.Kind == "vo" && u.SourceText != "" {
+						adapted = true
+					}
+					if u.Kind == "dialogue" && u.Speaker == "林夏" && u.Text == "天亮就走。" {
+						dialogue = true
+					}
+				}
+			}
+		}
+		if !adapted || !dialogue {
+			t.Fatal("真实模型未实现旁白精简/转画面或未保留角色对白")
+		}
+		t.Log("旁白已实际精简或转画面，原句已持久化，角色对白保留")
 	}
 	shots := 0
 	for _, s := range r.Segments {

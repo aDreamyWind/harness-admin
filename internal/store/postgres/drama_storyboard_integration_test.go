@@ -275,6 +275,51 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	if err = repo.FinishStoryboard(ctx, resumed.ID, "failed", "临时测试结束"); err != nil {
 		t.Fatal(err)
 	}
+	// 预算耗尽时独立续跑，保留完成状态、未完成草稿、采用图片与原模型。
+	failedResume, e := repo.GetStoryboard(ctx, org, user, project, episode, resumed.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = repo.QueueStoryboardContinuation(ctx, org, uuid.NewString(), failedResume, failedResume.Revision); !errors.Is(e, drama.ErrNotFound) {
+		t.Fatal("续跑越权未拒绝", e)
+	}
+	if _, e = repo.QueueStoryboardContinuation(ctx, org, user, failedResume, failedResume.Revision+1); !errors.Is(e, drama.ErrStoryboardConflict) {
+		t.Fatal("续跑修订冲突未拒绝", e)
+	}
+	continued, e := repo.QueueStoryboardContinuation(ctx, org, user, failedResume, failedResume.Revision)
+	if e != nil || continued.ID == failedResume.ID || continued.Version != failedResume.Version+1 || continued.ModelCode != failedResume.ModelCode || continued.PacingTarget != 0 || continued.Segments[0].Status != "ready" || continued.Segments[1].Status != "pending" || continued.Segments[0].Bindings[0].ImageID != image1 || len(continued.Segments[1].Shots) == 0 {
+		t.Fatal("续跑丢失旧成果", e)
+	}
+	if _, e = repo.QueueStoryboardContinuation(ctx, org, user, failedResume, failedResume.Revision); !errors.Is(e, drama.ErrStoryboardConflict) {
+		t.Fatal("重复或过期续跑未拒绝", e)
+	}
+	if ok, e := repo.ClaimStoryboard(ctx, continued.ID); e != nil || !ok {
+		t.Fatal(e)
+	}
+	if e = repo.ReopenStoryboardFrom(ctx, continued.ID, 1); e != nil {
+		t.Fatal(e)
+	}
+	voice := continued.Segments[0]
+	voice.Shots[0].Utterances = []drama.StoryboardUtterance{{Kind: "vo", Speaker: "旁白", Text: "", SourceLine: 1, SourceText: "人物进门。", Delivery: "visual", AdaptationReason: "由推门动作呈现"}, {Kind: "vo", Speaker: "旁白", Text: "进门。", SourceLine: 1, SourceText: "人物进门。", AdaptationReason: "精简重复解释"}}
+	voice.Shots[0].Utterances[0].Delivery = "unknown"
+	if e = repo.SaveStoryboardSegment(ctx, continued.ID, voice); e == nil {
+		t.Fatal("未知表达方式不能静默当成口播")
+	}
+	voice.Shots[0].Utterances[0].Delivery = "visual"
+	if e = repo.SaveStoryboardSegment(ctx, continued.ID, voice); e != nil {
+		t.Fatal(e)
+	}
+	loaded, e := repo.GetStoryboard(ctx, org, user, project, episode, continued.ID)
+	if e != nil || len(loaded.Segments[0].Shots[0].Utterances) != 2 {
+		t.Fatal("旁白字段未保存", e)
+	}
+	voices := loaded.Segments[0].Shots[0].Utterances
+	if voices[0].Delivery != "visual" || voices[0].Text != "" || voices[0].SourceText != "人物进门。" || voices[0].AdaptationReason != "由推门动作呈现" || voices[1].Delivery != "" || voices[1].Text != "进门。" {
+		t.Fatal("旁白往返信息不一致", voices)
+	}
+	if e = repo.FinishStoryboard(ctx, continued.ID, "failed", "续跑测试结束"); e != nil {
+		t.Fatal(e)
+	}
 	// 新运行失败仍可读取上一版；服务恢复不重复调用模型。
 	in.ID = uuid.NewString()
 	next, err := repo.QueueStoryboard(ctx, org, user, in, false)
