@@ -13,27 +13,36 @@ import (
 
 // 中心只选择受限的修正工具；权限、事实边界、执行和最终校验始终由程序负责。
 type RepairTicket struct {
-	ID           string    `json:"id"`
-	ProjectID    string    `json:"-"`
-	Kind         string    `json:"kind"`
-	RunID        string    `json:"-"`
-	Item         int       `json:"item"`
-	Reporter     string    `json:"reporter"`
-	Problem      string    `json:"problem"`
-	StateHash    string    `json:"-"`
-	Node         string    `json:"node"`
-	TargetItem   int       `json:"targetItem"`
-	Reason       string    `json:"reason"`
-	Instructions string    `json:"instructions"`
-	ReturnTo     string    `json:"returnTo"`
-	Status       string    `json:"status"`
-	Outcome      string    `json:"outcome"`
-	CreatedAt    time.Time `json:"createdAt"`
+	BeforeShotCount *int      `json:"beforeShotCount,omitempty"`
+	AfterShotCount  *int      `json:"afterShotCount,omitempty"`
+	BeforeDuration  *float64  `json:"beforeDuration,omitempty"`
+	AfterDuration   *float64  `json:"afterDuration,omitempty"`
+	ID              string    `json:"id"`
+	ProjectID       string    `json:"-"`
+	Kind            string    `json:"kind"`
+	RunID           string    `json:"-"`
+	Item            int       `json:"item"`
+	Reporter        string    `json:"reporter"`
+	Problem         string    `json:"problem"`
+	StateHash       string    `json:"-"`
+	Node            string    `json:"node"`
+	TargetItem      int       `json:"targetItem"`
+	Reason          string    `json:"reason"`
+	Instructions    string    `json:"instructions"`
+	ReturnTo        string    `json:"returnTo"`
+	Status          string    `json:"status"`
+	Outcome         string    `json:"outcome"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+type RepairResult struct {
+	Status, Outcome string
+	AfterShotCount  *int
+	AfterDuration   *float64
 }
 type RepairRepository interface {
 	ListRepairTickets(context.Context, RepairTicket) ([]RepairTicket, error)
 	CreateRepairTicket(context.Context, RepairTicket) error
-	FinishRepairTicket(context.Context, string, string, string) error
+	FinishRepairTicket(context.Context, string, RepairResult) error
 }
 
 func (s *Service) WithRepairCoordinator(r RepairRepository) *Service { s.repairs = r; return s }
@@ -168,24 +177,33 @@ func (c *repairCenter) assign(problem, reporter, state, source string, tools map
 	return t, nil
 }
 func (c *repairCenter) finish(t RepairTicket, status, outcome string) error {
+	return c.finishResult(t, RepairResult{Status: status, Outcome: outcome})
+}
+func (c *repairCenter) finishResult(t RepairTicket, result RepairResult) error {
 	if t.ID == "" {
 		return nil
 	}
 	if c.repo != nil {
-		if err := c.repo.FinishRepairTicket(c.ctx, t.ID, status, outcome); err != nil {
+		if err := c.repo.FinishRepairTicket(c.ctx, t.ID, result); err != nil {
 			return err
 		}
-	} else {
+	}
+	return c.notifyResult(t, result)
+}
+func (c *repairCenter) notifyResult(t RepairTicket, result RepairResult) error {
+	status, outcome := result.Status, result.Outcome
+	if c.repo == nil {
 		for i := range c.local {
 			if c.local[i].ID == t.ID {
 				c.local[i].Status, c.local[i].Outcome = status, outcome
+				c.local[i].AfterShotCount, c.local[i].AfterDuration = result.AfterShotCount, result.AfterDuration
 			}
 		}
 	}
-	return c.emit(fmt.Sprintf("%s返回中心：%s；%s", repairNodeName(t.Node), map[string]string{"resolved": "复核通过", "feedback": "仍需修正", "blocked": "需要人工处理"}[status], outcome))
+	return c.emit(fmt.Sprintf("%s返回中心：%s；%s", repairNodeName(t.Node), map[string]string{"resolved": "复核通过", "feedback": "仍需修正", "blocked": "需要人工处理", "declined": "未采纳，保留原稿"}[status], outcome))
 }
 func repairNodeName(node string) string {
-	names := map[string]string{"writer": "分镜编写节点", "planner": "导演规划节点", "previous": "前片段节点", "timing": "时长校正工具", "reviewer": "审阅节点", "script_patch": "剧本局部修正节点", "script_director": "单集导演节点", "pause": "人工处理"}
+	names := map[string]string{"writer": "分镜编写节点", "pacing": "节奏优化节点", "planner": "导演规划节点", "previous": "前片段节点", "timing": "时长校正工具", "reviewer": "审阅节点", "script_patch": "剧本局部修正节点", "script_director": "单集导演节点", "pause": "人工处理"}
 	if n := names[node]; n != "" {
 		return n
 	}

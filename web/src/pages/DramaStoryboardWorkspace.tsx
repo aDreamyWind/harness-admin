@@ -3,13 +3,17 @@ import { Alert, Button, Empty, Image, Input, InputNumber, Modal, Progress, Selec
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { confirmDramaStoryboard, getDramaStoryboards, saveDramaStoryboard, startDramaStoryboard, type DramaStoryboardSegment, type DramaStoryboardShot } from '../api/drama'
+import { optimizeDramaStoryboardPacing, type DramaRepairTicket, confirmDramaStoryboard, getDramaStoryboards, saveDramaStoryboard, startDramaStoryboard, type DramaStoryboardSegment, type DramaStoryboardShot } from '../api/drama'
 
-export const storyboardStatusLabels: Record<string, string> = { pending: '待拆分', queued: '等待拆分', running: '拆分中', failed: '需重试', ready: '待确认', confirmed: '已确认', stale: '来源已变化' }
+export const storyboardStatusLabels: Record<string, string> = { pending: '待拆分', queued: '等待拆分', running: '拆分中', failed: '需重试', partial: '待继续', ready: '待确认', confirmed: '已确认', stale: '来源已变化' }
 const soundLabels = { dialogue: '对白', os: '内心独白', vo: '画外音' }
 const shotSizes = ['大远景', '远景', '全景', '中景', '近景', '特写', '大特写', '过肩镜头', '主观镜头']
 const cameras = ['固定', '缓慢推进', '拉远', '跟拍', '左摇', '右摇', '上摇', '下摇', '环绕', '升降']
 const linesOf = (text: string) => text.replace(/\r\n?/g, '\n').split('\n').map((line) => line.trim()).filter(Boolean)
+function repairLabel(ticket: DramaRepairTicket) {
+ if (ticket.node === 'pacing') return ({ assigned: '优化中', resolved: '已采纳并修改', feedback: '继续优化', blocked: '已中断', declined: '未采纳，保留原稿' })[ticket.status]
+ return ({ assigned: '已派工', resolved: '复核通过', feedback: '继续修正', blocked: '需人工处理', declined: '未采纳' })[ticket.status]
+}
 const blankShot = (line: number): DramaStoryboardShot => ({ id: crypto.randomUUID(), number: 1, description: '', shotSize: '中景', camera: '固定', duration: 4, sound: '', sourceLines: [line], utterances: [] })
 
 export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: {projectId: string; episodeId: string; needsReview: boolean}) {
@@ -31,6 +35,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
   const segments = draft ?? run?.segments ?? []
   const selected = segments.find((s) => s.id === selectedId) ?? segments[0]
   const lines = linesOf(run?.scriptText || '')
+  const pacingHistory = run?.repairs?.filter((ticket) => ticket.node === 'pacing' && ticket.item === selected?.number) ?? []
   const duration = (shots: DramaStoryboardShot[]) => shots.reduce((sum, s) => sum + s.duration, 0)
   useEffect(() => {
     if (!draft) return
@@ -52,6 +57,13 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
     const perform = () => void action(async () => { await startDramaStoryboard(projectId, episodeId, resume); setParams((p) => { const next = new URLSearchParams(p); next.delete('storyboard'); next.delete('segment'); return next }); })
     if (!resume && run) Modal.confirm({ title: '重新拆分这一集？', content: '会从导演规划重新开始，并建立新版本。已有分镜版本会保留，不会自动生成图片或视频。', onOk: perform, okText: '重新拆分', cancelText: '取消' })
     else perform()
+  }
+  function optimizePacing() {
+    if (!run || !selected) return
+    void action(async () => {
+      const next = await optimizeDramaStoryboardPacing(projectId, episodeId, run, selected.id)
+      setParams((p) => { const value = new URLSearchParams(p); value.set('storyboard', next.id); const target = next.segments[selected.number - 1]; if (target) value.set('segment', target.id); return value })
+    })
   }
   function changeSegment(patch: Partial<DramaStoryboardSegment>) { if (!selected) return; setDraft((current) => current?.map((s) => s.id === selected.id ? { ...s, ...patch } : s) ?? null) }
   function changeShot(index: number, patch: Partial<DramaStoryboardShot>) { if (selected) changeSegment({ shots: selected.shots.map((s, i) => i === index ? { ...s, ...patch } : s) }) }
@@ -78,16 +90,23 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
     {!latest && <Alert type="info" title="正在查看历史版本，内容只读；最新版本和失败前成果均会保留。" />}
     {run && <div className={`drama-storyboard-progress ${run.status}`}><div><span>{run.status === 'failed' ? '自动修正暂未完成，已保留成果和修正记录' : run.message || run.phase}</span><Button type="link" size="small" onClick={() => setEventsOpen((v) => !v)}>{eventsOpen ? '收起动态' : '创作动态'}</Button></div>
       {active && <Progress percent={segments.length ? Math.round(100 * segments.filter((s) => s.status === 'ready').length / segments.length) : 0} status="active" size="small" />}
-      {run.status === 'failed' && <div><span>{run.error}</span>{latest && !run.stale && !needsReview && <Button danger size="small" loading={busy} onClick={() => start(true)}>从失败处继续</Button>}</div>}
+      {['failed', 'partial'].includes(run.status) && <div><span>{run.error}</span>{latest && !run.stale && !needsReview && <Button danger={run.status === 'failed'} size="small" loading={busy} onClick={() => start(true)}>{run.status === 'partial' ? '继续未完成片段' : '从失败处继续'}</Button>}</div>}
       {eventsOpen && <ol className="drama-storyboard-events">{run.events.map((event) => <li key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString()}</time>{event.message}</li>)}</ol>}
     </div>}
-    {!!run?.repairs?.length && <details className="drama-storyboard-repair-history" open={active}><summary>中心调度 · {run.repairs.length} 次派工</summary>{run.repairs.map((ticket) => <article key={ticket.id}><Tag color={ticket.status === 'resolved' ? 'success' : ticket.status === 'blocked' ? 'error' : 'processing'}>{({ assigned: '已派工', resolved: '复核通过', feedback: '继续修正', blocked: '需人工处理' })[ticket.status]}</Tag><strong>{ticket.reporter} → {({ timing: '时长校正', writer: '分镜编写', planner: '导演规划', reviewer: '审阅', previous: '前片段修正', pause: '人工处理' } as Record<string, string>)[ticket.node] || ticket.node} · 目标 {ticket.targetItem}</strong><p>{ticket.reason}</p><small>{ticket.outcome || ticket.instructions} · 返回{ticket.returnTo}</small></article>)}</details>}
+    {!!run?.repairs?.length && <details className="drama-storyboard-repair-history" open={active}><summary>中心调度 · {run.repairs.length} 次派工</summary>{run.repairs.map((ticket) => <article key={ticket.id}><Tag color={ticket.status === 'resolved' ? 'success' : ticket.status === 'blocked' ? 'error' : 'processing'}>{repairLabel(ticket)}</Tag><strong>{ticket.reporter} → {({ pacing: '节奏优化', timing: '时长校正', writer: '分镜编写', planner: '导演规划', reviewer: '审阅', previous: '前片段修正', pause: '人工处理' } as Record<string, string>)[ticket.node] || ticket.node} · 目标 {ticket.targetItem}</strong><p>{ticket.reason}</p><small>{ticket.outcome || ticket.instructions} · 返回{ticket.returnTo}</small></article>)}</details>}
     {!segments.length ? <div className="drama-video-storyboard-empty"><VideoCameraOutlined /><h3>{active ? '正在规划场次与片段' : '暂未拆分分镜'}</h3><p>{active ? '通过检查的片段会陆续保存并显示，可离开后回来查看。' : '将本集剧本转换成可编辑的片段和镜头。'}</p></div> : <>
       <div className="drama-storyboard-editing-layout">
         <section className="drama-storyboard-script" aria-label="片段分镜内容">
           {selected && <>
-            {draft ? <div className="drama-storyboard-segment-fields"><label>片段名称<Input value={selected.title} maxLength={120} onChange={(e) => changeSegment({ title: e.target.value })} /></label><label>场次<Input value={selected.scene} onChange={(e) => changeSegment({ scene: e.target.value })} /></label><label>起始状态<Input.TextArea autoSize value={selected.startState} onChange={(e) => changeSegment({ startState: e.target.value })} /></label><label>结束状态<Input.TextArea autoSize value={selected.endState} onChange={(e) => changeSegment({ endState: e.target.value })} /></label><label>起始剧本行<InputNumber min={1} max={lines.length} value={selected.startLine} onChange={(n) => changeSegment({ startLine: n ?? 1 })} /></label><label>结束剧本行<InputNumber min={selected.startLine} max={lines.length} value={selected.endLine} onChange={(n) => changeSegment({ endLine: n ?? 1 })} /></label></div> : <><h3>片段 {segments.indexOf(selected) + 1}：{selected.title}</h3><p className="drama-storyboard-scene">{selected.scene} · {duration(selected.shots).toFixed(1)} 秒</p><p>{selected.purpose}</p>{(selected.startState || selected.endState) && <div className="drama-storyboard-continuity"><span>开始：{selected.startState}</span><span>结束：{selected.endState}</span></div>}</>}
+            {draft ? <div className="drama-storyboard-segment-fields"><label>片段名称<Input value={selected.title} maxLength={120} onChange={(e) => changeSegment({ title: e.target.value })} /></label><label>场次<Input value={selected.scene} onChange={(e) => changeSegment({ scene: e.target.value })} /></label><label>起始状态<Input.TextArea autoSize value={selected.startState} onChange={(e) => changeSegment({ startState: e.target.value })} /></label><label>结束状态<Input.TextArea autoSize value={selected.endState} onChange={(e) => changeSegment({ endState: e.target.value })} /></label><label>起始剧本行<InputNumber min={1} max={lines.length} value={selected.startLine} onChange={(n) => changeSegment({ startLine: n ?? 1 })} /></label><label>结束剧本行<InputNumber min={selected.startLine} max={lines.length} value={selected.endLine} onChange={(n) => changeSegment({ endLine: n ?? 1 })} /></label></div> : <><div className="drama-storyboard-segment-heading"><h3>片段 {segments.indexOf(selected) + 1}：{selected.title}</h3><Tooltip title="创建新版本，仅优化当前片段；其他片段及采用图片保留"><Button size="small" loading={busy} disabled={readonly || !run || !['ready', 'confirmed', 'failed', 'partial'].includes(run.status) || selected.status !== 'ready'} onClick={optimizePacing}>优化当前片段</Button></Tooltip></div><p className="drama-storyboard-scene">{selected.scene} · {duration(selected.shots).toFixed(1)} 秒</p><p>{selected.purpose}</p>{(selected.startState || selected.endState) && <div className="drama-storyboard-continuity"><span>开始：{selected.startState}</span><span>结束：{selected.endState}</span></div>}</>}
             <label className="drama-storyboard-form-picker">引用资产形象{draft ? <Select mode="multiple" showSearch optionFilterProp="label" value={selected.formIds} options={page?.forms.map((f) => ({ value: f.id, label: `${f.assetName} · ${f.name}${f.imageUrl ? '' : '（待素材）'}` }))} onChange={(formIds) => changeSegment({ formIds })} /> : <div>{selected.formIds.length ? selected.formIds.map((id) => { const f = page?.forms.find((item) => item.id === id); const binding = selected.bindings.find((b) => b.formId === id); return <Tag key={id}>{f ? `${f.assetName} · ${f.name}` : '历史形象'}{!binding?.imageId ? ' · 待素材' : ''}</Tag> }) : <span>无引用资产</span>}</div>}</label>
+            {!!pacingHistory.length && <section className="drama-storyboard-pacing-history" aria-label="节奏优化记录">
+              {pacingHistory.map((ticket) => <article key={ticket.id}>
+                <div><Tag color={ticket.status === 'resolved' ? 'success' : ticket.status === 'declined' ? 'warning' : 'processing'}>{repairLabel(ticket)}</Tag>
+                  {ticket.beforeShotCount !== undefined && ticket.afterShotCount !== undefined && <span>{ticket.beforeShotCount} → {ticket.afterShotCount} 个镜头 · {ticket.beforeDuration?.toFixed(1)} → {ticket.afterDuration?.toFixed(1)} 秒</span>}</div>
+                <p>{ticket.outcome || ticket.instructions}</p>
+              </article>)}
+            </section>}
             {selected.status !== 'ready' && <Alert type="info" title="此片段尚未完成，已通过的其他片段可正常查看。" />}
             {selected.shots.map((shot, index) => <article key={shot.id || index} className="drama-storyboard-shot">
               <div className="drama-storyboard-shot-heading"><strong>镜头 {index + 1}</strong>{draft ? <Space wrap><Select aria-label={`镜头${index + 1}景别`} value={shot.shotSize} options={[...new Set([...shotSizes, shot.shotSize])].map((v) => ({ value: v, label: v }))} onChange={(shotSize) => changeShot(index, { shotSize })} /><Select aria-label={`镜头${index + 1}运镜`} value={shot.camera} options={[...new Set([...cameras, shot.camera])].map((v) => ({ value: v, label: v }))} onChange={(camera) => changeShot(index, { camera })} /><InputNumber aria-label={`镜头${index + 1}秒数`} min={0.5} max={60} step={0.5} value={shot.duration} onChange={(n) => changeShot(index, { duration: n ?? 4 })} suffix="秒" /><Button size="small" aria-label={`前移镜头${index + 1}`} disabled={index === 0} onClick={() => moveShot(index, -1)}>前移</Button><Button size="small" aria-label={`后移镜头${index + 1}`} disabled={index === selected.shots.length - 1} onClick={() => moveShot(index, 1)}>后移</Button><Button aria-label={`删除镜头${index + 1}`} danger type="text" icon={<DeleteOutlined />} disabled={selected.shots.length <= 1} onClick={() => changeSegment({ shots: selected.shots.filter((_, i) => i !== index) })} /></Space> : <span>{shot.shotSize} · {shot.camera} · {shot.duration} 秒</span>}</div>

@@ -21,6 +21,9 @@ import (
 
 // 只在显式指定参考项目时调用真实文本模型，临时数据独立创建和清理，不生成图片或视频。
 func TestStoryboardConfiguredModelSmoke(t *testing.T) { configuredStoryboardSample(t, false) }
+func TestStoryboardPacingConfiguredModelSmoke(t *testing.T) {
+	configuredStoryboardSample(t, false, true)
+}
 
 // 同一虚构小剧本，比较供应商默认思考与按角色策略；不是完整历史版本的性能基准。
 func TestStoryboardReasoningPolicyComparison(t *testing.T) {
@@ -57,7 +60,8 @@ func (w *meteredDramaWriter) CompleteObserved(ctx context.Context, org, user, mo
 	defer cancel()
 	return w.dramaWriter.CompleteObserved(ctx, org, user, model, prompt, o)
 }
-func configuredStoryboardSample(t *testing.T, baseline bool) {
+func configuredStoryboardSample(t *testing.T, baseline bool, pacingCase ...bool) {
+	pacingSample := len(pacingCase) > 0 && pacingCase[0]
 	reference := os.Getenv("HARNESS_TEST_DRAMA_MODEL_PROJECT_ID")
 	if reference == "" {
 		t.Skip("设置参考项目后才执行真实模型流式联调")
@@ -96,6 +100,9 @@ func configuredStoryboardSample(t *testing.T, baseline bool) {
 	service := drama.NewService(repo, writer).WithVisuals(repo, nil, nil).WithStyles(repo).WithStoryboards(repo).WithRepairCoordinator(repo)
 	project, batch, episode, asset := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	script := "【旧书店 内 夜】\n林夏推开店门，停在门边。\n林夏：门怎么开着？\n她转头看向桌上的密封信，没有拆开。"
+	if pacingSample {
+		script = "【旧书店 内 夜】\n林夏进门拿起抹布。\n林夏走到书桌。\n林夏擦好桌面，整理好纸笔。\n林夏：准备好了。"
+	}
 	_, err = repo.Create(ctx, drama.Project{ID: project, OrganizationID: org, OwnerID: owner, Title: "分镜真实联调（临时）", SourceText: script, SourceLength: len([]rune(script)), SourceMode: "upload", Style: "日系动漫", StyleID: "anime-2d", AspectRatio: "9:16", ModelCode: "writer", Status: "ready", Phase: "overview_done"})
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +128,40 @@ func configuredStoryboardSample(t *testing.T, baseline bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if pacingSample {
+		if ok, e := repo.ClaimStoryboard(ctx, job.Run.ID); e != nil || !ok {
+			t.Fatal(e)
+		}
+		if err = repo.SaveStoryboardPlan(ctx, job.Run.ID, []drama.StoryboardSegment{{Title: "整理书店", StartLine: 1, EndLine: 5, StartState: "书店门口", EndState: "书桌前准备完毕"}}); err != nil {
+			t.Fatal(err)
+		}
+		original, e := repo.GetStoryboard(ctx, org, owner, project, episode, job.Run.ID)
+		if e != nil {
+			t.Fatal(e)
+		}
+		seg := original.Segments[0]
+		seg.FormIDs = []string{}
+		seg.Shots = []drama.StoryboardShot{
+			{Description: "林夏进门拿起抹布。", ShotSize: "中景", Camera: "固定", Duration: 6, SourceLines: []int{1, 2}, Utterances: []drama.StoryboardUtterance{}},
+			{Description: "林夏走到书桌。", ShotSize: "中景", Camera: "固定", Duration: 6, SourceLines: []int{3}, Utterances: []drama.StoryboardUtterance{}},
+			{Description: "林夏擦好桌面，整理好纸笔。", ShotSize: "中景", Camera: "固定", Duration: 6, SourceLines: []int{4}, Utterances: []drama.StoryboardUtterance{}},
+			{Description: "林夏开口。", ShotSize: "近景", Camera: "固定", Duration: 3, SourceLines: []int{5}, Utterances: []drama.StoryboardUtterance{{Kind: "dialogue", Speaker: "林夏", Text: "准备好了。", SourceLine: 5}}},
+		}
+		if err = repo.SaveStoryboardSegment(ctx, original.ID, seg); err != nil {
+			t.Fatal(err)
+		}
+		if err = repo.FinishStoryboard(ctx, original.ID, "ready", "临时原稿21秒"); err != nil {
+			t.Fatal(err)
+		}
+		original, e = repo.GetStoryboard(ctx, org, owner, project, episode, original.ID)
+		if e != nil {
+			t.Fatal(e)
+		}
+		job, err = service.StartStoryboardPacing(ctx, org, owner, project, episode, original.ID, drama.StoryboardPacingRequest{Revision: original.Revision, SegmentID: original.Segments[0].ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	started := time.Now()
 	t.Logf("开始真实分镜拆分；临时运行 %s", job.Run.ID)
 	if err = service.GenerateStoryboard(job); err != nil {
@@ -133,6 +174,18 @@ func configuredStoryboardSample(t *testing.T, baseline bool) {
 	r := page.Current
 	if r == nil || r.Status != "ready" || len(r.Segments) == 0 {
 		t.Fatalf("分镜未完成: %+v", r)
+	}
+	if pacingSample {
+		applied := false
+		for _, ticket := range r.Repairs {
+			if ticket.Node == "pacing" && ticket.Status == "resolved" && ticket.BeforeDuration != nil && ticket.AfterDuration != nil && *ticket.AfterDuration < *ticket.BeforeDuration {
+				applied = true
+				t.Logf("真实节奏优化已采纳：%d→%d镜头，%.1f→%.1f秒", *ticket.BeforeShotCount, *ticket.AfterShotCount, *ticket.BeforeDuration, *ticket.AfterDuration)
+			}
+		}
+		if !applied {
+			t.Fatalf("真实模型没有完成可采纳的节奏优化：%+v", r.Repairs)
+		}
 	}
 	shots := 0
 	for _, s := range r.Segments {

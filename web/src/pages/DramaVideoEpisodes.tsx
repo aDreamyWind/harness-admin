@@ -55,7 +55,7 @@ export function DramaVideoEpisodes({ projectId }: { projectId: string }) {
     {!episodes.length ? <div className="drama-empty"><Empty description="暂无可制作的分集剧本"><Button type="primary" onClick={showScripts}>前往剧本分集</Button></Empty></div> : !visible.length ? <div className="drama-empty"><Empty description="此批次暂无分集剧本" /></div> : <div className="drama-video-episode-grid">
       {visible.map((episode) => <article className="drama-video-episode-card" key={episode.scriptEpisodeId}>
         <button type="button" className="drama-video-episode-cover" aria-label={`进入第 ${episode.number} 集：${episode.title}`} onClick={() => openEpisode(episode.scriptEpisodeId)}>
-          <span className="drama-video-episode-number">{episode.number}</span><VideoCameraOutlined /><span>{({pending:'待拆分',queued:'等待拆分',running:'拆分中',failed:'需重试',ready:'待确认',confirmed:'分镜已确认',stale:'来源已变化'})[episode.storyboardStatus]}</span>
+          <span className="drama-video-episode-number">{episode.number}</span><VideoCameraOutlined /><span>{({pending:'待拆分',queued:'等待拆分',running:'拆分中',failed:'需重试',partial:'待继续',ready:'待确认',confirmed:'分镜已确认',stale:'来源已变化'})[episode.storyboardStatus]}</span>
         </button>
         <div className="drama-video-episode-copy">
           <h3 title={episode.title}>第{episode.number}集：{episode.title}</h3>

@@ -25,6 +25,10 @@ func (s *storyboardHTTPStub) StartStoryboard(_ context.Context, o, u, p, e strin
 	s.scope = []string{o, u, p, e}
 	return drama.StoryboardJob{Run: drama.StoryboardRun{ID: "run"}}, s.err
 }
+func (s *storyboardHTTPStub) StartStoryboardPacing(_ context.Context, o, u, p, e, r string, in drama.StoryboardPacingRequest) (drama.StoryboardJob, error) {
+	s.scope = []string{o, u, p, e, r, in.SegmentID}
+	return drama.StoryboardJob{Run: drama.StoryboardRun{ID: "optimized-run"}}, s.err
+}
 func (s *storyboardHTTPStub) GenerateStoryboard(drama.StoryboardJob) error {
 	s.generated <- true
 	return nil
@@ -38,14 +42,14 @@ func (s *storyboardHTTPStub) ConfirmStoryboard(_ context.Context, o, u, p, e, r 
 	return s.err
 }
 func TestStoryboardRoutesSessionCSRFAndScope(t *testing.T) {
-	s := &storyboardHTTPStub{generated: make(chan bool, 2)}
+	s := &storyboardHTTPStub{generated: make(chan bool, 4)}
 	session := accountTestSession()
 	router := New(Dependencies{AppName: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: &csrfCheckingAuthStub{&accountAuthStub{session: session}}, DramaStoryboards: s, SessionCookie: "session"})
 	base := "/api/v1/ai-drama/projects/b6e6da1c-7c27-4f72-babf-34a7c4e19617/video-episodes/3a364763-e0df-4cb4-9c55-88ab0a11ff94/storyboards"
 	for _, tc := range []struct {
 		method, path, body string
 		status             int
-	}{{"GET", base, "", 200}, {"POST", base, `{"resume":true}`, 202}, {"PUT", base + "/run", `{"revision":1,"segments":[]}`, 200}, {"POST", base + "/run/confirm", `{"revision":1}`, 200}} {
+	}{{"GET", base, "", 200}, {"POST", base, `{"resume":true}`, 202}, {"PUT", base + "/run", `{"revision":1,"segments":[]}`, 200}, {"POST", base + "/run/confirm", `{"revision":1}`, 200}, {"POST", base + "/run/optimize-pacing", `{"revision":1,"segmentId":"3a364763-e0df-4cb4-9c55-88ab0a11ff94"}`, 202}} {
 		call := func(auth, csrf bool) *httptest.ResponseRecorder {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")

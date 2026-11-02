@@ -59,8 +59,9 @@ func TestStoryboardValidationCoverageAndDialogue(t *testing.T) {
 
 type sbRepo struct {
 	StoryboardRepository
-	run   StoryboardRun
-	saved []int
+	run           StoryboardRun
+	saved         []int
+	pacingRepairs *repairMemory
 }
 
 func (r *sbRepo) ListStoryboards(context.Context, string, string, string, string) ([]StoryboardRun, error) {
@@ -84,6 +85,15 @@ func (r *sbRepo) SaveStoryboardSegment(_ context.Context, _ string, s Storyboard
 	return nil
 }
 
+func (r *sbRepo) SaveStoryboardPacingResult(ctx context.Context, run string, s StoryboardSegment, ticketID string, result RepairResult) error {
+	if err := r.SaveStoryboardCandidate(ctx, run, s); err != nil {
+		return err
+	}
+	if r.pacingRepairs != nil {
+		return r.pacingRepairs.FinishRepairTicket(ctx, ticketID, result)
+	}
+	return nil
+}
 func (r *sbRepo) SaveStoryboardCandidate(_ context.Context, _ string, s StoryboardSegment) error {
 	for i := range r.run.Segments {
 		if r.run.Segments[i].Number == s.Number {

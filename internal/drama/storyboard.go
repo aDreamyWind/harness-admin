@@ -19,26 +19,27 @@ import (
 var ErrStoryboardConflict = errors.New("分镜正在处理、版本已变化或来源已变化，请刷新后重新拆分")
 
 type StoryboardRun struct {
-	Repairs     []RepairTicket      `json:"repairs"`
-	ID          string              `json:"id"`
-	EpisodeID   string              `json:"episodeId"`
-	ProjectID   string              `json:"projectId"`
-	Version     int                 `json:"version"`
-	Revision    int                 `json:"revision"`
-	Status      string              `json:"status"`
-	Phase       string              `json:"phase"`
-	Message     string              `json:"message"`
-	Error       string              `json:"error"`
-	ScriptText  string              `json:"scriptText"`
-	SourceHash  string              `json:"-"`
-	ModelCode   string              `json:"modelCode"`
-	StyleID     string              `json:"styleId"`
-	AspectRatio string              `json:"aspectRatio"`
-	CreatedAt   time.Time           `json:"createdAt"`
-	UpdatedAt   time.Time           `json:"updatedAt"`
-	Segments    []StoryboardSegment `json:"segments"`
-	Events      []StoryboardEvent   `json:"events"`
-	Stale       bool                `json:"stale"`
+	PacingTarget int                 `json:"pacingTarget,omitempty"`
+	Repairs      []RepairTicket      `json:"repairs"`
+	ID           string              `json:"id"`
+	EpisodeID    string              `json:"episodeId"`
+	ProjectID    string              `json:"projectId"`
+	Version      int                 `json:"version"`
+	Revision     int                 `json:"revision"`
+	Status       string              `json:"status"`
+	Phase        string              `json:"phase"`
+	Message      string              `json:"message"`
+	Error        string              `json:"error"`
+	ScriptText   string              `json:"scriptText"`
+	SourceHash   string              `json:"-"`
+	ModelCode    string              `json:"modelCode"`
+	StyleID      string              `json:"styleId"`
+	AspectRatio  string              `json:"aspectRatio"`
+	CreatedAt    time.Time           `json:"createdAt"`
+	UpdatedAt    time.Time           `json:"updatedAt"`
+	Segments     []StoryboardSegment `json:"segments"`
+	Events       []StoryboardEvent   `json:"events"`
+	Stale        bool                `json:"stale"`
 }
 type StoryboardSegment struct {
 	ID         string              `json:"id"`
@@ -91,11 +92,17 @@ type StoryboardJob struct {
 	Run                     StoryboardRun
 	OrganizationID, OwnerID string
 }
+type StoryboardPacingRequest struct {
+	Revision  int    `json:"revision"`
+	SegmentID string `json:"segmentId"`
+}
 type StoryboardEdit struct {
 	Revision int                 `json:"revision"`
 	Segments []StoryboardSegment `json:"segments"`
 }
 type StoryboardRepository interface {
+	SaveStoryboardPacingResult(context.Context, string, StoryboardSegment, string, RepairResult) error
+	QueueStoryboardPacing(context.Context, string, string, StoryboardRun, int, string) (StoryboardRun, error)
 	ListStoryboards(context.Context, string, string, string, string) ([]StoryboardRun, error)
 	GetStoryboard(context.Context, string, string, string, string, string) (StoryboardRun, error)
 	QueueStoryboard(context.Context, string, string, StoryboardRun, bool) (StoryboardRun, error)
@@ -200,7 +207,7 @@ func (s *Service) StartStoryboard(ctx context.Context, org, user, project, episo
 	}
 	run := StoryboardRun{ID: uuid.NewString(), EpisodeID: episode, ProjectID: project, ScriptText: w.ScriptText, SourceHash: storyboardHash(w)}
 	if resume {
-		if page.Current == nil || page.Current.Status != "failed" || page.Current.Stale {
+		if page.Current == nil || (page.Current.Status != "failed" && page.Current.Status != "partial") || page.Current.Stale {
 			return StoryboardJob{}, ErrStoryboardConflict
 		}
 		run = *page.Current
@@ -235,6 +242,60 @@ func (s *Service) StartStoryboard(ctx context.Context, org, user, project, episo
 	run, err = s.storyboards.QueueStoryboard(ctx, org, user, run, resume)
 	return StoryboardJob{Run: run, OrganizationID: org, OwnerID: user}, err
 }
+
+// 已完成片段按实际主键创建独立优化版本；其他片段和采用图片原样保留。
+func (s *Service) StartStoryboardPacing(ctx context.Context, org, user, project, episode, runID string, in StoryboardPacingRequest) (StoryboardJob, error) {
+	if in.Revision < 1 {
+		return StoryboardJob{}, ErrInvalidInput
+	}
+	if _, err := uuid.Parse(in.SegmentID); err != nil {
+		return StoryboardJob{}, ErrInvalidInput
+	}
+	page, err := s.Storyboards(ctx, org, user, project, episode, runID)
+	if err != nil {
+		return StoryboardJob{}, err
+	}
+	if page.Current == nil || len(page.Runs) == 0 || page.Runs[0].ID != runID || page.Current.Stale || page.Current.Revision != in.Revision || (page.Current.Status != "ready" && page.Current.Status != "confirmed" && page.Current.Status != "partial" && page.Current.Status != "failed") {
+		return StoryboardJob{}, ErrStoryboardConflict
+	}
+	current := *page.Current
+	found := false
+	for _, seg := range current.Segments {
+		if seg.ID == in.SegmentID {
+			if seg.Status != "ready" {
+				return StoryboardJob{}, ErrStoryboardConflict
+			}
+			found = true
+		}
+	}
+	if !found {
+		return StoryboardJob{}, ErrNotFound
+	}
+	settings, err := s.GetSettings(ctx, org, user)
+	if err != nil {
+		return StoryboardJob{}, err
+	}
+	if settings.TextModelCode == "" {
+		return StoryboardJob{}, ErrModelNotConfigured
+	}
+	current.ModelCode = settings.TextModelCode
+	models, err := s.AvailableModels(ctx, org, user)
+	if err != nil {
+		return StoryboardJob{}, err
+	}
+	allowed := false
+	for _, m := range models {
+		if m.ModelType == "chat" && m.Code == current.ModelCode {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return StoryboardJob{}, ErrModelUnavailable
+	}
+	run, err := s.storyboards.QueueStoryboardPacing(ctx, org, user, current, in.Revision, in.SegmentID)
+	return StoryboardJob{Run: run, OrganizationID: org, OwnerID: user}, err
+}
+
 func (s *Service) EditStoryboard(ctx context.Context, org, user, project, episode, runID string, in StoryboardEdit) (StoryboardRun, error) {
 	page, err := s.Storyboards(ctx, org, user, project, episode, runID)
 	if err != nil {

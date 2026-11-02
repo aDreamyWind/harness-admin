@@ -72,11 +72,11 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	if err = repo.CreateRepairTicket(ctx, ticket); err != nil {
 		t.Fatal(err)
 	}
-	if err = repo.FinishRepairTicket(ctx, ticket.ID, "resolved", "复核通过"); err != nil {
+	if err = repo.FinishRepairTicket(ctx, ticket.ID, drama.RepairResult{Status: "resolved", Outcome: "复核通过"}); err != nil {
 		t.Fatal(err)
 	}
 	tickets, err := repo.ListRepairTickets(ctx, drama.RepairTicket{ProjectID: project, Kind: "storyboard", RunID: run.ID, Item: -1})
-	if err != nil || len(tickets) != 1 || tickets[0].Status != "resolved" {
+	if err != nil || len(tickets) != 1 || tickets[0].Status != "resolved" || tickets[0].Item != 1 {
 		t.Fatal("中心派工未持久化", err)
 	}
 	wrong, err := repo.ListRepairTickets(ctx, drama.RepairTicket{ProjectID: uuid.NewString(), Kind: "storyboard", RunID: run.ID, Item: -1})
@@ -180,6 +180,100 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	items, err := repo.ListVideoEpisodes(ctx, org, user, project)
 	if err != nil || items[0].StoryboardStatus != "confirmed" {
 		t.Fatal("列表没有显示真实状态", err)
+	}
+
+	// 局部节奏版本保留原版本、未选片段及采用的图片；采纳与镜头同一事务保存。
+	confirmed, err := repo.GetStoryboard(ctx, org, user, project, episode, edited.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.QueueStoryboardPacing(ctx, org, uuid.NewString(), confirmed, confirmed.Revision, confirmed.Segments[0].ID); !errors.Is(err, drama.ErrNotFound) {
+		t.Fatal("优化越权未拒绝", err)
+	}
+	if _, err = repo.QueueStoryboardPacing(ctx, org, user, confirmed, confirmed.Revision+1, confirmed.Segments[0].ID); !errors.Is(err, drama.ErrStoryboardConflict) {
+		t.Fatal("优化旧修订号未拒绝", err)
+	}
+	paced, err := repo.QueueStoryboardPacing(ctx, org, user, confirmed, confirmed.Revision, confirmed.Segments[0].ID)
+	if err != nil || paced.PacingTarget != 1 || paced.Segments[0].Status != "pending" || paced.Segments[1].Status != "ready" || paced.Segments[0].Bindings[0].ImageID != image1 {
+		t.Fatal("没有只复制并优化目标片段", err)
+	}
+	if _, err = repo.QueueStoryboardPacing(ctx, org, user, paced, paced.Revision, paced.Segments[1].ID); !errors.Is(err, drama.ErrStoryboardConflict) {
+		t.Fatal("运行中优化未拒绝", err)
+	}
+	if ok, e := repo.ClaimStoryboard(ctx, paced.ID); e != nil || !ok {
+		t.Fatal(e)
+	}
+	pacingCandidate := paced.Segments[0]
+	pacingCandidate.Shots[0].Duration = 2
+	count := 1
+	beforeTime, afterTime := 4.0, 2.0
+	settlement := drama.RepairResult{Status: "resolved", Outcome: "已采纳并修改", AfterShotCount: &count, AfterDuration: &afterTime}
+	if err = repo.SaveStoryboardPacingResult(ctx, paced.ID, pacingCandidate, uuid.NewString(), settlement); !errors.Is(err, drama.ErrStoryboardConflict) {
+		t.Fatal("未知派工记录不能提交采纳", err)
+	}
+	rollback, e := repo.GetStoryboard(ctx, org, user, project, episode, paced.ID)
+	if e != nil || rollback.Segments[0].Shots[0].Duration != 4 {
+		t.Fatal("无采纳记录时镜头改动必须一起回滚", e)
+	}
+	paceTicket := drama.RepairTicket{ID: uuid.NewString(), ProjectID: project, Kind: "storyboard", RunID: paced.ID, Item: 1, Reporter: "节奏复核", Problem: "普通动作停留过长", StateHash: "pacing-before", Node: "pacing", TargetItem: 1, Reason: "重复铺垫", Instructions: "保留进门动作并缩短", ReturnTo: "节奏复核", BeforeShotCount: &count, BeforeDuration: &beforeTime}
+	if err = repo.CreateRepairTicket(ctx, paceTicket); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.SaveStoryboardPacingResult(ctx, paced.ID, pacingCandidate, paceTicket.ID, settlement); err != nil {
+		t.Fatal(err)
+	}
+	actual, e := repo.GetStoryboard(ctx, org, user, project, episode, paced.ID)
+	records, e2 := repo.ListRepairTickets(ctx, drama.RepairTicket{ProjectID: project, Kind: "storyboard", RunID: paced.ID, Item: -1})
+	if e != nil || e2 != nil || actual.Segments[0].Shots[0].Duration != 2 || actual.Segments[1].Shots[0].Duration != 3 || len(records) != 1 || records[0].Item != 1 || records[0].Status != "resolved" || *records[0].AfterDuration != 2 {
+		t.Fatal("实际镜头与采纳记录不一致", e, e2, records)
+	}
+	if err = repo.SaveStoryboardSegment(ctx, paced.ID, pacingCandidate); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.FinishStoryboard(ctx, paced.ID, "ready", "仅目标片段已优化"); err != nil {
+		t.Fatal(err)
+	}
+	oldVersion, e := repo.GetStoryboard(ctx, org, user, project, episode, confirmed.ID)
+	if e != nil || oldVersion.Segments[0].Shots[0].Duration != 4 || oldVersion.Status != "confirmed" {
+		t.Fatal("优化改动了历史确认版", e)
+	}
+	// 失败版本也可只优化已完成片段，其他待处理片段保持原样。
+	if _, err = pool.Exec(ctx, `UPDATE drama_storyboard_runs SET status='failed' WHERE id=$1`, paced.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE drama_storyboard_segments SET status='pending' WHERE run_id=$1 AND number=2`, paced.ID); err != nil {
+		t.Fatal(err)
+	}
+	incomplete, e := repo.GetStoryboard(ctx, org, user, project, episode, paced.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	pacingPartial, e := repo.QueueStoryboardPacing(ctx, org, user, incomplete, incomplete.Revision, incomplete.Segments[0].ID)
+	if e != nil || pacingPartial.PacingTarget != 1 || pacingPartial.Segments[1].Status != "pending" {
+		t.Fatal("未完成片段被错误发布", e)
+	}
+	if ok, e := repo.ClaimStoryboard(ctx, pacingPartial.ID); e != nil || !ok {
+		t.Fatal(e)
+	}
+	if err = repo.SaveStoryboardSegment(ctx, pacingPartial.ID, pacingPartial.Segments[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.FinishStoryboard(ctx, pacingPartial.ID, "partial", "目标片段已处理，其余可继续"); err != nil {
+		t.Fatal(err)
+	}
+	pacingPartial, e = repo.GetStoryboard(ctx, org, user, project, episode, pacingPartial.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	resumed, e := repo.QueueStoryboard(ctx, org, user, pacingPartial, true)
+	if e != nil || resumed.PacingTarget != 0 || resumed.Segments[0].Status != "ready" || resumed.Segments[1].Status != "pending" {
+		t.Fatal("继续拆分未清除局部意图或丢失检查点", e)
+	}
+	if ok, e := repo.ClaimStoryboard(ctx, resumed.ID); e != nil || !ok {
+		t.Fatal(e)
+	}
+	if err = repo.FinishStoryboard(ctx, resumed.ID, "failed", "临时测试结束"); err != nil {
+		t.Fatal(err)
 	}
 	// 新运行失败仍可读取上一版；服务恢复不重复调用模型。
 	in.ID = uuid.NewString()

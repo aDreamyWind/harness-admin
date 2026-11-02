@@ -54,8 +54,10 @@ func (issues *storyboardReviewIssues) UnmarshalJSON(data []byte) error {
 }
 
 type storyboardReviewReport struct {
-	Blocking    storyboardReviewIssues `json:"blocking"`
-	Suggestions storyboardReviewIssues `json:"suggestions"`
+	Pacing       []pacingIssue          `json:"pacing"`
+	PacingChecks []pacingCheck          `json:"pacingChecks"`
+	Blocking     storyboardReviewIssues `json:"blocking"`
+	Suggestions  storyboardReviewIssues `json:"suggestions"`
 }
 
 // 来源和类型由程序填写，模型无法修改。存入中心派单的问题文本，便于跨节点追踪。

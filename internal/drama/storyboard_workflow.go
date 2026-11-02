@@ -23,6 +23,14 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 		saveCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
 		defer done()
 		status, message := "ready", "全部片段已保存，待编辑与确认；生成前仍需校验视频模型能力"
+		if result == nil && r.PacingTarget > 0 {
+			for _, seg := range r.Segments {
+				if seg.Status != "ready" {
+					status, message = "partial", "所选片段节奏已处理；其余未完成片段保持原样，可继续拆分。"
+					break
+				}
+			}
+		}
 		if result != nil {
 			status, message = "failed", result.Error()
 		}
@@ -35,6 +43,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 		return err
 	}
 	r = *page.Current
+	pacingOnly := r.PacingTarget > 0
 	if r.Stale {
 		return ErrStoryboardConflict
 	}
@@ -140,6 +149,14 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 			return e
 		}
 		for _, t := range pending {
+			// 采纳和镜头原子提交：仍为assigned说明上次没有提交节奏改动，续跑先结算旧单。
+			if t.Node == "pacing" && t.Status == "assigned" && t.Item > 0 && t.Item <= len(r.Segments) {
+				current := r.Segments[t.Item-1]
+				count, seconds := len(current.Shots), storyboardSeconds(current)
+				if e = center.finishResult(t, RepairResult{Status: "declined", Outcome: "上次优化被中断，未提交改动；保留原稿并在本次继续评估。", AfterShotCount: &count, AfterDuration: &seconds}); e != nil {
+					return e
+				}
+			}
 			if t.Node == "previous" && t.Status == "assigned" && t.TargetItem > 0 && t.TargetItem <= len(r.Segments) && r.Segments[t.TargetItem-1].Status != "ready" {
 				target := t.TargetItem - 1
 				planFix[target] = true
@@ -155,6 +172,11 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 
 	for i := 0; i < len(r.Segments); {
 		seg := r.Segments[i]
+		if pacingOnly && i+1 != r.PacingTarget {
+			previous = seg.EndState
+			i++
+			continue
+		}
 		if seg.Status == "ready" {
 			center.scope.Item = i + 1
 			if err = center.resolveDependencies(); err != nil {
@@ -181,7 +203,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 		}
 		prompt := func() string {
 			plan, _ := json.Marshal(seg)
-			return `你是分镜编写师。仅编写当前片段，不改写小剧本剧情。一个镜头承载可连续完成的可见动作；合理设计景别、表演和运镜。保留全部关键事件、台词和顺序。画面描述不是旁白；声音区分对白dialogue、内心os、画外音vo。台词text必须是sourceLine原行中的连续子串，长台词可按顺序分配到多个镜头，禁止删除或重复。sourceLines引用当前范围L编号，覆盖分配的全部行。formIds只能选给定目录中的真实形象ID，不能创造资产。返回JSON {"formIds":[],"notes":"","shots":[{"description":"主体动作与空间关系","shotSize":"中景","camera":"固定","sound":"环境/动作音","duration":4,"sourceLines":[1],"utterances":[{"kind":"dialogue","speaker":"姓名","text":"完整台词或连续分句","sourceLine":1}]}]}。duration是0.5至60秒数值。中文按约4字/秒、拉丁语约3词/秒，再给每条台词至少0.5秒停顿，优先保证念得完；8～15秒是片段规划目标，不是禁止延长的硬上限。不能编造图片或媒体已生成。
+			return `你是分镜编写师。仅编写当前片段，不改写小剧本剧情。一个镜头承载可连续完成的可见动作；合理设计景别、表演和运镜。保留全部关键事件、台词和顺序。画面描述不是旁白；声音区分对白dialogue、内心os、画外音vo。台词text必须是sourceLine原行中的连续子串，长台词可按顺序分配到多个镜头，禁止删除或重复。sourceLines引用当前范围L编号，覆盖分配的全部行。formIds只能选给定目录中的真实形象ID，不能创造资产。返回JSON {"formIds":[],"notes":"","shots":[{"description":"主体动作与空间关系","shotSize":"中景","camera":"固定","sound":"环境/动作音","duration":4,"sourceLines":[1],"utterances":[{"kind":"dialogue","speaker":"姓名","text":"完整台词或连续分句","sourceLine":1}]}]}。duration是0.5至60秒数值。中文按约4字/秒、拉丁语约3词/秒，再给每条台词至少0.5秒停顿，优先保证念得完；按快节奏漫剧组织普通动作，避免重复铺垫，同一信息可用连续镜头表现；无台词的关键动作、悬念和情绪停顿须保留，不为省时新增旁白。notes不宣称尚未执行的修改。8～15秒是片段规划目标，不是禁止延长的硬上限。不能编造图片或媒体已生成。
 前片段末态：` + previous + "\n当前规划和已有草稿：" + string(plan) + "\n真实资产形象：" + string(forms) + "\n本片段剧本：\n" + numbered(seg.StartLine, seg.EndLine) + "\n中心修正要求：" + feedbacks[i]
 		}
 
@@ -256,6 +278,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 		}
 		redirected := false
 		reviewFeedback, invalidReview := "", ""
+		var pacing []pacingIssue
 		for {
 			if problem == nil {
 				checkedAt := time.Now()
@@ -270,15 +293,12 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				if invalidReview != "" {
 					reviewPhase += "格式修正"
 				}
-				review, e := call(reviewPhase, `你是分镜审阅师。只依据给定剧本与前段状态检查：关键剧情或台词是否被改变、遗漏，动作和空间状态是否明显矛盾，台词是否能念完。合理构图/表演不要求逐字来自剧本。审美偏好只作为建议，不凭空制造阻断。8～15秒是软目标，不因延长就报错；尚未接入视频模型，不捏造模型能力限制。返回JSON {"blocking":[{"shot":1,"field":"字段名","message":"具体问题","evidence":"剧本依据","fix":"最小修正建议"}],"suggestions":[]}。无问题时两个字段均为空数组。建议也用相同问题对象，禁止返回null。\n前段状态：`+previous+"\n剧本："+numbered(seg.StartLine, seg.EndLine)+"\n当前草稿："+string(draft)+"\n本次审阅格式修正要求："+reviewFeedback+"\n上次未能读取的审阅（只修正审阅格式，禁止因此重写镜头）："+invalidReview)
+				review, e := call(reviewPhase, `你是分镜审阅师。只依据给定剧本与前段状态检查：关键剧情或台词是否被改变、遗漏，动作和空间状态是否明显矛盾，台词是否能念完。合理构图/表演不要求逐字来自剧本。审美偏好只作为建议，不凭空制造阻断。8～15秒是软目标，不因延长就报错；尚未接入视频模型，不捏造模型能力限制。返回JSON {"blocking":[{"shot":1,"field":"字段名","message":"具体问题","evidence":"剧本依据","fix":"最小修正建议"}],"suggestions":[]}。另返回pacing数组，专门列需要执行的节奏优化：[{"kind":"repeated_exposition或idle_hold","action":"merge或shorten","shots":[1,2],"reason":"具体哪些动作/信息重复或无信息停留过长","fix":"保留哪些关键动作并如何合并/缩短"}]。同一信息反复交代、普通上工/回忆铺垫过长应列pacing，而非仅在suggestions中建议。不得因没有台词或总时长大就直接要求压缩；重要动作、悬念、情绪变化可保留必要停顿。合并只引用当前片段内连续镜头。审美偏好仍放suggestions。无问题时blocking、suggestions、pacing均为空数组，禁止返回null。\n前段状态：`+previous+"\n剧本："+numbered(seg.StartLine, seg.EndLine)+"\n实际节奏统计："+storyboardPacingStats(seg)+"\n当前草稿："+string(draft)+"\n本次审阅格式修正要求："+reviewFeedback+"\n上次未能读取的审阅（只修正审阅格式，禁止因此重写镜头）："+invalidReview)
 				if e != nil {
 					return e
 				}
 				var report storyboardReviewReport
-				problem = decodeStoryboard(review, &report)
-				if problem == nil && (report.Blocking == nil || report.Suggestions == nil) {
-					problem = errors.New("审阅缺少blocking或suggestions数组")
-				}
+				report, problem = decodeStoryboardReview(review, seg)
 				if problem != nil {
 					invalidReview = review
 					problem = storyboardProblem(problem, "分镜审阅", "review_format", "blocking/suggestions")
@@ -290,13 +310,26 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				}
 				if problem == nil {
 					seg.Notes = strings.TrimSpace(seg.Notes + "\n" + readableReviewSuggestions(report.Suggestions))
+					pacing = report.Pacing
 				}
 			}
 			if err = settle(problem); err != nil {
 				return err
 			}
 			if problem == nil {
+				if len(pacing) > 0 || pacingOnly {
+					seg, err = optimizeStoryboardPacing(center, seg, pacing, lines, page.Forms, previous, numbered(seg.StartLine, seg.EndLine), phase, call, func(candidate StoryboardSegment, ticket RepairTicket, result RepairResult) error {
+						return s.storyboards.SaveStoryboardPacingResult(ctx, r.ID, candidate, ticket.ID, result)
+					})
+					if err != nil {
+						return err
+					}
+				}
 				break
+			}
+			var pacingProblem *workflowProblem
+			if pacingOnly && errors.As(problem, &pacingProblem) && (pacingProblem.Code == "content_validation" || pacingProblem.Code == "speech_duration" || pacingProblem.Code == "review_content") {
+				return fmt.Errorf("当前片段内容未通过复核，未执行节奏改动：%w", problem)
 			}
 			if errors.Is(problem, context.Canceled) || errors.Is(problem, ErrStoryboardConflict) {
 				return problem

@@ -8,6 +8,7 @@ import (
 )
 
 type DramaStoryboardService interface {
+	StartStoryboardPacing(context.Context, string, string, string, string, string, drama.StoryboardPacingRequest) (drama.StoryboardJob, error)
 	Storyboards(context.Context, string, string, string, string, string) (drama.StoryboardPage, error)
 	StartStoryboard(context.Context, string, string, string, string, bool) (drama.StoryboardJob, error)
 	GenerateStoryboard(drama.StoryboardJob) error
@@ -44,6 +45,29 @@ func registerDramaStoryboardRoutes(router *gin.Engine, deps Dependencies) {
 		go func() {
 			if err := deps.DramaStoryboards.GenerateStoryboard(job); err != nil {
 				deps.Logger.Error("单集分镜拆分失败", "run_id", job.Run.ID, "error", err)
+			}
+		}()
+		httpx.OK(c, 202, job.Run)
+	})
+	group.POST("/:runId/optimize-pacing", requireCSRF(deps), func(c *gin.Context) {
+		var in drama.StoryboardPacingRequest
+		if err := c.ShouldBindJSON(&in); err != nil {
+			handleDramaError(c, deps, drama.ErrInvalidInput)
+			return
+		}
+		if in.Revision < 1 || in.SegmentID == "" {
+			handleDramaError(c, deps, drama.ErrInvalidInput)
+			return
+		}
+		u := currentSession(c).User
+		job, err := deps.DramaStoryboards.StartStoryboardPacing(c.Request.Context(), u.OrganizationID, u.ID, c.Param("id"), c.Param("episodeId"), c.Param("runId"), in)
+		if err != nil {
+			handleDramaError(c, deps, err)
+			return
+		}
+		go func() {
+			if err := deps.DramaStoryboards.GenerateStoryboard(job); err != nil {
+				deps.Logger.Error("分镜节奏优化失败", "run_id", job.Run.ID, "error", err)
 			}
 		}()
 		httpx.OK(c, 202, job.Run)

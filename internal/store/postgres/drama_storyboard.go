@@ -9,11 +9,11 @@ import (
 	"harness-admin/internal/drama"
 )
 
-const storyboardColumns = `r.id,r.source_episode_id,r.project_id,r.version,r.revision,r.status,r.phase,r.message,r.error_message,r.script_text,r.source_hash,r.model_code,r.style_id,r.aspect_ratio,r.created_at,r.updated_at`
+const storyboardColumns = `r.id,r.source_episode_id,r.project_id,r.version,r.revision,r.status,r.phase,r.message,r.error_message,r.script_text,r.source_hash,r.model_code,r.style_id,r.aspect_ratio,r.created_at,r.updated_at,r.pacing_target`
 
 func scanStoryboard(row pgx.Row) (drama.StoryboardRun, error) {
 	r := drama.StoryboardRun{Repairs: []drama.RepairTicket{}, Segments: []drama.StoryboardSegment{}, Events: []drama.StoryboardEvent{}}
-	err := row.Scan(&r.ID, &r.EpisodeID, &r.ProjectID, &r.Version, &r.Revision, &r.Status, &r.Phase, &r.Message, &r.Error, &r.ScriptText, &r.SourceHash, &r.ModelCode, &r.StyleID, &r.AspectRatio, &r.CreatedAt, &r.UpdatedAt)
+	err := row.Scan(&r.ID, &r.EpisodeID, &r.ProjectID, &r.Version, &r.Revision, &r.Status, &r.Phase, &r.Message, &r.Error, &r.ScriptText, &r.SourceHash, &r.ModelCode, &r.StyleID, &r.AspectRatio, &r.CreatedAt, &r.UpdatedAt, &r.PacingTarget)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, drama.ErrNotFound
 	}
@@ -178,7 +178,7 @@ func (r *DramaRepository) QueueStoryboard(ctx context.Context, org, user string,
 		if latest != in.ID {
 			return in, drama.ErrStoryboardConflict
 		}
-		tag, e := tx.Exec(ctx, `UPDATE drama_storyboard_runs SET status='queued',error_message='',message='等待继续拆分',updated_at=now() WHERE id=$1 AND status='failed' AND source_hash=$2`, in.ID, in.SourceHash)
+		tag, e := tx.Exec(ctx, `UPDATE drama_storyboard_runs SET status='queued',pacing_target=0,error_message='',message='等待继续拆分',updated_at=now() WHERE id=$1 AND status IN ('failed','partial') AND source_hash=$2`, in.ID, in.SourceHash)
 		if e != nil {
 			return in, e
 		}
@@ -273,13 +273,22 @@ func (r *DramaRepository) writeStoryboardSegment(ctx context.Context, tx pgx.Tx,
 	}
 	return nil
 }
+
+type pacingSettlement struct {
+	TicketID string
+	Result   drama.RepairResult
+}
+
+func (r *DramaRepository) SaveStoryboardPacingResult(ctx context.Context, runID string, seg drama.StoryboardSegment, ticketID string, result drama.RepairResult) error {
+	return r.persistStoryboardSegment(ctx, runID, seg, false, pacingSettlement{ticketID, result})
+}
 func (r *DramaRepository) SaveStoryboardSegment(ctx context.Context, runID string, seg drama.StoryboardSegment) error {
 	return r.persistStoryboardSegment(ctx, runID, seg, true)
 }
 func (r *DramaRepository) SaveStoryboardCandidate(ctx context.Context, runID string, seg drama.StoryboardSegment) error {
 	return r.persistStoryboardSegment(ctx, runID, seg, false)
 }
-func (r *DramaRepository) persistStoryboardSegment(ctx context.Context, runID string, seg drama.StoryboardSegment, ready bool) error {
+func (r *DramaRepository) persistStoryboardSegment(ctx context.Context, runID string, seg drama.StoryboardSegment, ready bool, settlements ...pacingSettlement) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -304,6 +313,16 @@ func (r *DramaRepository) persistStoryboardSegment(ctx context.Context, runID st
 	}
 	if _, err = tx.Exec(ctx, `UPDATE drama_storyboard_segments SET status=$3,notes=$2 WHERE id=$1`, seg.ID, seg.Notes, map[bool]string{true: "ready", false: "pending"}[ready]); err != nil {
 		return err
+	}
+	for _, settlement := range settlements {
+		result := settlement.Result
+		tag, e := tx.Exec(ctx, `UPDATE drama_repair_tickets SET status=$4,outcome=$5,after_shot_count=$6,after_duration=$7,updated_at=now() WHERE id=$1 AND run_id=$2 AND item=$3 AND kind='storyboard' AND node='pacing' AND status='assigned'`, settlement.TicketID, runID, seg.Number, result.Status, result.Outcome, result.AfterShotCount, result.AfterDuration)
+		if e != nil {
+			return e
+		}
+		if tag.RowsAffected() != 1 {
+			return drama.ErrStoryboardConflict
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -348,6 +367,12 @@ func (r *DramaRepository) FinishStoryboard(ctx context.Context, id, status, mess
 	return tx.Commit(ctx)
 }
 func (r *DramaRepository) EditStoryboard(ctx context.Context, org, user string, in drama.StoryboardRun, revision int) (drama.StoryboardRun, error) {
+	return r.cloneStoryboardVersion(ctx, org, user, in, revision, "")
+}
+func (r *DramaRepository) QueueStoryboardPacing(ctx context.Context, org, user string, in drama.StoryboardRun, revision int, segmentID string) (drama.StoryboardRun, error) {
+	return r.cloneStoryboardVersion(ctx, org, user, in, revision, segmentID)
+}
+func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user string, in drama.StoryboardRun, revision int, pacingSegment string) (drama.StoryboardRun, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return in, err
@@ -372,13 +397,35 @@ func (r *DramaRepository) EditStoryboard(ctx context.Context, org, user string, 
 	if latestID != in.ID || rev != revision || status == "running" || status == "queued" {
 		return in, drama.ErrStoryboardConflict
 	}
-	// 每次人工保存生成完整独立版本，旧镜头、绑定和事件保持原样。
+	// 编辑和节奏优化均生成完整独立版本，旧镜头、绑定和事件保持原样。
 	old, err := r.GetStoryboard(ctx, org, user, in.ProjectID, in.EpisodeID, in.ID)
 	if err != nil {
 		return in, err
 	}
-	in.ID, in.Version, in.Status = uuid.NewString(), version+1, "ready"
-	if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_runs(id,episode_id,source_episode_id,project_id,version,status,phase,message,script_text,source_hash,model_code,style_id,aspect_ratio) VALUES($1,$2,$2,$3,$4,'ready','人工编辑','人工编辑已保存，待确认',$5,$6,$7,$8,$9)`, in.ID, in.EpisodeID, in.ProjectID, in.Version, in.ScriptText, in.SourceHash, in.ModelCode, in.StyleID, in.AspectRatio); err != nil {
+	phase, message, newStatus := "人工编辑", "人工编辑已保存，待确认", "ready"
+	in.PacingTarget = 0
+	if pacingSegment != "" {
+		if status != "ready" && status != "confirmed" && status != "partial" && status != "failed" {
+			return in, drama.ErrStoryboardConflict
+		}
+		in.Segments = old.Segments
+		found := false
+		for _, seg := range in.Segments {
+			if seg.ID == pacingSegment {
+				if seg.Status != "ready" {
+					return in, drama.ErrStoryboardConflict
+				}
+				in.PacingTarget = seg.Number
+				found = true
+			}
+		}
+		if !found {
+			return in, drama.ErrNotFound
+		}
+		phase, message, newStatus = "节奏优化", "等待优化所选片段，其他片段保持不变", "queued"
+	}
+	in.ID, in.Version, in.Status = uuid.NewString(), version+1, newStatus
+	if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_runs(id,episode_id,source_episode_id,project_id,version,status,phase,message,script_text,source_hash,model_code,style_id,aspect_ratio,pacing_target) VALUES($1,$2,$2,$3,$4,$10,$11,$12,$5,$6,$7,$8,$9,$13)`, in.ID, in.EpisodeID, in.ProjectID, in.Version, in.ScriptText, in.SourceHash, in.ModelCode, in.StyleID, in.AspectRatio, newStatus, phase, message, in.PacingTarget); err != nil {
 		return in, err
 	}
 	for i, seg := range in.Segments {
@@ -388,11 +435,18 @@ func (r *DramaRepository) EditStoryboard(ctx context.Context, org, user string, 
 				bindings = prior.Bindings
 			}
 		}
+		segmentStatus := "ready"
+		if pacingSegment != "" {
+			segmentStatus = seg.Status
+		}
+		if seg.ID == pacingSegment {
+			segmentStatus = "pending"
+		}
 		seg.ID = uuid.NewString()
-		if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_segments(id,run_id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'ready',$11)`, seg.ID, in.ID, i+1, seg.Title, seg.Scene, seg.Purpose, seg.StartLine, seg.EndLine, seg.StartState, seg.EndState, seg.Notes); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_segments(id,run_id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$12,$11)`, seg.ID, in.ID, i+1, seg.Title, seg.Scene, seg.Purpose, seg.StartLine, seg.EndLine, seg.StartState, seg.EndState, seg.Notes, segmentStatus); err != nil {
 			return in, err
 		}
-		if err = r.writeStoryboardSegment(ctx, tx, in, seg, bindings, true); err != nil {
+		if err = r.writeStoryboardSegment(ctx, tx, in, seg, bindings, pacingSegment == ""); err != nil {
 			return in, err
 		}
 	}

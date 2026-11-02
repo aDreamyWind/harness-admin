@@ -49,7 +49,7 @@ func ModelReasoningRole(stage string) string {
 	case "art", "story", "context", "plan", "review", "repair":
 		return "balanced"
 	}
-	if strings.Contains(stage, "审阅") || strings.Contains(stage, "导演规划") {
+	if strings.Contains(stage, "审阅") || strings.Contains(stage, "节奏复核") || strings.Contains(stage, "导演规划") {
 		return "balanced"
 	}
 	return "creative"

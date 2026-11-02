@@ -180,7 +180,7 @@ export interface DramaVideoEpisode {
   batch: DramaBatchReference
   title: string
   synopsis: string
-  storyboardStatus: 'pending' | 'queued' | 'running' | 'failed' | 'ready' | 'confirmed' | 'stale'
+  storyboardStatus: 'pending' | 'queued' | 'running' | 'failed' | 'ready' | 'confirmed' | 'partial' | 'stale'
   characterCount: number
   sceneCount: number
   propCount: number
@@ -225,12 +225,13 @@ export const listDramaStyles = () => request<DramaStyleOption[]>('/api/v1/ai-dra
 export interface DramaStoryboardUtterance { kind: 'dialogue' | 'os' | 'vo'; speaker: string; text: string; sourceLine: number }
 export interface DramaStoryboardShot { id: string; number: number; description: string; shotSize: string; camera: string; sound: string; duration: number; sourceLines: number[]; utterances: DramaStoryboardUtterance[] }
 export interface DramaStoryboardSegment { id: string; number: number; title: string; scene: string; purpose: string; startLine: number; endLine: number; startState: string; endState: string; status: string; notes: string; formIds: string[]; bindings: {formId: string; imageId: string}[]; shots: DramaStoryboardShot[] }
-export interface DramaStoryboardRun { repairs?: DramaRepairTicket[]; id: string; episodeId: string; projectId: string; version: number; revision: number; status: string; phase: string; message: string; error: string; scriptText: string; modelCode: string; styleId: string; aspectRatio: string; createdAt: string; updatedAt: string; stale: boolean; segments: DramaStoryboardSegment[]; events: {id: number; message: string; createdAt: string}[] }
+export interface DramaStoryboardRun { pacingTarget?: number; repairs?: DramaRepairTicket[]; id: string; episodeId: string; projectId: string; version: number; revision: number; status: string; phase: string; message: string; error: string; scriptText: string; modelCode: string; styleId: string; aspectRatio: string; createdAt: string; updatedAt: string; stale: boolean; segments: DramaStoryboardSegment[]; events: {id: number; message: string; createdAt: string}[] }
 export interface DramaStoryboardPage { runs: DramaStoryboardRun[]; current: DramaStoryboardRun | null; forms: DramaAssetForm[] }
 const storyboardBase = (project: string, episode: string) => `${visualBase(project)}/video-episodes/${episode}/storyboards`
 export const getDramaStoryboards = (project: string, episode: string, run = '') => request<DramaStoryboardPage>(`${storyboardBase(project, episode)}${run ? `?run=${encodeURIComponent(run)}` : ''}`)
 export const startDramaStoryboard = (project: string, episode: string, resume = false) => request<DramaStoryboardRun>(storyboardBase(project, episode), { method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ resume }) })
 export const saveDramaStoryboard = (project: string, episode: string, run: DramaStoryboardRun, segments: DramaStoryboardSegment[]) => request<DramaStoryboardRun>(`${storyboardBase(project, episode)}/${run.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision: run.revision, segments }) })
+export const optimizeDramaStoryboardPacing = (project: string, episode: string, run: DramaStoryboardRun, segmentId: string) => request<DramaStoryboardRun>(`${storyboardBase(project, episode)}/${run.id}/optimize-pacing`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision: run.revision, segmentId }) })
 export const confirmDramaStoryboard = (project: string, episode: string, run: DramaStoryboardRun) => request<{confirmed: boolean}>(`${storyboardBase(project, episode)}/${run.id}/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision: run.revision }) })
 
-export interface DramaRepairTicket { id: string; kind: 'batch' | 'storyboard'; item: number; reporter: string; problem: string; node: string; targetItem: number; reason: string; instructions: string; returnTo: string; status: 'assigned' | 'resolved' | 'feedback' | 'blocked'; outcome: string; createdAt: string }
+export interface DramaRepairTicket { id: string; kind: 'batch' | 'storyboard'; item: number; reporter: string; problem: string; node: string; targetItem: number; reason: string; instructions: string; returnTo: string; status: 'assigned' | 'resolved' | 'feedback' | 'blocked' | 'declined'; beforeShotCount?: number; afterShotCount?: number; beforeDuration?: number; afterDuration?: number; outcome: string; createdAt: string }

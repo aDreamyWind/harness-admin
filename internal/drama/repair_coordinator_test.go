@@ -24,10 +24,12 @@ func (r *repairMemory) CreateRepairTicket(_ context.Context, t RepairTicket) err
 	r.tickets = append(r.tickets, t)
 	return nil
 }
-func (r *repairMemory) FinishRepairTicket(_ context.Context, id, status, outcome string) error {
+func (r *repairMemory) FinishRepairTicket(_ context.Context, id string, result RepairResult) error {
+	status, outcome := result.Status, result.Outcome
 	for i := range r.tickets {
 		if r.tickets[i].ID == id {
 			r.tickets[i].Status, r.tickets[i].Outcome = status, outcome
+			r.tickets[i].AfterShotCount, r.tickets[i].AfterDuration = result.AfterShotCount, result.AfterDuration
 			return nil
 		}
 	}

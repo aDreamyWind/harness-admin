@@ -525,6 +525,41 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: 分镜运行中、并发版本冲突或来源已变化
+  /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}/optimize-pacing:
+    post:
+      summary: 创建新版本并优化当前片段的节奏
+      operationId: optimizeDramaStoryboardPacing
+      description: 仅限来源有效的最新非运行版本中的已完成片段；创建独立版本，只把所选片段设为待优化，其他镜头及采用图片保持原样。节奏建议通过局部修改及完整内容复核后才采纳；两轮未通过保留原稿并记录原因。不会自动生成媒体。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, segmentId]
+              properties:
+                revision: { type: integer, minimum: 1 }
+                segmentId: { type: string, format: uuid }
+      responses:
+        '202':
+          description: 所选片段已入队，返回新版本
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaStoryboardRun' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 运行中、非最新版本、修订号冲突或来源已变化
   /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}/confirm:
     post:
       summary: 确认最新分镜版本
@@ -3757,7 +3792,7 @@ components:
         batch: { $ref: '#/components/schemas/DramaBatchReference' }
         title: { type: string }
         synopsis: { type: string }
-        storyboardStatus: { type: string, enum: [pending, queued, running, failed, ready, confirmed, stale], description: 最近一次真实分镜运行状态，剧本变化时标记需重新核对。 }
+        storyboardStatus: { type: string, enum: [pending, queued, running, failed, ready, confirmed, partial, stale], description: 最近一次真实分镜运行状态，剧本变化时标记需重新核对。 }
         characterCount: { type: integer, minimum: 0 }
         sceneCount: { type: integer, minimum: 0 }
         propCount: { type: integer, minimum: 0 }
@@ -3782,12 +3817,16 @@ components:
         item: { type: integer, minimum: 0 }
         reporter: { type: string }
         problem: { type: string }
-        node: { type: string, enum: [timing, writer, planner, previous, reviewer, script_patch, script_director, pause] }
+        node: { type: string, enum: [timing, writer, planner, previous, reviewer, pacing, script_patch, script_director, pause] }
         targetItem: { type: integer, minimum: 0 }
         reason: { type: string }
         instructions: { type: string }
         returnTo: { type: string }
-        status: { type: string, enum: [assigned, resolved, feedback, blocked] }
+        status: { type: string, enum: [assigned, resolved, feedback, blocked, declined] }
+        beforeShotCount: { type: integer, minimum: 1, description: 节奏优化前实际镜头数 }
+        afterShotCount: { type: integer, minimum: 1, description: 实际保存的镜头数，未采纳时与原稿相同 }
+        beforeDuration: { type: number, exclusiveMinimum: 0, description: 优化前实际规划总秒数 }
+        afterDuration: { type: number, exclusiveMinimum: 0, description: 实际保存的规划总秒数，未采纳时与原稿相同 }
         outcome: { type: string }
         createdAt: { type: string, format: date-time }
     DramaStoryboardUtterance:
@@ -3846,7 +3885,7 @@ components:
         projectId: { type: string, format: uuid }
         version: { type: integer, minimum: 1 }
         revision: { type: integer, minimum: 1 }
-        status: { type: string, enum: [queued, running, failed, ready, confirmed] }
+        status: { type: string, enum: [queued, running, failed, ready, confirmed, partial] }
         phase: { type: string }
         message: { type: string }
         error: { type: string }
@@ -3858,6 +3897,7 @@ components:
         updatedAt: { type: string, format: date-time }
         stale: { type: boolean }
         repairs: { type: array, items: { $ref: '#/components/schemas/DramaRepairTicket' } }
+        pacingTarget: { type: integer, minimum: 1, description: 仅优化的片段编号，省略表示普通拆分；其余片段保持不变 }
         segments: { type: array, items: { $ref: '#/components/schemas/DramaStoryboardSegment' } }
         events:
           type: array
