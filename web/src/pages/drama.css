@@ -278,3 +278,10 @@
 .drama-asset-placeholder>small {font-size:12px; color:#7891bc;}
 @media(max-width:1200px){.drama-asset-toolbar {align-items:flex-start; flex-wrap:wrap; gap:8px;}.drama-asset-toolbar-actions {margin-left:auto;}}
 @media(max-width:650px){.drama-asset-toolbar-actions {width:100%; justify-content:flex-start;}.drama-asset-toolbar-actions>.ant-select {width:calc(50% - 6px);}}
+.drama-storyboard-repair-history {margin:0 0 16px; padding:12px 14px; border:1px solid #dce6f5; border-radius:8px; background:#f8faff; font-size:12px; flex:none;}
+.drama-storyboard-repair-history summary {cursor:pointer; color:#466596; font-weight:600;}
+.drama-storyboard-repair-history article {padding:12px 0; border-bottom:1px solid #e4ebf5;}
+.drama-storyboard-repair-history article:last-child {border-bottom:0; padding-bottom:0;}
+.drama-storyboard-repair-history strong {font-size:12px; color:#4b607f;}
+.drama-storyboard-repair-history p {margin:7px 0; line-height:1.8;}
+.drama-storyboard-repair-history small {color:#8392a8; line-height:1.8;}

@@ -62,7 +62,7 @@ type batchWorkflow struct {
 	slowThreshold time.Duration
 }
 
-var stageLabels = map[string]string{"art": "美术指导", "story": "剧情整理", "evidence": "原文证据单元", "plan": "分集规划", "name": "批次命名", "context": "本批上下文", "repair": "局部修正", "director": "导演", "review": "剧本审校"}
+var stageLabels = map[string]string{"coordinator": "中心调度", "art": "美术指导", "story": "剧情整理", "evidence": "原文证据单元", "plan": "分集规划", "name": "批次命名", "context": "本批上下文", "repair": "局部修正", "director": "导演", "review": "剧本审校"}
 
 type BatchEventPage struct {
 	Events []BatchEvent

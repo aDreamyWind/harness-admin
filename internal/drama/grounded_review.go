@@ -1,6 +1,7 @@
 package drama
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -214,21 +215,40 @@ func (w *batchWorkflow) writeReviewedEpisode(number, total int, plan EpisodePlan
 	if len(continuity) > 0 {
 		previous = continuity[0]
 	}
+	center := &repairCenter{ctx: w.ctx, repo: w.service.repairs, scope: RepairTicket{ProjectID: w.job.Batch.ProjectID, Kind: "batch", RunID: w.job.Batch.AnalysisRunID, Item: number}, call: func(phase, prompt string) (string, error) { return w.complete("coordinator", number, prompt) }, emit: func(message string) error { return w.emit("coordinator", number, "route", message) }}
+	tools := map[string]string{"script_patch": "局部修正当前集的事实、因果、台词或资产引用，保留其他正文和已解决约束", "script_director": "局部修正没有进展或当前剧本结构明显错误时，由单集导演重新编写当前集，禁止影响其他集或加入范围外事实", "reviewer": "修正审校输出的格式、虚构引文或漏复核历史ID，返回原审校节点，不修改事实依据", "pause": "原文、目录或用户决策确实不足且无法安全修复时暂停，禁止编造素材"}
 	var episode EpisodeDraft
-	raw, err := w.runStep("director", number, total, base, func(raw json.RawMessage) error {
-		var value struct {
+	validateDirector := func(raw json.RawMessage) error {
+		var v struct {
 			Episodes []EpisodeDraft `json:"episodes"`
 		}
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return err
+		if e := json.Unmarshal(raw, &v); e != nil {
+			return e
 		}
-		if len(value.Episodes) != 1 || value.Episodes[0].Title != plan.Title {
+		if len(v.Episodes) != 1 || v.Episodes[0].Title != plan.Title {
 			return errors.New("只能生成规划中的当前一集，标题必须一致")
 		}
-		return validateGroundedEpisode(value.Episodes[0], assets, original)
-	}, false)
-	if err != nil {
-		return episode, err
+		episode = v.Episodes[0]
+		return validateGroundedEpisode(episode, assets, original)
+	}
+	raw, err := w.runStep("director", number, total, base, validateDirector, false)
+	for err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, ErrBatchConflict) {
+			return episode, err
+		}
+		state, _ := json.Marshal(episode)
+		t, e := center.choose(err.Error(), "剧本结构检查", string(state), original, map[string]string{"script_director": tools["script_director"], "pause": tools["pause"]}, []int{number})
+		if e != nil {
+			return episode, e
+		}
+		raw, err = w.runStep("director", number, total, base+"\n中心修正要求："+t.Instructions+"\n失败候选："+string(state), validateDirector, true)
+		status, outcome := "resolved", "单集导演修正后结构检查通过"
+		if err != nil {
+			status, outcome = "feedback", err.Error()
+		}
+		if e = center.finish(t, status, outcome); e != nil {
+			return episode, e
+		}
 	}
 	var directed struct {
 		Episodes []EpisodeDraft `json:"episodes"`
@@ -238,6 +258,14 @@ func (w *batchWorkflow) writeReviewedEpisode(number, total int, plan EpisodePlan
 	}
 	episode = directed.Episodes[0]
 	hash := inputFingerprint(w.job, base)
+	// 修正仍以原来的内容上下文作为缓存身份，避免续跑重新生成已修复正文。
+	persist := func() error {
+		data, _ := json.Marshal(map[string]any{"episodes": []EpisodeDraft{episode}})
+		return w.service.repository.SaveRepairedEpisode(w.ctx, w.job, number, string(data), hash)
+	}
+	if err = persist(); err != nil {
+		return episode, err
+	}
 	all, err := w.service.repository.ListReviewIssues(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.Batch.ProjectID, w.job.Batch.ID)
 	if err != nil {
 		return episode, err
@@ -252,80 +280,121 @@ func (w *batchWorkflow) writeReviewedEpisode(number, total int, plan EpisodePlan
 	cachedPrompt := fmt.Sprintf(groundedReviewPrompt, string(reviewConstraintJSON(history)), previous, original, string(currentJSON))
 	if old, ok := w.saved[fmt.Sprintf("review:%d", number)]; ok && old.Status == "completed" && old.InputHash == inputFingerprint(w.job, cachedPrompt) {
 		var reply groundedReview
-		if err = json.Unmarshal([]byte(old.ResultText), &reply); err != nil {
-			return episode, err
-		}
-		history, err = mergeReview(reply, history, episode, original, start, number, w.job, hash)
-		if err != nil {
-			return episode, err
-		}
-		if err = w.service.repository.SaveReviewIssues(w.ctx, w.job, history); err != nil {
-			return episode, err
-		}
-		if len(blockingIssues(history)) == 0 {
-			return episode, nil
+		if json.Unmarshal([]byte(old.ResultText), &reply) == nil {
+			if merged, e := mergeReview(reply, history, episode, original, start, number, w.job, hash); e == nil {
+				history = merged
+				if e = w.service.repository.SaveReviewIssues(w.ctx, w.job, history); e != nil {
+					return episode, e
+				}
+				if len(blockingIssues(history)) == 0 {
+					return episode, nil
+				}
+			}
 		}
 	}
-	repairs := 0
+	var problem error
+	var ticket RepairTicket
 	for {
 		open := blockingIssues(history)
-		if len(open) > 0 {
-			if repairs >= 2 {
-				return episode, fmt.Errorf("第%d集仍有待修正的事实问题：%s", number, strings.Join(open, "；"))
+		if problem != nil || len(open) > 0 {
+			if problem == nil {
+				problem = errors.New(strings.Join(open, "；"))
 			}
-			if err = w.emit("review", number, "repair", "局部修正当前问题，并保留此前已解决约束："+strings.Join(open, "；")); err != nil {
-				return episode, err
-			}
-			before, _ := json.Marshal(episode)
-			issues := issuePromptJSON(history)
-			var after EpisodeDraft
-			_, err = w.runStep("repair", number, total, fmt.Sprintf(groundedPatchPrompt, string(before), string(issues), original), func(raw json.RawMessage) error {
-				var patch scriptPatch
-				if err := json.Unmarshal(raw, &patch); err != nil {
-					return err
+			if ticket.ID != "" {
+				if err = center.finish(ticket, "feedback", problem.Error()); err != nil {
+					return episode, err
 				}
-				var err error
-				after, err = patchEpisode(episode, patch, assets, original)
-				return err
-			}, false)
+				ticket = RepairTicket{}
+			}
+			state, _ := json.Marshal(struct {
+				Episode EpisodeDraft
+				History []ReviewIssue
+			}{episode, history})
+			ticket, err = center.choose(problem.Error(), "剧本审校", string(state), original, tools, []int{number})
 			if err != nil {
 				return episode, err
 			}
-			episode = after
-			repaired, _ := json.Marshal(map[string]any{"episodes": []EpisodeDraft{episode}})
-			if err = w.service.repository.SaveRepairedEpisode(w.ctx, w.job, number, string(repaired), hash); err != nil {
-				return episode, err
+			instructions := "\n中心要求：" + ticket.Instructions + "\n累计约束：" + string(issuePromptJSON(history))
+			problem = nil
+			switch ticket.Node {
+			case "script_patch":
+				before, _ := json.Marshal(episode)
+				var after EpisodeDraft
+				_, problem = w.runStep("repair", number, total, fmt.Sprintf(groundedPatchPrompt, string(before), string(issuePromptJSON(history)), original)+instructions, func(raw json.RawMessage) error {
+					var patch scriptPatch
+					if e := json.Unmarshal(raw, &patch); e != nil {
+						return e
+					}
+					var e error
+					after, e = patchEpisode(episode, patch, assets, original)
+					return e
+				}, true)
+				if problem == nil {
+					episode = after
+					if err = persist(); err != nil {
+						return episode, err
+					}
+				}
+			case "script_director":
+				before := episode
+				_, problem = w.runStep("director", number, total, base+instructions, validateDirector, true)
+				if problem != nil {
+					episode = before
+				} else {
+					if err = persist(); err != nil {
+						return episode, err
+					}
+				}
+			case "reviewer":
 			}
-			if err = w.emit("repair", number, "completed", "本集局部修正正文已保存，继续核对累计约束"); err != nil {
-				return episode, err
+			if problem != nil {
+				continue
 			}
-			repairs++
 		}
 		current, _ := json.Marshal(episode)
-		issues := reviewConstraintJSON(history)
 		var updated []ReviewIssue
-		_, err = w.runStep("review", number, total, fmt.Sprintf(groundedReviewPrompt, string(issues), previous, original, string(current)), func(raw json.RawMessage) error {
+		reviewPrompt := fmt.Sprintf(groundedReviewPrompt, string(reviewConstraintJSON(history)), previous, original, string(current))
+		canonicalReviewPrompt := reviewPrompt
+		if ticket.ID != "" {
+			reviewPrompt += "\n中心要求：" + ticket.Instructions
+		}
+		reviewRaw, reviewErr := w.runStep("review", number, total, reviewPrompt, func(raw json.RawMessage) error {
 			var reply groundedReview
-			if err := json.Unmarshal(raw, &reply); err != nil {
-				return err
+			if e := json.Unmarshal(raw, &reply); e != nil {
+				return e
 			}
-			var err error
-			updated, err = mergeReview(reply, history, episode, original, start, number, w.job, hash)
-			return err
+			var e error
+			updated, e = mergeReview(reply, history, episode, original, start, number, w.job, hash)
+			return e
 		}, true)
+
+		err = reviewErr
 		if err != nil {
-			return episode, err
+			if errors.Is(err, context.Canceled) || errors.Is(err, ErrBatchConflict) {
+				return episode, err
+			}
+			problem = err
+			continue
 		}
 		if err = w.service.repository.SaveReviewIssues(w.ctx, w.job, updated); err != nil {
 			return episode, err
 		}
 		history = updated
-		open = blockingIssues(history)
-		if len(open) == 0 {
+		if len(blockingIssues(history)) == 0 {
+			// 指令用于此次返工；通过后按相同事实、正文和累计约束登记缓存，续跑不重复审校。
+			checkpoint := BatchStep{Stage: "review", ChunkNumber: number, ChunkTotal: total, ResultText: string(reviewRaw), InputHash: inputFingerprint(w.job, canonicalReviewPrompt)}
+			if err = w.service.repository.StartBatchStep(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.Batch.ProjectID, w.job.Batch.ID, w.job.Batch.AnalysisRevision, checkpoint); err != nil {
+				return episode, err
+			}
+			if err = w.service.repository.CompleteBatchStep(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.Batch.ProjectID, w.job.Batch.ID, w.job.Batch.AnalysisRevision, checkpoint); err != nil {
+				return episode, err
+			}
+			if ticket.ID != "" {
+				if err = center.finish(ticket, "resolved", "当前集已按原文及累计约束复核通过，返回后续剧集处理"); err != nil {
+					return episode, err
+				}
+			}
 			return episode, nil
-		}
-		if err = w.service.repository.FailBatchStep(w.ctx, w.job, "review", number, strings.Join(open, "；")); err != nil {
-			return episode, err
 		}
 	}
 }

@@ -67,6 +67,22 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	if ok, err := repo.ClaimStoryboard(ctx, run.ID); err != nil || !ok {
 		t.Fatal(err)
 	}
+
+	ticket := drama.RepairTicket{ID: uuid.NewString(), ProjectID: project, Kind: "storyboard", RunID: run.ID, Item: 1, Reporter: "分镜检查", Problem: "时长不足", StateHash: "draft-hash", Node: "timing", TargetItem: 1, Reason: "台词完整而时长不足", Instructions: "延长时长", ReturnTo: "分镜检查"}
+	if err = repo.CreateRepairTicket(ctx, ticket); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.FinishRepairTicket(ctx, ticket.ID, "resolved", "复核通过"); err != nil {
+		t.Fatal(err)
+	}
+	tickets, err := repo.ListRepairTickets(ctx, drama.RepairTicket{ProjectID: project, Kind: "storyboard", RunID: run.ID, Item: -1})
+	if err != nil || len(tickets) != 1 || tickets[0].Status != "resolved" {
+		t.Fatal("中心派工未持久化", err)
+	}
+	wrong, err := repo.ListRepairTickets(ctx, drama.RepairTicket{ProjectID: uuid.NewString(), Kind: "storyboard", RunID: run.ID, Item: -1})
+	if err != nil || len(wrong) != 0 {
+		t.Fatal("派工范围泄漏", err)
+	}
 	plan := []drama.StoryboardSegment{{Title: "进门", StartLine: 1, EndLine: 1}, {Title: "问好", StartLine: 2, EndLine: 2}}
 	if err = repo.SaveStoryboardPlan(ctx, run.ID, plan); err != nil {
 		t.Fatal(err)
@@ -88,6 +104,14 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	first := run.Segments[0]
 	first.FormIDs = []string{form}
 	first.Shots = []drama.StoryboardShot{{Description: "林夏推门进入", ShotSize: "中景", Camera: "固定", Duration: 4, SourceLines: []int{1}, Utterances: []drama.StoryboardUtterance{}}}
+
+	if err = repo.SaveStoryboardCandidate(ctx, run.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	candidate, e := repo.GetStoryboard(ctx, org, user, project, episode, run.ID)
+	if e != nil || candidate.Segments[0].Status != "pending" || len(candidate.Segments[0].Shots) != 1 {
+		t.Fatal("待修正候选未保存", e)
+	}
 	if err = repo.SaveStoryboardSegment(ctx, run.ID, first); err != nil {
 		t.Fatal(err)
 	}

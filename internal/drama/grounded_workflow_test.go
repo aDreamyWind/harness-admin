@@ -143,7 +143,12 @@ func TestGroundedRepairResumePreservesResolvedIssuesAndSkipsDirector(t *testing.
 	directorCount := 0
 	patchCount := 0
 	writer.respond = func(prompt string) (string, error) {
+		if strings.Contains(prompt, "你是漫剧工作流中心调度Agent") {
+			return `{"node":"script_patch","targetItem":1,"reason":"续修当前集","instructions":"保留已解决约束，补上拿信动作","returnTo":"剧本审校"}`, nil
+		}
 		switch {
+		case strings.Contains(prompt, "你是漫剧工作流中心调度Agent"):
+			return `{"node":"script_patch","targetItem":1,"reason":"当前集存在局部事实遗漏","instructions":"保留已解决约束，修正当前问题","returnTo":"剧本审校"}`, nil
 		case strings.HasPrefix(prompt, "生成"):
 			directorCount++
 			return `{"episodes":[{"title":"入屋","synopsis":"入屋","scriptText":"甲走出屋中。","characters":[],"scenes":[],"props":[]}]}`, nil
@@ -182,6 +187,9 @@ func TestGroundedRepairResumePreservesResolvedIssuesAndSkipsDirector(t *testing.
 		t.Fatal(err)
 	}
 	writer.respond = func(prompt string) (string, error) {
+		if strings.Contains(prompt, "你是漫剧工作流中心调度Agent") {
+			return `{"node":"script_patch","targetItem":1,"reason":"续修当前集","instructions":"保留已解决约束，补上拿信动作","returnTo":"剧本审校"}`, nil
+		}
 		if strings.Contains(prompt, "你是剧本修订编辑") {
 			if !strings.Contains(prompt, "应为走入") || !strings.Contains(prompt, `"status":"resolved"`) {
 				t.Fatal("必须保留此前修复约束")

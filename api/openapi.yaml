@@ -462,7 +462,7 @@ paths:
     post:
       summary: 新建分镜拆分或从失败片段继续
       operationId: startDramaStoryboard
-      description: resume为false时创建独立新版本；true时必须来源未变化且最新运行失败，复用已通过片段与原模型。只生成文字分镜，不生成媒体。
+      description: resume为false时创建独立新版本；true时必须来源未变化且最新运行失败，复用已通过片段与原模型，保留待修正草稿和中心派工预算。检查失败先报告中心，由中心选择合法责任节点，修正后返回原检查点。跨前段修正会重查后续依赖。只生成文字分镜，不生成媒体。
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -3772,6 +3772,24 @@ components:
         characters: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         scenes: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         props: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+    DramaRepairTicket:
+      type: object
+      description: 中心调度实际派工和复核记录，非模型思考。单项最多8次、全运行40次；相同问题和状态连续3次无进展时暂停，续跑不会清空计数。
+      required: [id, kind, item, reporter, problem, node, targetItem, reason, instructions, returnTo, status, outcome, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [storyboard, batch] }
+        item: { type: integer, minimum: 0 }
+        reporter: { type: string }
+        problem: { type: string }
+        node: { type: string, enum: [timing, writer, planner, previous, reviewer, script_patch, script_director, pause] }
+        targetItem: { type: integer, minimum: 0 }
+        reason: { type: string }
+        instructions: { type: string }
+        returnTo: { type: string }
+        status: { type: string, enum: [assigned, resolved, feedback, blocked] }
+        outcome: { type: string }
+        createdAt: { type: string, format: date-time }
     DramaStoryboardUtterance:
       type: object
       required: [kind, speaker, text, sourceLine]
@@ -3821,7 +3839,7 @@ components:
         shots: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/DramaStoryboardShot' } }
     DramaStoryboardRun:
       type: object
-      required: [id, episodeId, projectId, version, revision, status, phase, message, error, scriptText, modelCode, styleId, aspectRatio, createdAt, updatedAt, segments, events, stale]
+      required: [id, episodeId, projectId, version, revision, status, phase, message, error, scriptText, modelCode, styleId, aspectRatio, createdAt, updatedAt, segments, events, stale, repairs]
       properties:
         id: { type: string, format: uuid }
         episodeId: { type: string, format: uuid }
@@ -3839,6 +3857,7 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         stale: { type: boolean }
+        repairs: { type: array, items: { $ref: '#/components/schemas/DramaRepairTicket' } }
         segments: { type: array, items: { $ref: '#/components/schemas/DramaStoryboardSegment' } }
         events:
           type: array
@@ -4011,9 +4030,10 @@ components:
         updatedAt: { type: string, format: date-time }
     DramaBatchProgress:
       type: object
-      required: [steps, assets, episodes, plans, reviewIssues]
+      required: [steps, assets, episodes, plans, reviewIssues, repairs]
       properties:
         context: { $ref: '#/components/schemas/DramaGroundedContext' }
+        repairs: { type: array, items: { $ref: '#/components/schemas/DramaRepairTicket' } }
         reviewIssues: { type: array, items: { $ref: '#/components/schemas/DramaReviewIssue' } }
         plans: { type: array, items: { $ref: '#/components/schemas/DramaEpisodePlan' } }
         steps: { type: array, items: { $ref: '#/components/schemas/DramaBatchStep' } }

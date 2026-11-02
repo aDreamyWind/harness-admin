@@ -132,6 +132,7 @@ type Service struct {
 	files       ImageFiles
 	styles      StyleRepository
 	storyboards StoryboardRepository
+	repairs     RepairRepository
 }
 
 func NewService(repository Repository, writer Writer) *Service {

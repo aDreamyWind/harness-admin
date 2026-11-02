@@ -75,6 +75,7 @@ type BatchStep struct {
 }
 
 type BatchProgress struct {
+	Repairs      []RepairTicket   `json:"repairs"`
 	Context      *GroundedContext `json:"context,omitempty"`
 	ReviewIssues []ReviewIssue    `json:"reviewIssues"`
 	Steps        []BatchStep      `json:"steps"`
@@ -441,6 +442,18 @@ func (s *Service) BatchProgress(ctx context.Context, organizationID, ownerID, pr
 	if err != nil {
 		return BatchProgress{}, err
 	}
+	progress.Repairs = []RepairTicket{}
+	if s.repairs != nil {
+		batch, e := s.repository.GetBatch(ctx, organizationID, ownerID, projectID, batchID)
+		if e != nil {
+			return progress, e
+		}
+		progress.Repairs, e = s.repairs.ListRepairTickets(ctx, RepairTicket{ProjectID: projectID, Kind: "batch", RunID: batch.AnalysisRunID, Item: -1})
+		if e != nil {
+			return progress, e
+		}
+	}
+
 	return progress, nil
 }
 

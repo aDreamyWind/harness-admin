@@ -19,6 +19,7 @@ import (
 var ErrStoryboardConflict = errors.New("分镜正在处理、版本已变化或来源已变化，请刷新后重新拆分")
 
 type StoryboardRun struct {
+	Repairs     []RepairTicket      `json:"repairs"`
 	ID          string              `json:"id"`
 	EpisodeID   string              `json:"episodeId"`
 	ProjectID   string              `json:"projectId"`
@@ -101,6 +102,9 @@ type StoryboardRepository interface {
 	ClaimStoryboard(context.Context, string) (bool, error)
 	SaveStoryboardPlan(context.Context, string, []StoryboardSegment) error
 	SaveStoryboardSegment(context.Context, string, StoryboardSegment) error
+	SaveStoryboardCandidate(context.Context, string, StoryboardSegment) error
+	ReopenStoryboardFrom(context.Context, string, int) error
+	ReviseStoryboardPlan(context.Context, string, StoryboardSegment) error
 	StoryboardProgress(context.Context, string, string, string) error
 	FinishStoryboard(context.Context, string, string, string) error
 	EditStoryboard(context.Context, string, string, StoryboardRun, int) (StoryboardRun, error)
@@ -171,6 +175,13 @@ func (s *Service) Storyboards(ctx context.Context, org, user, project, episode, 
 			return out, e
 		}
 		r.Stale = r.SourceHash != storyboardHash(w) || w.Episode.ScriptNeedsReview
+		r.Repairs = []RepairTicket{}
+		if s.repairs != nil {
+			r.Repairs, err = s.repairs.ListRepairTickets(ctx, RepairTicket{ProjectID: project, Kind: "storyboard", RunID: r.ID, Item: -1})
+			if err != nil {
+				return out, err
+			}
+		}
 		out.Current = &r
 	}
 	return out, nil

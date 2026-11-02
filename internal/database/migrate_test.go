@@ -70,8 +70,8 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 	if err := freshPool.QueryRow(ctx, `SELECT COUNT(*) FROM goose_db_version WHERE is_applied AND version_id > 0`).Scan(&appliedCount); err != nil {
 		t.Fatalf("读取基线执行次数失败: %v", err)
 	}
-	if appliedCount != 31 {
-		t.Fatalf("全新数据库执行了 %d 个迁移，预期执行基线及 21～50 号增量迁移", appliedCount)
+	if appliedCount != 32 {
+		t.Fatalf("全新数据库执行了 %d 个迁移，预期执行基线及 21～51 号增量迁移", appliedCount)
 	}
 
 	legacyConfig, err := pgx.ParseConfig(legacyURL)
@@ -210,8 +210,8 @@ func migrationTestSnapshot(t *testing.T, ctx context.Context, databaseURL string
 	if err := conn.QueryRow(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil {
 		t.Fatalf("读取迁移版本失败: %v", err)
 	}
-	if version != 50 {
-		t.Fatalf("迁移版本为 %d，预期 50", version)
+	if version != 51 {
+		t.Fatalf("迁移版本为 %d，预期 51", version)
 	}
 	return append(snapshot, fmt.Sprintf("version|%d", version))
 }

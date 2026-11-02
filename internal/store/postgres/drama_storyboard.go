@@ -12,7 +12,7 @@ import (
 const storyboardColumns = `r.id,r.source_episode_id,r.project_id,r.version,r.revision,r.status,r.phase,r.message,r.error_message,r.script_text,r.source_hash,r.model_code,r.style_id,r.aspect_ratio,r.created_at,r.updated_at`
 
 func scanStoryboard(row pgx.Row) (drama.StoryboardRun, error) {
-	r := drama.StoryboardRun{Segments: []drama.StoryboardSegment{}, Events: []drama.StoryboardEvent{}}
+	r := drama.StoryboardRun{Repairs: []drama.RepairTicket{}, Segments: []drama.StoryboardSegment{}, Events: []drama.StoryboardEvent{}}
 	err := row.Scan(&r.ID, &r.EpisodeID, &r.ProjectID, &r.Version, &r.Revision, &r.Status, &r.Phase, &r.Message, &r.Error, &r.ScriptText, &r.SourceHash, &r.ModelCode, &r.StyleID, &r.AspectRatio, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, drama.ErrNotFound
@@ -274,6 +274,12 @@ func (r *DramaRepository) writeStoryboardSegment(ctx context.Context, tx pgx.Tx,
 	return nil
 }
 func (r *DramaRepository) SaveStoryboardSegment(ctx context.Context, runID string, seg drama.StoryboardSegment) error {
+	return r.persistStoryboardSegment(ctx, runID, seg, true)
+}
+func (r *DramaRepository) SaveStoryboardCandidate(ctx context.Context, runID string, seg drama.StoryboardSegment) error {
+	return r.persistStoryboardSegment(ctx, runID, seg, false)
+}
+func (r *DramaRepository) persistStoryboardSegment(ctx context.Context, runID string, seg drama.StoryboardSegment, ready bool) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -286,10 +292,17 @@ func (r *DramaRepository) SaveStoryboardSegment(ctx context.Context, runID strin
 	if err != nil {
 		return err
 	}
+
+	if _, err = tx.Exec(ctx, `DELETE FROM drama_storyboard_shots WHERE segment_id=$1`, seg.ID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM drama_storyboard_bindings WHERE segment_id=$1`, seg.ID); err != nil {
+		return err
+	}
 	if err = r.writeStoryboardSegment(ctx, tx, run, seg, seg.Bindings, false); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE drama_storyboard_segments SET status='ready',notes=$2 WHERE id=$1`, seg.ID, seg.Notes); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE drama_storyboard_segments SET status=$3,notes=$2 WHERE id=$1`, seg.ID, seg.Notes, map[bool]string{true: "ready", false: "pending"}[ready]); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -410,6 +423,27 @@ func (r *DramaRepository) FailInterruptedStoryboards(ctx context.Context) error 
 	_, err := r.db.Exec(ctx, `UPDATE drama_storyboard_runs SET status='failed',error_message='服务重启，分镜任务已中断。已保存片段保留，可从失败处继续。',message='任务中断',updated_at=now() WHERE status IN ('queued','running')`)
 	if err != nil {
 		return fmt.Errorf("恢复分镜中断任务失败: %w", err)
+	}
+	return nil
+}
+
+func (r *DramaRepository) ReopenStoryboardFrom(ctx context.Context, run string, number int) error {
+	tag, err := r.db.Exec(ctx, `UPDATE drama_storyboard_segments s SET status='pending' FROM drama_storyboard_runs r WHERE s.run_id=r.id AND r.id=$1 AND r.status='running' AND s.number>=$2`, run, number)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return drama.ErrStoryboardConflict
+	}
+	return nil
+}
+func (r *DramaRepository) ReviseStoryboardPlan(ctx context.Context, run string, s drama.StoryboardSegment) error {
+	tag, err := r.db.Exec(ctx, `UPDATE drama_storyboard_segments s SET title=$3,scene=$4,purpose=$5,start_state=$6,end_state=$7 FROM drama_storyboard_runs r WHERE s.run_id=r.id AND r.id=$1 AND s.id=$2 AND r.status='running' AND s.status='pending'`, run, s.ID, s.Title, s.Scene, s.Purpose, s.StartState, s.EndState)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return drama.ErrStoryboardConflict
 	}
 	return nil
 }

@@ -83,6 +83,32 @@ func (r *sbRepo) SaveStoryboardSegment(_ context.Context, _ string, s Storyboard
 	}
 	return nil
 }
+
+func (r *sbRepo) SaveStoryboardCandidate(_ context.Context, _ string, s StoryboardSegment) error {
+	for i := range r.run.Segments {
+		if r.run.Segments[i].Number == s.Number {
+			s.Status = "pending"
+			r.run.Segments[i] = s
+		}
+	}
+	return nil
+}
+func (r *sbRepo) ReopenStoryboardFrom(_ context.Context, _ string, n int) error {
+	for i := range r.run.Segments {
+		if r.run.Segments[i].Number >= n {
+			r.run.Segments[i].Status = "pending"
+		}
+	}
+	return nil
+}
+func (r *sbRepo) ReviseStoryboardPlan(_ context.Context, _ string, s StoryboardSegment) error {
+	for i := range r.run.Segments {
+		if r.run.Segments[i].Number == s.Number {
+			r.run.Segments[i] = s
+		}
+	}
+	return nil
+}
 func (r *sbRepo) FinishStoryboard(_ context.Context, _ string, status, message string) error {
 	r.run.Status, r.run.Error = status, message
 	return nil
