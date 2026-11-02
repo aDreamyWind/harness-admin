@@ -18,7 +18,8 @@ const dramaVideoEpisodesSQL = `WITH episodes AS (
  JOIN drama_projects p ON p.id=e.project_id
  WHERE p.organization_id=$1 AND p.owner_id=$2 AND p.id=$3 AND BTRIM(e.script_text)<>''
 ) SELECT e.id,e.project_id,e.project_number,e.number,e.batch_id,e.batch_name,e.batch_number,e.title,e.synopsis,
- e.needs_review,e.updated_at,counts.characters,counts.scenes,counts.props`
+ e.needs_review,e.updated_at,counts.characters,counts.scenes,counts.props,
+ COALESCE((SELECT CASE WHEN r.script_text<>e.script_text THEN 'stale' ELSE r.status END FROM drama_storyboard_runs r WHERE r.source_episode_id=e.id ORDER BY r.version DESC LIMIT 1),'pending')`
 
 const dramaVideoEpisodesFromSQL = ` FROM episodes e LEFT JOIN LATERAL (
  SELECT COUNT(*) FILTER (WHERE a.kind='character') AS characters,
@@ -30,11 +31,10 @@ const dramaVideoEpisodesFromSQL = ` FROM episodes e LEFT JOIN LATERAL (
 func scanVideoEpisode(row pgx.Row) (drama.VideoEpisodeWorkspace, error) {
 	item := drama.VideoEpisodeWorkspace{Characters: []drama.EpisodeAsset{}, Scenes: []drama.EpisodeAsset{}, Props: []drama.EpisodeAsset{}}
 	e := &item.Episode
-	err := row.Scan(&e.ScriptEpisodeID, &e.ProjectID, &e.Number, &e.BatchEpisodeNumber, &e.Batch.ID, &e.Batch.Name, &e.Batch.Number, &e.Title, &e.Synopsis, &e.ScriptNeedsReview, &e.ScriptUpdatedAt, &e.CharacterCount, &e.SceneCount, &e.PropCount, &item.ScriptText)
+	err := row.Scan(&e.ScriptEpisodeID, &e.ProjectID, &e.Number, &e.BatchEpisodeNumber, &e.Batch.ID, &e.Batch.Name, &e.Batch.Number, &e.Title, &e.Synopsis, &e.ScriptNeedsReview, &e.ScriptUpdatedAt, &e.CharacterCount, &e.SceneCount, &e.PropCount, &e.StoryboardStatus, &item.ScriptText)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, drama.ErrNotFound
 	}
-	e.StoryboardStatus = "pending"
 	return item, err
 }
 

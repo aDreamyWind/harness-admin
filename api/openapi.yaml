@@ -434,6 +434,132 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards:
+    get:
+      summary: 读取单集分镜、进度、资产形象与历史版本
+      operationId: getDramaStoryboards
+      description: 默认读取最新尝试，失败保留已通过片段；run指定历史版本。只有本项目所有者可读。运行期间客户端每两秒读取真实进度。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: run, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 操作成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaStoryboardPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 分镜运行中、并发版本冲突或来源已变化
+    post:
+      summary: 新建分镜拆分或从失败片段继续
+      operationId: startDramaStoryboard
+      description: resume为false时创建独立新版本；true时必须来源未变化且最新运行失败，复用已通过片段与原模型。只生成文字分镜，不生成媒体。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resume: { type: boolean, default: false }
+      responses:
+        '202':
+          description: 操作成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaStoryboardRun' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 分镜运行中、并发版本冲突或来源已变化
+  /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}:
+    put:
+      summary: 将人工编辑的完整分镜保存为新历史版本
+      operationId: editDramaStoryboard
+      description: 只允许编辑最新非运行版本，使用revision检查并发。资产必须来自本集真实形象；已采用图片绑定由服务端保留，客户端不能伪造。人工台词修改不会修改来源剧本。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, segments]
+              properties:
+                revision: { type: integer, minimum: 1 }
+                segments: { type: array, minItems: 1, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardSegment' } }
+      responses:
+        '200':
+          description: 操作成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaStoryboardRun' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 分镜运行中、并发版本冲突或来源已变化
+  /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}/confirm:
+    post:
+      summary: 确认最新分镜版本
+      operationId: confirmDramaStoryboard
+      description: 只确认来源未变化的ready版本；后续媒体制作还需模型能力和素材检查，不自动触发付费生成。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: 分镜已确认
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      confirmed: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 当前运行、来源或版本不允许确认 }
   /ai-drama/projects/{id}/batches/{batchId}/name:
     patch:
       summary: 修改批次名称并保护手动名称
@@ -3631,7 +3757,7 @@ components:
         batch: { $ref: '#/components/schemas/DramaBatchReference' }
         title: { type: string }
         synopsis: { type: string }
-        storyboardStatus: { type: string, enum: [pending], description: 当前为待拆分；后续接入分镜和片段制作时扩展。 }
+        storyboardStatus: { type: string, enum: [pending, queued, running, failed, ready, confirmed, stale], description: 最近一次真实分镜运行状态，剧本变化时标记需重新核对。 }
         characterCount: { type: integer, minimum: 0 }
         sceneCount: { type: integer, minimum: 0 }
         propCount: { type: integer, minimum: 0 }
@@ -3646,6 +3772,92 @@ components:
         characters: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         scenes: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
         props: { type: array, items: { $ref: '#/components/schemas/DramaEpisodeAsset' } }
+    DramaStoryboardUtterance:
+      type: object
+      required: [kind, speaker, text, sourceLine]
+      properties:
+        kind: { type: string, enum: [dialogue, os, vo] }
+        speaker: { type: string }
+        text: { type: string, minLength: 1 }
+        sourceLine: { type: integer, minimum: 1 }
+    DramaStoryboardShot:
+      type: object
+      required: [id, number, description, shotSize, camera, sound, duration, sourceLines, utterances]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: integer, minimum: 1 }
+        description: { type: string, minLength: 1 }
+        shotSize: { type: string }
+        camera: { type: string }
+        sound: { type: string }
+        duration: { type: number, minimum: 0.5, maximum: 60, description: 规划时长，生成前需校验实际模型档位。 }
+        sourceLines: { type: array, minItems: 1, items: { type: integer, minimum: 1 } }
+        utterances: { type: array, items: { $ref: '#/components/schemas/DramaStoryboardUtterance' } }
+    DramaStoryboardSegment:
+      type: object
+      required: [id, number, title, scene, purpose, startLine, endLine, startState, endState, status, notes, formIds, bindings, shots]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: integer, minimum: 1 }
+        title: { type: string, maxLength: 120 }
+        scene: { type: string }
+        purpose: { type: string }
+        startLine: { type: integer, minimum: 1 }
+        endLine: { type: integer, minimum: 1 }
+        startState: { type: string }
+        endState: { type: string }
+        status: { type: string, enum: [pending, ready] }
+        notes: { type: string }
+        formIds: { type: array, items: { type: string, format: uuid } }
+        bindings:
+          type: array
+          readOnly: true
+          items:
+            type: object
+            required: [formId, imageId]
+            properties:
+              formId: { type: string, format: uuid }
+              imageId: { type: string, description: 已采用的成功图片主键；空字符串表示待素材。 }
+        shots: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/DramaStoryboardShot' } }
+    DramaStoryboardRun:
+      type: object
+      required: [id, episodeId, projectId, version, revision, status, phase, message, error, scriptText, modelCode, styleId, aspectRatio, createdAt, updatedAt, segments, events, stale]
+      properties:
+        id: { type: string, format: uuid }
+        episodeId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [queued, running, failed, ready, confirmed] }
+        phase: { type: string }
+        message: { type: string }
+        error: { type: string }
+        scriptText: { type: string, description: 本版本来源快照；版本列表中为空字符串以减少负载。 }
+        modelCode: { type: string }
+        styleId: { type: string }
+        aspectRatio: { type: string, enum: ['9:16', '16:9'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        stale: { type: boolean }
+        segments: { type: array, items: { $ref: '#/components/schemas/DramaStoryboardSegment' } }
+        events:
+          type: array
+          items:
+            type: object
+            required: [id, message, createdAt]
+            properties:
+              id: { type: integer, format: int64 }
+              message: { type: string }
+              createdAt: { type: string, format: date-time }
+    DramaStoryboardPage:
+      type: object
+      required: [runs, current, forms]
+      properties:
+        runs: { type: array, items: { $ref: '#/components/schemas/DramaStoryboardRun' } }
+        current:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/DramaStoryboardRun' }]
+        forms: { type: array, items: { $ref: '#/components/schemas/DramaAssetForm' } }
     DramaSourceFact:
       type: object
       required:

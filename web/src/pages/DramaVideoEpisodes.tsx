@@ -25,7 +25,7 @@ export function DramaVideoEpisodes({ projectId }: { projectId: string }) {
         const items = await listDramaVideoEpisodes(projectId)
         if (!active || request !== requestNumber) return
         setEpisodes(items); setError('')
-        if (batches.some((batch) => batch.status === 'running')) timer = window.setTimeout(() => void load(true), 5000)
+        if (batches.some((batch) => batch.status === 'running') || items.some((item) => ['queued', 'running'].includes(item.storyboardStatus))) timer = window.setTimeout(() => void load(true), 5000)
       } catch (failure) {
         if (active && request === requestNumber) setError(failure instanceof Error ? failure.message : '读取视频分集失败')
       } finally { if (active && request === requestNumber) setLoading(false) }
@@ -55,7 +55,7 @@ export function DramaVideoEpisodes({ projectId }: { projectId: string }) {
     {!episodes.length ? <div className="drama-empty"><Empty description="暂无可制作的分集剧本"><Button type="primary" onClick={showScripts}>前往剧本分集</Button></Empty></div> : !visible.length ? <div className="drama-empty"><Empty description="此批次暂无分集剧本" /></div> : <div className="drama-video-episode-grid">
       {visible.map((episode) => <article className="drama-video-episode-card" key={episode.scriptEpisodeId}>
         <button type="button" className="drama-video-episode-cover" aria-label={`进入第 ${episode.number} 集：${episode.title}`} onClick={() => openEpisode(episode.scriptEpisodeId)}>
-          <span className="drama-video-episode-number">{episode.number}</span><VideoCameraOutlined /><span>待拆分</span>
+          <span className="drama-video-episode-number">{episode.number}</span><VideoCameraOutlined /><span>{({pending:'待拆分',queued:'等待拆分',running:'拆分中',failed:'需重试',ready:'待确认',confirmed:'分镜已确认',stale:'来源已变化'})[episode.storyboardStatus]}</span>
         </button>
         <div className="drama-video-episode-copy">
           <h3 title={episode.title}>第{episode.number}集：{episode.title}</h3>

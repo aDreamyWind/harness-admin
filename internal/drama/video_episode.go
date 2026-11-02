@@ -8,7 +8,7 @@ import (
 )
 
 // VideoEpisode 是正式分集剧本的制作入口，主键始终使用分集剧本 ID。
-// 分镜、片段和成片尚未接入，当前所有正式剧集均处于待拆分状态。
+// 分镜状态投影最近一次真实运行；媒体生成和合成在后续阶段接入。
 type VideoEpisode struct {
 	ScriptEpisodeID    string         `json:"scriptEpisodeId"`
 	ProjectID          string         `json:"projectId"`
