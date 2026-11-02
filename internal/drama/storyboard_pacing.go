@@ -166,9 +166,24 @@ func applyPacingPatch(before StoryboardSegment, issues []pacingIssue, patch paci
 						return before, errors.New("精简旁白须实际缩短并保留非空表达")
 					}
 				}
+				u.Mentions = nil
+				u.SpeakerMentions = old.SpeakerMentions
 				u.SourceText = originalStoryboardSpeech(old)
 				if u.AdaptationReason == "" {
 					u.AdaptationReason = "按节奏目标精简解释性旁白或改用画面表达，原句保留供事实复核"
+				}
+			}
+		}
+		for j := range edit.Shots {
+			shot := &edit.Shots[j]
+			shot.DescriptionMentions, shot.SoundMentions = nil, nil
+			if edit.StartShot == edit.EndShot && len(edit.Shots) == 1 {
+				old := before.Shots[edit.StartShot-1]
+				if shot.Description == old.Description {
+					shot.DescriptionMentions = old.DescriptionMentions
+				}
+				if shot.Sound == old.Sound {
+					shot.SoundMentions = old.SoundMentions
 				}
 			}
 		}

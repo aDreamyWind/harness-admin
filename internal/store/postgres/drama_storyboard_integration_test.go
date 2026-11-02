@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"harness-admin/internal/drama"
@@ -108,6 +109,52 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	if err = repo.SaveStoryboardCandidate(ctx, run.ID, first); err != nil {
 		t.Fatal(err)
 	}
+	// 后台保存与轮询并发时，引用位置不能与另一次保存的正文混在一起。
+	writeDone := make(chan error, 1)
+	go func() {
+		for n := 0; n < 20; n++ {
+			copy := first
+			copy.Shots = append([]drama.StoryboardShot{}, first.Shots...)
+			start := 0
+			copy.Shots[0].Description = "林夏推门进入"
+			if n%2 == 1 {
+				copy.Shots[0].Description = "😀林夏推门进入"
+				start = 1
+			}
+			copy.Shots[0].DescriptionMentions = []drama.StoryboardMention{{Start: start, End: start + 2, FormID: form}}
+			if e := repo.SaveStoryboardCandidate(ctx, run.ID, copy); e != nil {
+				writeDone <- e
+				return
+			}
+		}
+		writeDone <- nil
+	}()
+	var snapshotError error
+	for n := 0; n < 20; n++ {
+		snapshot, e := repo.GetStoryboard(ctx, org, user, project, episode, run.ID)
+		if e != nil {
+			snapshotError = e
+			break
+		}
+		shot := snapshot.Segments[0].Shots[0]
+		if len(shot.DescriptionMentions) > 0 {
+			ref := shot.DescriptionMentions[0]
+			chars := []rune(shot.Description)
+			if ref.End > len(chars) || string(chars[ref.Start:ref.End]) != "林夏" {
+				snapshotError = fmt.Errorf("轮询读到不一致的正文和文字引用")
+				break
+			}
+		}
+	}
+	if e := <-writeDone; e != nil {
+		t.Fatal(e)
+	}
+	if snapshotError != nil {
+		t.Fatal(snapshotError)
+	}
+	if e := repo.SaveStoryboardCandidate(ctx, run.ID, first); e != nil {
+		t.Fatal(e)
+	}
 	candidate, e := repo.GetStoryboard(ctx, org, user, project, episode, run.ID)
 	if e != nil || candidate.Segments[0].Status != "pending" || len(candidate.Segments[0].Shots) != 1 {
 		t.Fatal("待修正候选未保存", e)
@@ -155,12 +202,19 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	if _, err = pool.Exec(ctx, `UPDATE drama_asset_forms SET current_image_id=$2 WHERE id=$1`, form, image2); err != nil {
 		t.Fatal(err)
 	}
-	run.Segments[0].Shots[0].Description = "人工编辑后的进门动作"
+	run.Segments[0].Shots[0].Description = "😀林夏人工编辑后的进门动作"
+	run.Segments[0].Shots[0].DescriptionMentions = []drama.StoryboardMention{{Start: 1, End: 3, FormID: form}}
+	run.Segments[0].Scene = "林夏所在的书店"
+	run.Segments[0].SceneMentions = []drama.StoryboardMention{{Start: 0, End: 2, FormID: form}}
+	run.Segments[1].Shots[0].Utterances[0].SpeakerMentions = []drama.StoryboardMention{{Start: 0, End: 2, FormID: form}}
 	edited, err := repo.EditStoryboard(ctx, org, user, run, run.Revision)
 	if err != nil || edited.Version != 2 {
 		t.Fatal("编辑没有创建新版本", err)
 	}
 
+	if len(edited.Segments[0].SceneMentions) != 1 || edited.Segments[0].SceneMentions[0].FormID != form || len(edited.Segments[0].Shots[0].DescriptionMentions) != 1 || edited.Segments[0].Shots[0].DescriptionMentions[0].Start != 1 || len(edited.Segments[1].Shots[0].Utterances[0].SpeakerMentions) != 1 {
+		t.Fatal("文字位置和真实形象引用未随新版本保存")
+	}
 	if edited.Segments[0].Bindings[0].ImageID != image1 {
 		t.Fatal("已采用的图片版本被当前图片替换")
 	}
@@ -203,6 +257,17 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	if ok, e := repo.ClaimStoryboard(ctx, paced.ID); e != nil || !ok {
 		t.Fatal(e)
 	}
+	// 规划节点重写场次时，旧文字位置和场次更新必须原子生效。
+	planRevision := paced.Segments[0]
+	planRevision.Scene = "书店窗边"
+	if e := repo.ReviseStoryboardPlan(ctx, paced.ID, planRevision); e != nil {
+		t.Fatal(e)
+	}
+	planned, e := repo.GetStoryboard(ctx, org, user, project, episode, paced.ID)
+	if e != nil || planned.Segments[0].Scene != "书店窗边" || len(planned.Segments[0].SceneMentions) != 0 {
+		t.Fatal("规划重写后残留旧文字引用", e)
+	}
+	paced.Segments[0] = planned.Segments[0]
 	pacingCandidate := paced.Segments[0]
 	pacingCandidate.Shots[0].Duration = 2
 	count := 1

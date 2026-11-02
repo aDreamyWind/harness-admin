@@ -3,7 +3,10 @@ import { Alert, Button, Empty, Image, Input, InputNumber, Modal, Progress, Selec
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { optimizeDramaStoryboardPacing, type DramaRepairTicket, confirmDramaStoryboard, getDramaStoryboards, saveDramaStoryboard, startDramaStoryboard, type DramaStoryboardSegment, type DramaStoryboardShot } from '../api/drama'
+import { optimizeDramaStoryboardPacing, type DramaRepairTicket, confirmDramaStoryboard, getDramaStoryboards, saveDramaStoryboard, startDramaStoryboard, type DramaStoryboardSegment, type DramaStoryboardShot, type DramaStoryboardUtterance, type DramaAssetForm } from '../api/drama'
+
+import { DramaStoryboardTextEditor } from './DramaStoryboardTextEditor'
+import { inferStoryboardMentions, materializeStoryboardMentions, type StoryboardTextDocument } from './storyboardMentions'
 
 export const storyboardStatusLabels: Record<string, string> = { pending: '待拆分', queued: '等待拆分', running: '拆分中', failed: '需重试', partial: '待继续', ready: '待确认', confirmed: '已确认', stale: '来源已变化' }
 const soundLabels = { dialogue: '对白', os: '内心独白', vo: '画外音' }
@@ -16,7 +19,7 @@ function repairLabel(ticket: DramaRepairTicket) {
 }
 const blankShot = (line: number): DramaStoryboardShot => ({ id: crypto.randomUUID(), number: 1, description: '', shotSize: '中景', camera: '固定', duration: 4, sound: '', sourceLines: [line], utterances: [] })
 
-export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: {projectId: string; episodeId: string; needsReview: boolean}) {
+export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, onFormsChange }: {projectId: string; episodeId: string; needsReview: boolean; onFormsChange?: (forms: DramaAssetForm[]) => void}) {
   const [messageApi, messageHolder] = message.useMessage()
   const [params, setParams] = useSearchParams()
   const runId = params.get('storyboard') || ''
@@ -24,6 +27,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
   const client = useQueryClient()
   const [draft, setDraft] = useState<DramaStoryboardSegment[] | null>(null)
   const [busy, setBusy] = useState(false)
+  const [structureEditing, setStructureEditing] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [error, setError] = useState('')
   const draftRef = useRef(draft); draftRef.current = draft
@@ -37,7 +41,20 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
   const selected = segments.find((s) => s.id === selectedId) ?? segments[0]
   const lines = linesOf(run?.scriptText || '')
   const pacingHistory = run?.repairs?.filter((ticket) => ticket.node === 'pacing' && ticket.item === selected?.number) ?? []
+  const catalog = (page?.catalogForms ?? page?.forms ?? []).map((form) => {
+    const binding = selected?.bindings.find((b) => b.formId === form.id)
+    return binding ? { ...form, imageUrl: binding.imageId ? `/api/v1/ai-drama/projects/${projectId}/images/${binding.imageId}/content` : undefined } : form
+  })
+  const boundForms = catalog.filter((f) => selected?.formIds.includes(f.id))
+  const inlineEditable = !readonly && !busy && !!run && segments.length > 0 && segments.every((s) => s.status === 'ready')
+  const structural = !!draft && structureEditing
+  const usedFormKey = [...new Set(segments.flatMap((segment) => segment.formIds))].sort().join('|')
   const duration = (shots: DramaStoryboardShot[]) => shots.reduce((sum, s) => sum + s.duration, 0)
+  useEffect(() => {
+    if (!run || !onFormsChange) return
+    const used = new Set(usedFormKey.split('|'))
+    onFormsChange((page?.catalogForms ?? page?.forms ?? []).filter((form) => used.has(form.id)))
+  }, [usedFormKey, run?.id, page?.catalogForms, page?.forms, onFormsChange])
   useEffect(() => {
     if (!draft) return
     const guard = (event: BeforeUnloadEvent) => event.preventDefault()
@@ -66,8 +83,34 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
       setParams((p) => { const value = new URLSearchParams(p); value.set('storyboard', next.id); const target = next.segments[selected.number - 1]; if (target) value.set('segment', target.id); return value })
     })
   }
-  function changeSegment(patch: Partial<DramaStoryboardSegment>) { if (!selected) return; setDraft((current) => current?.map((s) => s.id === selected.id ? { ...s, ...patch } : s) ?? null) }
+  function changeSegment(patch: Partial<DramaStoryboardSegment>) { if (!selected) return; setDraft((current) => (current ?? materializeStoryboardMentions(run?.segments ?? [], catalog)).map((s) => s.id === selected.id ? { ...s, ...patch } : s)) }
   function changeShot(index: number, patch: Partial<DramaStoryboardShot>) { if (selected) changeSegment({ shots: selected.shots.map((s, i) => i === index ? { ...s, ...patch } : s) }) }
+  function inlineSegment(field: 'scene' | 'purpose', value: StoryboardTextDocument) {
+    if (!selected) return
+    changeSegment({ [field]: value.text, [field === 'scene' ? 'sceneMentions' : 'purposeMentions']: value.mentions, formIds: [...new Set([...selected.formIds, ...value.mentions.map((r) => r.formId)])] })
+  }
+  function inlineShot(index: number, field: 'description' | 'sound', value: StoryboardTextDocument) {
+    if (!selected) return
+    changeSegment({ shots: selected.shots.map((shot, i) => i === index ? { ...shot, [field]: value.text, [field === 'description' ? 'descriptionMentions' : 'soundMentions']: value.mentions } : shot), formIds: [...new Set([...selected.formIds, ...value.mentions.map((r) => r.formId)])] })
+  }
+  function inlineVoice(index: number, number: number, field: 'text' | 'speaker', value: StoryboardTextDocument) {
+    if (!selected) return
+    changeSegment({ shots: selected.shots.map((shot, i) => i === index ? { ...shot, utterances: shot.utterances.map((u, j) => j === number ? { ...u, [field]: value.text, [field === 'text' ? 'mentions' : 'speakerMentions']: value.mentions } : u) } : shot), formIds: [...new Set([...selected.formIds, ...value.mentions.map((r) => r.formId)])] })
+  }
+  function textDocument(text: string, mentions: DramaStoryboardUtterance['mentions']) { return { text, mentions: inferStoryboardMentions(text, boundForms, mentions) } }
+  function changeForms(formIds: string[]) {
+    if (!selected) return
+    const next = materializeStoryboardMentions([selected], catalog)[0]
+    const keep = (refs: DramaStoryboardUtterance['mentions']) => refs?.filter((ref) => formIds.includes(ref.formId))
+    next.formIds = formIds
+    next.sceneMentions = keep(next.sceneMentions); next.purposeMentions = keep(next.purposeMentions)
+    for (const shot of next.shots) {
+      shot.descriptionMentions = keep(shot.descriptionMentions); shot.soundMentions = keep(shot.soundMentions)
+      for (const voice of shot.utterances) { voice.mentions = keep(voice.mentions); voice.speakerMentions = keep(voice.speakerMentions) }
+    }
+    changeSegment(next)
+  }
+  function cancelEditing() { setDraft(null); setStructureEditing(false); setError('') }
   function moveSegment(direction: number) { if (!draft || !selected) return; const next = [...draft]; const at = next.findIndex((s) => s.id === selected.id); const target = at + direction; if (target < 0 || target >= next.length) return; [next[at], next[target]] = [next[target], next[at]]; setDraft(next) }
   function moveShot(index: number, direction: number) { if (!selected) return; const next = [...selected.shots]; const target = index + direction; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; changeSegment({ shots: next }) }
   function addSegment() { const id = crypto.randomUUID(); const line = Math.max(1, Math.min(lines.length, (segments.at(-1)?.endLine ?? 0) + 1)); setDraft((current) => [...(current ?? []), { id, number: segments.length + 1, title: '新片段', scene: '', purpose: '', startLine: line, endLine: line, startState: '', endState: '', status: 'ready', notes: '', formIds: [], bindings: [], shots: [blankShot(line)] }]); chooseSegment(id) }
@@ -75,18 +118,18 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
   if (query.isError) return <Alert type="error" showIcon title="读取分镜失败" description={query.error.message} action={<Button onClick={() => void query.refetch()}>重试</Button>} />
   return <>
     {messageHolder}
-    <div className="drama-storyboard-toolbar">
+    <div className={`drama-storyboard-toolbar${draft ? ' has-draft' : ''}`}>
       <div><h2>分镜脚本</h2>{run && <Tag color={run.status === 'failed' ? 'error' : run.status === 'confirmed' ? 'success' : 'processing'}>{storyboardStatusLabels[run.status]}</Tag>}<span>{segments.length} 个片段 · {duration(segments.flatMap((s) => s.shots)).toFixed(1)} 秒</span></div>
       <Space wrap>
         {!!page?.runs.length && <Select aria-label="分镜历史版本" prefix={<HistoryOutlined />} value={run?.id} disabled={!!draft || busy} style={{ width: 200 }} options={page.runs.map((v, i) => ({ value: v.id, label: `版本 ${v.version} · ${storyboardStatusLabels[v.status]}${i === 0 ? '（最新）' : ''}` }))} onChange={(id) => setParams((p) => { const next = new URLSearchParams(p); if (id === page.runs[0].id) next.delete('storyboard'); else next.set('storyboard', id); next.delete('segment'); return next })} />}
-        {draft ? <><Button disabled={busy} onClick={() => setDraft(null)}>取消编辑</Button><Button type="primary" loading={busy} onClick={() => void action(async () => { if (run) { await saveDramaStoryboard(projectId, episodeId, run, draft); setDraft(null); messageApi.success('已保存为新版本') } })}>保存新版本</Button></> : <>
-          {run && <Button icon={<EditOutlined />} disabled={readonly || !segments.length || busy || segments.some((s) => s.status !== 'ready')} onClick={() => setDraft(structuredClone(segments))}>编辑分镜</Button>}
+        {draft ? <><Button disabled={busy} onClick={() => setStructureEditing((value) => !value)}>{structural ? '返回正文' : '结构编辑'}</Button><Button disabled={busy} onClick={cancelEditing}>取消编辑</Button><Button type="primary" loading={busy} onClick={() => void action(async () => { if (run) { const saved = await saveDramaStoryboard(projectId, episodeId, run, draft); setDraft(null); setStructureEditing(false); setParams((p) => { const next = new URLSearchParams(p); next.delete('storyboard'); const chosen = saved.segments[segments.indexOf(selected)]; if (chosen) next.set('segment', chosen.id); return next }); messageApi.success('已保存为新版本') } })}>保存新版本</Button></> : <>
+          {run && <Button icon={<EditOutlined />} disabled={readonly || !segments.length || busy || segments.some((s) => s.status !== 'ready')} onClick={() => { setDraft(materializeStoryboardMentions(segments, catalog)); setStructureEditing(true) }}>结构编辑</Button>}
           {run?.status === 'ready' && <Button icon={<CheckOutlined />} disabled={readonly} loading={busy} onClick={() => void action(async () => { await confirmDramaStoryboard(projectId, episodeId, run); messageApi.success('分镜已确认') })}>确认分镜</Button>}
           <Button type="primary" icon={<ReloadOutlined />} loading={busy || active} disabled={needsReview || !!draft} onClick={() => start(false)}>{run ? '重新拆分' : 'AI 拆分分镜'}</Button>
         </>}
       </Space>
     </div>
-    {draft && <Alert type="info" title="保存会建立新版本；缺图引用可采用当前已生成图片，已采用的图片版本保持原样。" />}
+    {draft && <Alert type="info" title="有未保存的修改，保存后会建立新版本。" />}
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} title={error} />}
     {run?.stale && <Alert type="warning" showIcon title="来源剧本或关联资产已变化" description="当前分镜保留供查看，需要按最新剧本重新拆分。" />}
     {!latest && <Alert type="info" title="正在查看历史版本，内容只读；最新版本和失败前成果均会保留。" />}
@@ -98,10 +141,10 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
     {!!run?.repairs?.length && <details className="drama-storyboard-repair-history" open={active}><summary>中心调度 · {run.repairs.length} 次派工</summary>{run.repairs.map((ticket) => <article key={ticket.id}><Tag color={ticket.status === 'resolved' ? 'success' : ticket.status === 'blocked' ? 'error' : 'processing'}>{repairLabel(ticket)}</Tag><strong>{ticket.reporter} → {({ pacing: '节奏优化', timing: '时长校正', writer: '分镜编写', planner: '导演规划', reviewer: '审阅', previous: '前片段修正', pause: '人工处理' } as Record<string, string>)[ticket.node] || ticket.node} · 目标 {ticket.targetItem}</strong><p>{ticket.reason}</p><small>{ticket.outcome || ticket.instructions} · 返回{ticket.returnTo}</small></article>)}</details>}
     {!segments.length ? <div className="drama-video-storyboard-empty"><VideoCameraOutlined /><h3>{active ? '正在规划场次与片段' : '暂未拆分分镜'}</h3><p>{active ? '通过检查的片段会陆续保存并显示，可离开后回来查看。' : '将本集剧本转换成可编辑的片段和镜头。'}</p></div> : <>
       <div className="drama-storyboard-editing-layout">
-        <section className={`drama-storyboard-script${draft ? ' editing' : ' reading'}`} aria-label="片段分镜内容">
+        <section className={`drama-storyboard-script${structural ? ' editing' : ' reading'}`} aria-label="片段分镜内容">
           {selected && <>
-            {draft ? <div className="drama-storyboard-segment-fields"><label>片段名称<Input value={selected.title} maxLength={120} onChange={(e) => changeSegment({ title: e.target.value })} /></label><label>场次<Input value={selected.scene} onChange={(e) => changeSegment({ scene: e.target.value })} /></label><label>起始状态<Input.TextArea autoSize value={selected.startState} onChange={(e) => changeSegment({ startState: e.target.value })} /></label><label>结束状态<Input.TextArea autoSize value={selected.endState} onChange={(e) => changeSegment({ endState: e.target.value })} /></label><label>起始剧本行<InputNumber min={1} max={lines.length} value={selected.startLine} onChange={(n) => changeSegment({ startLine: n ?? 1 })} /></label><label>结束剧本行<InputNumber min={selected.startLine} max={lines.length} value={selected.endLine} onChange={(n) => changeSegment({ endLine: n ?? 1 })} /></label></div> : <><div className="drama-storyboard-segment-heading"><h3>片段 {segments.indexOf(selected) + 1}：{selected.title}</h3><Tooltip title="创建新版本，仅优化当前片段；其他片段及采用图片保留"><Button size="small" loading={busy} disabled={readonly || !run || !['ready', 'confirmed', 'failed', 'partial'].includes(run.status) || selected.status !== 'ready'} onClick={optimizePacing}>优化当前片段</Button></Tooltip></div></>}
-            {draft && <label className="drama-storyboard-form-picker">引用资产形象<Select mode="multiple" showSearch optionFilterProp="label" value={selected.formIds} options={page?.forms.map((f) => ({ value: f.id, label: `${f.assetName} · ${f.name}${f.imageUrl ? '' : '（待素材）'}` }))} onChange={(formIds) => changeSegment({ formIds })} /></label>}
+            {structural ? <div className="drama-storyboard-segment-fields"><label>片段名称<Input value={selected.title} maxLength={120} onChange={(e) => changeSegment({ title: e.target.value })} /></label><label>场次<Input value={selected.scene} onChange={(e) => changeSegment({ scene: e.target.value, sceneMentions: undefined })} /></label><label>起始状态<Input.TextArea autoSize value={selected.startState} onChange={(e) => changeSegment({ startState: e.target.value })} /></label><label>结束状态<Input.TextArea autoSize value={selected.endState} onChange={(e) => changeSegment({ endState: e.target.value })} /></label><label>起始剧本行<InputNumber min={1} max={lines.length} value={selected.startLine} onChange={(n) => changeSegment({ startLine: n ?? 1 })} /></label><label>结束剧本行<InputNumber min={selected.startLine} max={lines.length} value={selected.endLine} onChange={(n) => changeSegment({ endLine: n ?? 1 })} /></label></div> : <><div className="drama-storyboard-segment-heading"><h3>片段 {segments.indexOf(selected) + 1}：{selected.title}</h3><Tooltip title="创建新版本，仅优化当前片段；其他片段及采用图片保留"><Button size="small" loading={busy} disabled={readonly || !!draft || !run || !['ready', 'confirmed', 'failed', 'partial'].includes(run.status) || selected.status !== 'ready'} onClick={optimizePacing}>优化当前片段</Button></Tooltip></div></>}
+            {structural && <label className="drama-storyboard-form-picker">引用资产形象<Select mode="multiple" showSearch optionFilterProp="label" value={selected.formIds} options={catalog.map((f) => ({ value: f.id, label: `${f.assetName} · ${f.name}${f.imageUrl ? '' : '（待素材）'}` }))} onChange={changeForms} /></label>}
 
             {!!pacingHistory.length && <details className="drama-storyboard-pacing-history" aria-label="节奏优化记录"><summary>节奏优化记录 · {pacingHistory.length}</summary>
               {pacingHistory.map((ticket) => <article key={ticket.id}>
@@ -111,36 +154,36 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview }: 
               </article>)}
             </details>}
             {selected.status !== 'ready' && <Alert type="info" title="此片段尚未完成，已通过的其他片段可正常查看。" />}
-            <div className={draft ? 'drama-storyboard-editable-shots' : 'drama-storyboard-reading-sheet'}>
-              {!draft && <div className="drama-storyboard-reading-context">
-                <p><strong>整体背景：</strong>{selected.scene || '未填写场次'}{selected.purpose && <>；{selected.purpose}</>}<span> · {selected.shots.length} 个分镜 · {duration(selected.shots).toFixed(1)} 秒</span></p>
-                {!!selected.formIds.length && <div className="drama-storyboard-reading-assets"><span>本段资产</span>{selected.formIds.map((id) => { const form = page?.forms.find((f) => f.id === id); const binding = selected.bindings.find((b) => b.formId === id); return <Tag key={id} title={`${form?.assetName || '历史形象'} · ${form?.name || '默认形象'}${!binding?.imageId ? '（尚未采用图片）' : ''}`}>{binding?.imageId && <img src={`/api/v1/ai-drama/projects/${projectId}/images/${binding.imageId}/content`} alt="" />}{form?.assetName || '历史形象'}{form?.name && form.name !== '默认形象' && ` · ${form.name}`}</Tag> })}</div>}
+            <div className={structural ? 'drama-storyboard-editable-shots' : 'drama-storyboard-reading-sheet'}>
+              {!structural && <div className="drama-storyboard-reading-context">
+                <p><strong>整体背景：</strong><DramaStoryboardTextEditor label="片段场次" value={textDocument(selected.scene, selected.sceneMentions)} forms={catalog} episodeFormIds={page?.forms.map((f) => f.id) ?? []} editable={inlineEditable} placeholder="填写场次，@ 引用场景" onChange={(value) => inlineSegment('scene', value)} />；<DramaStoryboardTextEditor label="片段剧情职责" value={textDocument(selected.purpose, selected.purposeMentions)} forms={catalog} episodeFormIds={page?.forms.map((f) => f.id) ?? []} editable={inlineEditable} placeholder="填写本段剧情职责" onChange={(value) => inlineSegment('purpose', value)} /><span> · {selected.shots.length} 个分镜 · {duration(selected.shots).toFixed(1)} 秒</span></p>
+                {inlineEditable && <p className="drama-storyboard-inline-hint">点击文字或秒数直接编辑，输入 @ 引用资产；修改后点击“保存新版本”。</p>}
               </div>}
             {selected.shots.map((shot, index) => <article key={shot.id || index} className="drama-storyboard-shot">
-              {draft && <div className="drama-storyboard-shot-heading"><strong>镜头 {index + 1}</strong><Space wrap><Select aria-label={`镜头${index + 1}景别`} value={shot.shotSize} options={[...new Set([...shotSizes, shot.shotSize])].map((v) => ({ value: v, label: v }))} onChange={(shotSize) => changeShot(index, { shotSize })} /><Select aria-label={`镜头${index + 1}运镜`} value={shot.camera} options={[...new Set([...cameras, shot.camera])].map((v) => ({ value: v, label: v }))} onChange={(camera) => changeShot(index, { camera })} /><InputNumber aria-label={`镜头${index + 1}秒数`} min={0.5} max={60} step={0.5} value={shot.duration} onChange={(n) => changeShot(index, { duration: n ?? 4 })} suffix="秒" /><Button size="small" aria-label={`前移镜头${index + 1}`} disabled={index === 0} onClick={() => moveShot(index, -1)}>前移</Button><Button size="small" aria-label={`后移镜头${index + 1}`} disabled={index === selected.shots.length - 1} onClick={() => moveShot(index, 1)}>后移</Button><Button aria-label={`删除镜头${index + 1}`} danger type="text" icon={<DeleteOutlined />} disabled={selected.shots.length <= 1} onClick={() => changeSegment({ shots: selected.shots.filter((_, i) => i !== index) })} /></Space></div>}
-              {draft ? <Input.TextArea aria-label={`镜头${index + 1}画面描述`} autoSize={{ minRows: 3 }} value={shot.description} onChange={(e) => changeShot(index, { description: e.target.value })} /> : <p className="drama-storyboard-shot-picture"><span className="drama-storyboard-shot-prefix"><strong>分镜{index + 1}</strong><span className="drama-storyboard-shot-time"><ClockCircleOutlined />{shot.duration} 秒</span><span>{shot.shotSize} · {shot.camera}</span></span>{shot.description}</p>}
+              {structural && <div className="drama-storyboard-shot-heading"><strong>镜头 {index + 1}</strong><Space wrap><Select aria-label={`镜头${index + 1}景别`} value={shot.shotSize} options={[...new Set([...shotSizes, shot.shotSize])].map((v) => ({ value: v, label: v }))} onChange={(shotSize) => changeShot(index, { shotSize })} /><Select aria-label={`镜头${index + 1}运镜`} value={shot.camera} options={[...new Set([...cameras, shot.camera])].map((v) => ({ value: v, label: v }))} onChange={(camera) => changeShot(index, { camera })} /><InputNumber aria-label={`镜头${index + 1}秒数`} min={0.5} max={60} step={0.5} value={shot.duration} onChange={(n) => changeShot(index, { duration: n ?? 4 })} suffix="秒" /><Button size="small" aria-label={`前移镜头${index + 1}`} disabled={index === 0} onClick={() => moveShot(index, -1)}>前移</Button><Button size="small" aria-label={`后移镜头${index + 1}`} disabled={index === selected.shots.length - 1} onClick={() => moveShot(index, 1)}>后移</Button><Button aria-label={`删除镜头${index + 1}`} danger type="text" icon={<DeleteOutlined />} disabled={selected.shots.length <= 1} onClick={() => changeSegment({ shots: selected.shots.filter((_, i) => i !== index) })} /></Space></div>}
+              {structural ? <Input.TextArea aria-label={`镜头${index + 1}画面描述`} autoSize={{ minRows: 3 }} value={shot.description} onChange={(e) => changeShot(index, { description: e.target.value, descriptionMentions: undefined })} /> : <div className="drama-storyboard-shot-picture"><span className="drama-storyboard-shot-prefix"><strong>分镜{index + 1}</strong><span className="drama-storyboard-shot-time"><ClockCircleOutlined />{inlineEditable ? <InputNumber aria-label={`分镜${index + 1}时长`} value={shot.duration} min={0.5} max={60} step={0.5} controls={false} variant="borderless" onChange={(value) => { if (value !== null) changeShot(index, { duration: value }) }} /> : shot.duration} 秒</span>{inlineEditable ? <><Select className="drama-inline-choice" aria-label={`分镜${index + 1}景别`} size="small" variant="borderless" suffixIcon={null} value={shot.shotSize} options={[...new Set([...shotSizes, shot.shotSize])].map((value) => ({ value, label: value }))} onChange={(shotSize) => changeShot(index, { shotSize })} /><Select className="drama-inline-choice" aria-label={`分镜${index + 1}运镜`} size="small" variant="borderless" suffixIcon={null} value={shot.camera} options={[...new Set([...cameras, shot.camera])].map((value) => ({ value, label: value }))} onChange={(camera) => changeShot(index, { camera })} /></> : <span>{shot.shotSize} · {shot.camera}</span>}</span><DramaStoryboardTextEditor label={`分镜${index + 1}画面`} value={textDocument(shot.description, shot.descriptionMentions)} forms={catalog} episodeFormIds={page?.forms.map((f) => f.id) ?? []} editable={inlineEditable} onChange={(value) => inlineShot(index, 'description', value)} /></div>}
               {shot.utterances.map((u, n) => <div key={n} className="drama-storyboard-voice-entry">
-                <div className="drama-storyboard-utterance">{draft && u.delivery !== 'visual' ? <><Select aria-label="声音类型" value={u.kind} disabled={!!u.sourceText} options={Object.entries(soundLabels).map(([value, label]) => ({ value, label }))} onChange={(kind) => changeShot(index, { utterances: shot.utterances.map((v, j) => j === n ? { ...v, kind } : v) })} /><Input aria-label="说话者" placeholder="说话者" value={u.speaker} disabled={!!u.sourceText} onChange={(e) => changeShot(index, { utterances: shot.utterances.map((v, j) => j === n ? { ...v, speaker: e.target.value } : v) })} /><Input.TextArea aria-label="台词内容" autoSize value={u.text} onChange={(e) => changeShot(index, { utterances: shot.utterances.map((v, j) => j === n ? { ...v, text: e.target.value } : v) })} /><Button aria-label="删除台词" type="text" danger icon={<DeleteOutlined />} onClick={() => changeShot(index, { utterances: shot.utterances.filter((_, j) => j !== n) })} /></> : <><Tag>{u.delivery === 'visual' ? '画面表达 · 不口播' : u.sourceText ? '精简旁白' : soundLabels[u.kind]}</Tag><strong>{u.speaker}</strong><span>{u.delivery === 'visual' ? '原旁白已转为上方画面描述' : u.text}</span></>}</div>
-                {u.sourceText && <details className="drama-storyboard-narration-source"><summary>查看原旁白与调整说明</summary><p>{u.sourceText}</p><small>{u.adaptationReason}</small>{draft && u.delivery === 'visual' && <p>此内容通过上方画面描述表达，原句保留用于核对。</p>}</details>}
+                <div className="drama-storyboard-utterance">{structural && u.delivery !== 'visual' ? <><Select aria-label="声音类型" value={u.kind} disabled={!!u.sourceText} options={Object.entries(soundLabels).map(([value, label]) => ({ value, label }))} onChange={(kind) => changeShot(index, { utterances: shot.utterances.map((v, j) => j === n ? { ...v, kind } : v) })} /><Input aria-label="说话者" placeholder="说话者" value={u.speaker} disabled={!!u.sourceText} onChange={(e) => changeShot(index, { utterances: shot.utterances.map((v, j) => j === n ? { ...v, speaker: e.target.value, speakerMentions: undefined } : v) })} /><Input.TextArea aria-label="台词内容" autoSize value={u.text} onChange={(e) => changeShot(index, { utterances: shot.utterances.map((v, j) => j === n ? { ...v, text: e.target.value, mentions: undefined } : v) })} /><Button aria-label="删除台词" type="text" danger icon={<DeleteOutlined />} onClick={() => changeShot(index, { utterances: shot.utterances.filter((_, j) => j !== n) })} /></> : <><Tag>{u.delivery === 'visual' ? '画面表达 · 不口播' : u.sourceText ? '精简旁白' : soundLabels[u.kind]}</Tag><strong><DramaStoryboardTextEditor label={`分镜${index + 1}声音${n + 1}说话者`} value={textDocument(u.speaker, u.speakerMentions)} forms={catalog} episodeFormIds={page?.forms.map((f) => f.id) ?? []} editable={inlineEditable && !u.sourceText} placeholder="说话者" onChange={(value) => inlineVoice(index, n, 'speaker', value)} /></strong><span>{u.delivery === 'visual' ? '原旁白已转为上方画面描述' : <DramaStoryboardTextEditor label={`分镜${index + 1}声音${n + 1}台词`} value={textDocument(u.text, u.mentions)} forms={catalog} episodeFormIds={page?.forms.map((f) => f.id) ?? []} editable={inlineEditable} placeholder="输入台词" onChange={(value) => inlineVoice(index, n, 'text', value)} />}</span></>}</div>
+                {u.sourceText && <details className="drama-storyboard-narration-source"><summary>查看原旁白与调整说明</summary><p>{u.sourceText}</p><small>{u.adaptationReason}</small>{structural && u.delivery === 'visual' && <p>此内容通过上方画面描述表达，原句保留用于核对。</p>}</details>}
               </div>)}
-              {draft && <Button type="link" size="small" onClick={() => changeShot(index, { utterances: [...shot.utterances, { kind: 'dialogue', speaker: '', text: '', sourceLine: shot.sourceLines[0] }] })}>添加台词</Button>}
-              {draft ? <label>音效<Input value={shot.sound} onChange={(e) => changeShot(index, { sound: e.target.value })} /></label> : shot.sound && <p className="drama-storyboard-sound">音效：{shot.sound}</p>}
-              {draft && <details className="drama-storyboard-source"><summary>查看剧本依据 · {shot.sourceLines.map((n) => `L${n}`).join('、')}</summary><Select mode="multiple" aria-label="镜头来源行" value={shot.sourceLines} options={lines.slice(selected.startLine - 1, selected.endLine).map((text, i) => ({ value: i + selected.startLine, label: `L${i + selected.startLine} ${text.slice(0, 45)}` }))} onChange={(sourceLines) => changeShot(index, { sourceLines })} />{shot.sourceLines.map((n) => <p key={n}><b>L{n}</b> {lines[n - 1]}</p>)}</details>}
+              {structural && <Button type="link" size="small" onClick={() => changeShot(index, { utterances: [...shot.utterances, { kind: 'dialogue', speaker: '', text: '', sourceLine: shot.sourceLines[0] }] })}>添加台词</Button>}
+              {structural ? <label>音效<Input value={shot.sound} onChange={(e) => changeShot(index, { sound: e.target.value, soundMentions: undefined })} /></label> : (shot.sound || inlineEditable) && <p className="drama-storyboard-sound">音效：<DramaStoryboardTextEditor label={`分镜${index + 1}音效`} value={textDocument(shot.sound, shot.soundMentions)} forms={catalog} episodeFormIds={page?.forms.map((f) => f.id) ?? []} editable={inlineEditable} placeholder="填写音效" onChange={(value) => inlineShot(index, 'sound', value)} /></p>}
+              {structural && <details className="drama-storyboard-source"><summary>查看剧本依据 · {shot.sourceLines.map((n) => `L${n}`).join('、')}</summary><Select mode="multiple" aria-label="镜头来源行" value={shot.sourceLines} options={lines.slice(selected.startLine - 1, selected.endLine).map((text, i) => ({ value: i + selected.startLine, label: `L${i + selected.startLine} ${text.slice(0, 45)}` }))} onChange={(sourceLines) => changeShot(index, { sourceLines })} />{shot.sourceLines.map((n) => <p key={n}><b>L{n}</b> {lines[n - 1]}</p>)}</details>}
             </article>)}
             </div>
-            {draft && <Space><Button icon={<PlusOutlined />} onClick={() => changeSegment({ shots: [...selected.shots, blankShot(selected.startLine)] })}>新增镜头</Button><Button onClick={() => moveSegment(-1)}>片段前移</Button><Button onClick={() => moveSegment(1)}>片段后移</Button><Button danger disabled={draft.length <= 1} onClick={() => Modal.confirm({ title: '删除当前片段？', content: '只影响本次编辑草稿，旧版本仍会保留。', onOk: () => setDraft((d) => d?.filter((s) => s.id !== selected.id) ?? null), okText: '删除', cancelText: '取消' })}>删除片段</Button></Space>}
-            {!draft && <details key={selected.id} className="drama-storyboard-details"><summary>片段详情与剧本依据</summary>
+            {structural && <Space><Button icon={<PlusOutlined />} onClick={() => changeSegment({ shots: [...selected.shots, blankShot(selected.startLine)] })}>新增镜头</Button><Button onClick={() => moveSegment(-1)}>片段前移</Button><Button onClick={() => moveSegment(1)}>片段后移</Button><Button danger disabled={draft.length <= 1} onClick={() => Modal.confirm({ title: '删除当前片段？', content: '只影响本次编辑草稿，旧版本仍会保留。', onOk: () => setDraft((d) => d?.filter((s) => s.id !== selected.id) ?? null), okText: '删除', cancelText: '取消' })}>删除片段</Button></Space>}
+            {!structural && <details key={selected.id} className="drama-storyboard-details"><summary>片段详情与剧本依据</summary>
               {selected.startState && <p><strong>开始状态</strong>{selected.startState}</p>}
               {selected.endState && <p><strong>结束状态</strong>{selected.endState}</p>}
               {selected.shots.map((shot, index) => <details key={shot.id || index} className="drama-storyboard-source"><summary>分镜{index + 1} · 查看剧本依据</summary>{shot.sourceLines.map((n) => <p key={n}><b>L{n}</b> {lines[n - 1]}</p>)}</details>)}
               {selected.notes && <div className="drama-storyboard-notes"><strong>创作备注</strong><p>{selected.notes}</p></div>}
             </details>}
-            {draft && selected.notes && <p className="drama-storyboard-notes">{selected.notes}</p>}
+            {structural && selected.notes && <p className="drama-storyboard-notes">{selected.notes}</p>}
           </>}
         </section>
         <aside className="drama-storyboard-preview" aria-label="片段素材预览"><div className="drama-storyboard-preview-heading"><h3>片段预览</h3><Tooltip title="视频生成将在后续接入；当前步骤只拆分文字分镜"><Button disabled>生成视频</Button></Tooltip></div><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前片段视频尚未生成" />{!!selected?.formIds.length && <details className="drama-storyboard-preview-assets"><summary>参考素材 · {selected.formIds.length}</summary><div className="drama-storyboard-reference-images">{selected.formIds.map((id) => { const form = page?.forms.find((f) => f.id === id); const imageId = selected.bindings.find((b) => b.formId === id)?.imageId; return <figure key={id}>{imageId ? <Image src={`/api/v1/ai-drama/projects/${projectId}/images/${imageId}/content`} alt={form?.assetName || '采用的参考图'} /> : <div>待素材</div>}<figcaption>{form?.assetName} · {form?.name}</figcaption></figure> })}</div></details>}</aside>
       </div>
-      <nav className="drama-storyboard-timeline" aria-label="片段列表">{segments.map((s, i) => <button type="button" key={s.id} aria-current={selected?.id === s.id ? 'true' : undefined} onClick={() => chooseSegment(s.id)}><strong>{i + 1}</strong><span>{s.title}</span><small>{s.status === 'ready' ? `${s.shots.length} 镜头 · ${duration(s.shots).toFixed(1)} 秒` : '待编写'}</small></button>)}{draft && <Button icon={<PlusOutlined />} onClick={addSegment}>新增片段</Button>}</nav>
+      <nav className="drama-storyboard-timeline" aria-label="片段列表">{segments.map((s, i) => <button type="button" key={s.id} aria-current={selected?.id === s.id ? 'true' : undefined} onClick={() => chooseSegment(s.id)}><strong>{i + 1}</strong><span>{s.title}</span><small>{s.status === 'ready' ? `${s.shots.length} 镜头 · ${duration(s.shots).toFixed(1)} 秒` : '待编写'}</small></button>)}{structural && <Button icon={<PlusOutlined />} onClick={addSegment}>新增片段</Button>}</nav>
     </>}
   </>
 }

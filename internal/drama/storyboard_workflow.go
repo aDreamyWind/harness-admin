@@ -221,6 +221,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				return errors.New("规划修正缺少标题或人物起止状态")
 			}
 			seg.Title, seg.Scene, seg.Purpose, seg.StartState, seg.EndState = revised.Title, revised.Scene, revised.Purpose, revised.StartState, revised.EndState
+			seg.SceneMentions, seg.PurposeMentions = nil, nil
 			return s.storyboards.ReviseStoryboardPlan(ctx, r.ID, seg)
 		}
 		write := func() error {
@@ -233,6 +234,13 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				return storyboardProblem(e, "分镜编写", "generation_format", "shots")
 			}
 			seg.Shots, seg.FormIDs, seg.Notes = v.Shots, v.FormIDs, v.Notes
+			// 编写节点没有逐字位置编辑能力，不能把旧位置套入重写后的文字。
+			for n := range seg.Shots {
+				seg.Shots[n].DescriptionMentions, seg.Shots[n].SoundMentions = nil, nil
+				for j := range seg.Shots[n].Utterances {
+					seg.Shots[n].Utterances[j].Mentions, seg.Shots[n].Utterances[j].SpeakerMentions = nil, nil
+				}
+			}
 			return nil
 		}
 		persist := func() error {

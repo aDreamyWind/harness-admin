@@ -12,6 +12,7 @@ import (
 )
 
 type storyboardHTTPStub struct {
+	edited    drama.StoryboardEdit
 	scope     []string
 	err       error
 	generated chan bool
@@ -35,6 +36,7 @@ func (s *storyboardHTTPStub) GenerateStoryboard(drama.StoryboardJob) error {
 }
 func (s *storyboardHTTPStub) EditStoryboard(_ context.Context, o, u, p, e, r string, in drama.StoryboardEdit) (drama.StoryboardRun, error) {
 	s.scope = []string{o, u, p, e, r}
+	s.edited = in
 	return drama.StoryboardRun{ID: r}, s.err
 }
 func (s *storyboardHTTPStub) ConfirmStoryboard(_ context.Context, o, u, p, e, r string, revision int) error {
@@ -84,4 +86,20 @@ func TestStoryboardRoutesSessionCSRFAndScope(t *testing.T) {
 		s.err = nil
 	}
 	<-s.generated
+}
+
+func TestStoryboardTextMentionHTTPPayload(t *testing.T) {
+	s := &storyboardHTTPStub{}
+	session := accountTestSession()
+	router := New(Dependencies{AppName: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: &csrfCheckingAuthStub{&accountAuthStub{session: session}}, DramaStoryboards: s, SessionCookie: "session"})
+	body := `{"revision":2,"segments":[{"scene":"书店","sceneMentions":[{"start":0,"end":2,"formId":"scene-id"}],"shots":[{"description":"😀林夏进门","duration":7.5,"descriptionMentions":[{"start":1,"end":3,"formId":"character-id"}]}]}]}`
+	req := httptest.NewRequest("PUT", "/api/v1/ai-drama/projects/b6e6da1c-7c27-4f72-babf-34a7c4e19617/video-episodes/3a364763-e0df-4cb4-9c55-88ab0a11ff94/storyboards/run", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", "csrf-token")
+	req.AddCookie(&http.Cookie{Name: "session", Value: "token"})
+	out := httptest.NewRecorder()
+	router.ServeHTTP(out, req)
+	if out.Code != 200 || len(s.edited.Segments) != 1 || s.edited.Segments[0].SceneMentions[0].FormID != "scene-id" || s.edited.Segments[0].Shots[0].DescriptionMentions[0].Start != 1 || s.edited.Segments[0].Shots[0].Duration != 7.5 {
+		t.Fatal("编辑接口丢失文字引用或时长", out.Code, out.Body.String())
+	}
 }

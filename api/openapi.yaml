@@ -492,7 +492,8 @@ paths:
           description: 分镜运行中、并发版本冲突或来源已变化
   /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}:
     put:
-      summary: 将人工编辑的完整分镜保存为新历史版本
+      summary: 将直接编辑或结构编辑的完整分镜保存为新历史版本
+      description: 正文、时长和真实文字引用一起保存。文字引用支持本项目全剧形象，不修改正式小剧本中的资产关联。旧采用图片和历史版本保持原样；越界、重叠、其他项目形象或并发版本冲突均拒绝。
       operationId: editDramaStoryboard
       description: 只允许编辑最新非运行版本，使用revision检查并发。资产必须来自本集真实形象；已采用图片绑定由服务端保留，客户端不能伪造。人工台词修改不会修改来源剧本。
       security: [{ sessionCookie: [], csrfHeader: [] }]
@@ -3829,10 +3830,20 @@ components:
         afterDuration: { type: number, exclusiveMinimum: 0, description: 实际保存的规划总秒数，未采纳时与原稿相同 }
         outcome: { type: string }
         createdAt: { type: string, format: date-time }
+    DramaStoryboardMention:
+      type: object
+      required: [start, end, formId]
+      description: 文字中的真实形象引用。位置按Unicode字符计数，左闭右开；按位置排序，不得重叠。只允许本项目目录中的形象，保存时加入分镜绑定。
+      properties:
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 1 }
+        formId: { type: string, format: uuid }
     DramaStoryboardUtterance:
       type: object
       required: [kind, speaker, text, sourceLine]
       properties:
+        mentions: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardMention' } }
+        speakerMentions: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardMention' } }
         kind: { type: string, enum: [dialogue, os, vo] }
         speaker: { type: string }
         text: { type: string, description: 实际口播；delivery为visual时必须为空，其余情况必须非空。 }
@@ -3844,6 +3855,8 @@ components:
       type: object
       required: [id, number, description, shotSize, camera, sound, duration, sourceLines, utterances]
       properties:
+        descriptionMentions: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardMention' } }
+        soundMentions: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardMention' } }
         id: { type: string, format: uuid }
         number: { type: integer, minimum: 1 }
         description: { type: string, minLength: 1 }
@@ -3857,6 +3870,8 @@ components:
       type: object
       required: [id, number, title, scene, purpose, startLine, endLine, startState, endState, status, notes, formIds, bindings, shots]
       properties:
+        sceneMentions: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardMention' } }
+        purposeMentions: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardMention' } }
         id: { type: string, format: uuid }
         number: { type: integer, minimum: 1 }
         title: { type: string, maxLength: 120 }
@@ -3915,6 +3930,7 @@ components:
       type: object
       required: [runs, current, forms]
       properties:
+        catalogForms: { type: array, description: 本项目全部可供人工引用的资产形象；初次AI拆分仍只使用本集目录。, items: { $ref: '#/components/schemas/DramaAssetForm' } }
         runs: { type: array, items: { $ref: '#/components/schemas/DramaStoryboardRun' } }
         current:
           nullable: true

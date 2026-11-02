@@ -41,45 +41,58 @@ type StoryboardRun struct {
 	Events       []StoryboardEvent   `json:"events"`
 	Stale        bool                `json:"stale"`
 }
+
+// 文字位置使用 Unicode 字符索引，左闭右开；关联真实形象，不按显示名称建数据。
+type StoryboardMention struct {
+	Start  int    `json:"start"`
+	End    int    `json:"end"`
+	FormID string `json:"formId"`
+}
 type StoryboardSegment struct {
-	ID         string              `json:"id"`
-	Number     int                 `json:"number"`
-	Title      string              `json:"title"`
-	Scene      string              `json:"scene"`
-	Purpose    string              `json:"purpose"`
-	StartLine  int                 `json:"startLine"`
-	EndLine    int                 `json:"endLine"`
-	StartState string              `json:"startState"`
-	EndState   string              `json:"endState"`
-	Status     string              `json:"status"`
-	Notes      string              `json:"notes"`
-	FormIDs    []string            `json:"formIds"`
-	Bindings   []StoryboardBinding `json:"bindings"`
-	Shots      []StoryboardShot    `json:"shots"`
+	SceneMentions   []StoryboardMention `json:"sceneMentions,omitempty"`
+	PurposeMentions []StoryboardMention `json:"purposeMentions,omitempty"`
+	ID              string              `json:"id"`
+	Number          int                 `json:"number"`
+	Title           string              `json:"title"`
+	Scene           string              `json:"scene"`
+	Purpose         string              `json:"purpose"`
+	StartLine       int                 `json:"startLine"`
+	EndLine         int                 `json:"endLine"`
+	StartState      string              `json:"startState"`
+	EndState        string              `json:"endState"`
+	Status          string              `json:"status"`
+	Notes           string              `json:"notes"`
+	FormIDs         []string            `json:"formIds"`
+	Bindings        []StoryboardBinding `json:"bindings"`
+	Shots           []StoryboardShot    `json:"shots"`
 }
 type StoryboardBinding struct {
 	FormID  string `json:"formId"`
 	ImageID string `json:"imageId"`
 }
 type StoryboardShot struct {
-	ID          string                `json:"id"`
-	Number      int                   `json:"number"`
-	Description string                `json:"description"`
-	ShotSize    string                `json:"shotSize"`
-	Camera      string                `json:"camera"`
-	Sound       string                `json:"sound"`
-	Duration    float64               `json:"duration"`
-	SourceLines []int                 `json:"sourceLines"`
-	Utterances  []StoryboardUtterance `json:"utterances"`
+	DescriptionMentions []StoryboardMention   `json:"descriptionMentions,omitempty"`
+	SoundMentions       []StoryboardMention   `json:"soundMentions,omitempty"`
+	ID                  string                `json:"id"`
+	Number              int                   `json:"number"`
+	Description         string                `json:"description"`
+	ShotSize            string                `json:"shotSize"`
+	Camera              string                `json:"camera"`
+	Sound               string                `json:"sound"`
+	Duration            float64               `json:"duration"`
+	SourceLines         []int                 `json:"sourceLines"`
+	Utterances          []StoryboardUtterance `json:"utterances"`
 }
 type StoryboardUtterance struct {
-	SourceText       string `json:"sourceText,omitempty"`
-	Delivery         string `json:"delivery,omitempty"`
-	AdaptationReason string `json:"adaptationReason,omitempty"`
-	Kind             string `json:"kind"`
-	Speaker          string `json:"speaker"`
-	Text             string `json:"text"`
-	SourceLine       int    `json:"sourceLine"`
+	Mentions         []StoryboardMention `json:"mentions,omitempty"`
+	SpeakerMentions  []StoryboardMention `json:"speakerMentions,omitempty"`
+	SourceText       string              `json:"sourceText,omitempty"`
+	Delivery         string              `json:"delivery,omitempty"`
+	AdaptationReason string              `json:"adaptationReason,omitempty"`
+	Kind             string              `json:"kind"`
+	Speaker          string              `json:"speaker"`
+	Text             string              `json:"text"`
+	SourceLine       int                 `json:"sourceLine"`
 }
 type StoryboardEvent struct {
 	ID        int64     `json:"id"`
@@ -87,9 +100,10 @@ type StoryboardEvent struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 type StoryboardPage struct {
-	Runs    []StoryboardRun `json:"runs"`
-	Current *StoryboardRun  `json:"current"`
-	Forms   []AssetForm     `json:"forms"`
+	CatalogForms []AssetForm     `json:"catalogForms"`
+	Runs         []StoryboardRun `json:"runs"`
+	Current      *StoryboardRun  `json:"current"`
+	Forms        []AssetForm     `json:"forms"`
 }
 type StoryboardJob struct {
 	Run                     StoryboardRun
@@ -162,6 +176,7 @@ func (s *Service) Storyboards(ctx context.Context, org, user, project, episode, 
 	if err != nil {
 		return out, err
 	}
+	out.CatalogForms = append([]AssetForm{}, canvas.Forms...)
 	allowed := map[string]bool{}
 	for _, group := range [][]EpisodeAsset{w.Characters, w.Scenes, w.Props} {
 		for _, a := range group {
@@ -184,6 +199,24 @@ func (s *Service) Storyboards(ctx context.Context, org, user, project, episode, 
 		r, e := s.storyboards.GetStoryboard(ctx, org, user, project, episode, run)
 		if e != nil {
 			return out, e
+		}
+		// 人工分镜可引用全剧资产；模型初次拆分仍只看到剧本已关联的本集形象。
+		visible := map[string]bool{}
+		for _, f := range out.Forms {
+			visible[f.ID] = true
+		}
+		for _, seg := range r.Segments {
+			for _, id := range seg.FormIDs {
+				if !visible[id] {
+					for _, f := range canvas.Forms {
+						if f.ID == id {
+							out.Forms = append(out.Forms, f)
+							visible[id] = true
+							break
+						}
+					}
+				}
+			}
 		}
 		r.Stale = r.SourceHash != storyboardHash(w) || w.Episode.ScriptNeedsReview
 		r.Repairs = []RepairTicket{}
@@ -318,9 +351,14 @@ func (s *Service) EditStoryboard(ctx context.Context, org, user, project, episod
 		return r, ErrInvalidInput
 	}
 	lines := StoryboardLines(r.ScriptText)
+	forms := page.CatalogForms
+	if forms == nil {
+		forms = page.Forms
+	}
 	for i := range r.Segments {
+		includeMentionForms(&r.Segments[i])
 		r.Segments[i].Number = i + 1
-		if err = validateStoryboardSegment(&r.Segments[i], lines, page.Forms, false); err != nil {
+		if err = validateStoryboardSegment(&r.Segments[i], lines, forms, false); err != nil {
 			return r, fmt.Errorf("%w：%v", ErrInvalidInput, err)
 		}
 	}
@@ -350,6 +388,9 @@ func validateStoryboardSegment(seg *StoryboardSegment, lines []string, forms []A
 			return errors.New("引用了不存在、重复或本集未关联的资产形象")
 		}
 		seen[id] = true
+	}
+	if err := validateStoryboardMentions(*seg, seen); err != nil {
+		return err
 	}
 	coverage := map[int]bool{}
 	spoken := map[int]string{}

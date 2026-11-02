@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
-import { getDramaVideoEpisodeWorkspace, type DramaProject, type DramaVideoEpisodeWorkspace } from '../api/drama'
+import { getDramaVideoEpisodeWorkspace, type DramaAssetForm, type DramaProject, type DramaVideoEpisodeWorkspace } from '../api/drama'
 import { DramaAssetGallery } from './DramaAssetGallery'
 import { DramaStoryboardWorkspace } from './DramaStoryboardWorkspace'
 
@@ -17,9 +17,10 @@ export function DramaVideoEpisodeStudio({ project, episodeId }: { project: Drama
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [scriptOpen, setScriptOpen] = useState(false)
+  const [referencedForms, setReferencedForms] = useState<DramaAssetForm[]>([])
   useEffect(() => {
     let active = true
-    setLoading(true); setWorkspace(null); setError(''); setScriptOpen(false)
+    setLoading(true); setReferencedForms([]); setWorkspace(null); setError(''); setScriptOpen(false)
     void getDramaVideoEpisodeWorkspace(project.id, episodeId).then((item) => { if (active) setWorkspace(item) })
       .catch((failure) => { if (active) setError(failure instanceof ApiError && failure.status === 404 ? '这集剧本不存在或已重新解析，请返回视频分集查看。' : failure instanceof Error ? failure.message : '读取单集制作工作区失败') })
       .finally(() => { if (active) setLoading(false) })
@@ -33,6 +34,16 @@ export function DramaVideoEpisodeStudio({ project, episodeId }: { project: Drama
     setSearchParams((current) => { const next = new URLSearchParams(current); next.set('section', 'episodes'); next.set('batch', workspace.episode.batch.id); next.set('scriptEpisode', episodeId); next.delete('episode'); next.delete('storyboard'); next.delete('segment'); return next })
   }
   const episode = workspace?.episode
+  const visibleGroups = assetGroups.map((group) => {
+    const assets = [...(workspace?.[group.field] ?? [])], seen = new Set(assets.map((asset) => asset.assetId))
+    for (const form of referencedForms) {
+      if (form.kind === group.kind && !seen.has(form.assetId)) {
+        assets.push({ id: form.assetId, kind: group.kind, assetId: form.assetId, name: form.assetName, description: form.description, appearanceDescription: form.kind === 'character' ? form.description : '', voiceDescription: '', stateLabel: form.name })
+        seen.add(form.assetId)
+      }
+    }
+    return { ...group, assets }
+  })
   return <div className="drama-video-studio">
     <header className="drama-video-studio-header">
       <div className="drama-video-studio-identity"><Button type="text" icon={<ArrowLeftOutlined />} onClick={goBack} aria-label="返回视频分集" /><div><h1>{episode ? `第${episode.number}集：${episode.title}` : '单集制作'}</h1>{episode && <span>{episode.batch.name} · 批内第 {episode.batchEpisodeNumber} 集</span>}</div></div>
@@ -41,13 +52,13 @@ export function DramaVideoEpisodeStudio({ project, episodeId }: { project: Drama
     {loading ? <div className="drama-video-studio-loading"><Skeleton active /></div> : error ? <div className="drama-video-studio-loading"><Alert type="error" showIcon title="读取单集失败" description={error} action={<Button onClick={() => setRefresh((value) => value + 1)}>重试</Button>} /></div> : workspace && <div className="drama-video-studio-body">
       <aside className="drama-video-studio-assets" aria-label="本集资产库">
         <div className="drama-video-assets-heading"><h2>本集资产库</h2><Button type="link" size="small" onClick={showSourceBatch}>来源剧本</Button></div>
-        {assetGroups.map((group) => <details key={group.kind} open className="drama-video-assets-group"><summary>{group.label}（{workspace[group.field].length}）</summary>
-          {workspace[group.field].length ? <DramaAssetGallery compact assets={workspace[group.field]} kind={group.kind} projectId={project.id} /> : <p className="drama-video-asset-empty">本集未关联{group.label}</p>}
+        {visibleGroups.map((group) => <details key={group.kind} open className="drama-video-assets-group"><summary>{group.label}（{group.assets.length}）</summary>
+          {group.assets.length ? <DramaAssetGallery compact assets={group.assets} kind={group.kind} projectId={project.id} /> : <p className="drama-video-asset-empty">本集未关联{group.label}</p>}
         </details>)}
       </aside>
       <main className="drama-video-storyboard" aria-label="本集分镜制作区域">
         {episode?.scriptNeedsReview && <Alert type="warning" showIcon title="来源剧本需要核对" description="来源批次已调整或正在重新解析，请先核对本集剧本。" action={<Button onClick={showSourceBatch}>查看来源</Button>} />}
-        <DramaStoryboardWorkspace key={episodeId} projectId={project.id} episodeId={episodeId} needsReview={!!episode?.scriptNeedsReview} />
+        <DramaStoryboardWorkspace key={episodeId} projectId={project.id} episodeId={episodeId} needsReview={!!episode?.scriptNeedsReview} onFormsChange={setReferencedForms} />
       </main>
     </div>}
     <Drawer title={episode ? `第${episode.number}集：${episode.title}` : '本集剧本'} open={scriptOpen} onClose={() => setScriptOpen(false)} size={760}>

@@ -37,11 +37,17 @@ func (r *DramaRepository) ListStoryboards(ctx context.Context, org, user, projec
 	return out, rows.Err()
 }
 func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project, episode, id string) (drama.StoryboardRun, error) {
-	out, err := scanStoryboard(r.db.QueryRow(ctx, `SELECT `+storyboardColumns+` FROM drama_storyboard_runs r JOIN drama_projects p ON p.id=r.project_id WHERE p.organization_id=$1 AND p.owner_id=$2 AND p.id=$3 AND r.source_episode_id=$4 AND r.id=$5`, org, user, project, episode, id))
+	// 正文、镜头和引用必须来自同一个快照，避免轮询恰好跨过保存事务。
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return drama.StoryboardRun{}, err
+	}
+	defer tx.Rollback(ctx)
+	out, err := scanStoryboard(tx.QueryRow(ctx, `SELECT `+storyboardColumns+` FROM drama_storyboard_runs r JOIN drama_projects p ON p.id=r.project_id WHERE p.organization_id=$1 AND p.owner_id=$2 AND p.id=$3 AND r.source_episode_id=$4 AND r.id=$5`, org, user, project, episode, id))
 	if err != nil {
 		return out, err
 	}
-	rows, err := r.db.Query(ctx, `SELECT id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes FROM drama_storyboard_segments WHERE run_id=$1 ORDER BY number`, id)
+	rows, err := tx.Query(ctx, `SELECT id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes FROM drama_storyboard_segments WHERE run_id=$1 ORDER BY number`, id)
 	if err != nil {
 		return out, err
 	}
@@ -64,7 +70,7 @@ func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project,
 	for i, seg := range out.Segments {
 		positions[seg.ID] = i
 	}
-	rows, err = r.db.Query(ctx, `SELECT b.segment_id,b.form_id,COALESCE(b.image_id::text,'') FROM drama_storyboard_bindings b JOIN drama_storyboard_segments s ON s.id=b.segment_id WHERE s.run_id=$1 ORDER BY s.number,b.form_id`, id)
+	rows, err = tx.Query(ctx, `SELECT b.segment_id,b.form_id,COALESCE(b.image_id::text,'') FROM drama_storyboard_bindings b JOIN drama_storyboard_segments s ON s.id=b.segment_id WHERE s.run_id=$1 ORDER BY s.number,b.form_id`, id)
 	if err != nil {
 		return out, err
 	}
@@ -86,7 +92,7 @@ func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project,
 	}
 	type shotPos struct{ segment, index int }
 	shots := map[string]shotPos{}
-	rows, err = r.db.Query(ctx, `SELECT x.id,x.segment_id,x.number,x.description,x.shot_size,x.camera,x.sound,x.duration,ARRAY(SELECT line_number FROM drama_storyboard_shot_sources WHERE shot_id=x.id ORDER BY line_number) FROM drama_storyboard_shots x JOIN drama_storyboard_segments s ON s.id=x.segment_id WHERE s.run_id=$1 ORDER BY s.number,x.number`, id)
+	rows, err = tx.Query(ctx, `SELECT x.id,x.segment_id,x.number,x.description,x.shot_size,x.camera,x.sound,x.duration,ARRAY(SELECT line_number FROM drama_storyboard_shot_sources WHERE shot_id=x.id ORDER BY line_number) FROM drama_storyboard_shots x JOIN drama_storyboard_segments s ON s.id=x.segment_id WHERE s.run_id=$1 ORDER BY s.number,x.number`, id)
 	if err != nil {
 		return out, err
 	}
@@ -106,7 +112,7 @@ func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project,
 	if err != nil {
 		return out, err
 	}
-	rows, err = r.db.Query(ctx, `SELECT u.shot_id,u.kind,u.speaker,u.text,u.source_line,u.source_text,u.delivery,u.adaptation_reason FROM drama_storyboard_utterances u JOIN drama_storyboard_shots x ON x.id=u.shot_id JOIN drama_storyboard_segments s ON s.id=x.segment_id WHERE s.run_id=$1 ORDER BY s.number,x.number,u.number`, id)
+	rows, err = tx.Query(ctx, `SELECT u.shot_id,u.kind,u.speaker,u.text,u.source_line,u.source_text,u.delivery,u.adaptation_reason FROM drama_storyboard_utterances u JOIN drama_storyboard_shots x ON x.id=u.shot_id JOIN drama_storyboard_segments s ON s.id=x.segment_id WHERE s.run_id=$1 ORDER BY s.number,x.number,u.number`, id)
 	if err != nil {
 		return out, err
 	}
@@ -130,7 +136,56 @@ func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project,
 		return out, err
 	}
 
-	rows, err = r.db.Query(ctx, `SELECT id,message,created_at FROM (SELECT id,message,created_at FROM drama_storyboard_events WHERE run_id=$1 ORDER BY id DESC LIMIT 150) x ORDER BY id`, id)
+	rows, err = tx.Query(ctx, `SELECT m.segment_id,COALESCE(m.shot_id::text,''),m.field,m.utterance_number,m.start_offset,m.end_offset,m.form_id FROM drama_storyboard_text_mentions m JOIN drama_storyboard_segments s ON s.id=m.segment_id WHERE s.run_id=$1 ORDER BY s.number,m.field,m.utterance_number,m.start_offset`, id)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var segment, shot, field string
+		var number int
+		var mention drama.StoryboardMention
+		if err = rows.Scan(&segment, &shot, &field, &number, &mention.Start, &mention.End, &mention.FormID); err != nil {
+			rows.Close()
+			return out, err
+		}
+		seg := &out.Segments[positions[segment]]
+		switch field {
+		case "scene":
+			seg.SceneMentions = append(seg.SceneMentions, mention)
+		case "purpose":
+			seg.PurposeMentions = append(seg.PurposeMentions, mention)
+		default:
+			at, ok := shots[shot]
+			if !ok {
+				rows.Close()
+				return out, fmt.Errorf("文字引用的镜头不存在")
+			}
+			target := &out.Segments[at.segment].Shots[at.index]
+			switch field {
+			case "description":
+				target.DescriptionMentions = append(target.DescriptionMentions, mention)
+			case "sound":
+				target.SoundMentions = append(target.SoundMentions, mention)
+			case "utterance", "speaker":
+				if number < 1 || number > len(target.Utterances) {
+					rows.Close()
+					return out, fmt.Errorf("文字引用的声音条目不存在")
+				}
+				if field == "utterance" {
+					target.Utterances[number-1].Mentions = append(target.Utterances[number-1].Mentions, mention)
+				} else {
+					target.Utterances[number-1].SpeakerMentions = append(target.Utterances[number-1].SpeakerMentions, mention)
+				}
+			}
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+
+	rows, err = tx.Query(ctx, `SELECT id,message,created_at FROM (SELECT id,message,created_at FROM drama_storyboard_events WHERE run_id=$1 ORDER BY id DESC LIMIT 150) x ORDER BY id`, id)
 	if err != nil {
 		return out, err
 	}
@@ -142,7 +197,12 @@ func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project,
 		}
 		out.Events = append(out.Events, e)
 	}
-	return out, rows.Err()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
 }
 func (r *DramaRepository) lockStoryboardEpisode(ctx context.Context, tx pgx.Tx, org, user, project, episode string) error {
 	var id string
@@ -229,7 +289,7 @@ func (r *DramaRepository) writeStoryboardSegment(ctx context.Context, tx pgx.Tx,
 	// 图片必须来自对应形象；编辑同一引用时沿用原来采用的图片版本。
 	for _, form := range seg.FormIDs {
 		var image *string
-		err := tx.QueryRow(ctx, `SELECT f.current_image_id::text FROM drama_asset_forms f JOIN drama_assets a ON a.id=f.asset_id JOIN drama_episode_asset_links l ON l.asset_id=a.id WHERE f.id=$1 AND a.project_id=$2 AND l.episode_id=$3`, form, run.ProjectID, run.EpisodeID).Scan(&image)
+		err := tx.QueryRow(ctx, `SELECT f.current_image_id::text FROM drama_asset_forms f JOIN drama_assets a ON a.id=f.asset_id WHERE f.id=$1 AND a.project_id=$2`, form, run.ProjectID).Scan(&image)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return drama.ErrInvalidInput
 		}
@@ -258,6 +318,12 @@ func (r *DramaRepository) writeStoryboardSegment(ctx context.Context, tx pgx.Tx,
 			return err
 		}
 	}
+	if err := writeStoryboardMentions(ctx, tx, seg.ID, "", "scene", 0, seg.SceneMentions); err != nil {
+		return err
+	}
+	if err := writeStoryboardMentions(ctx, tx, seg.ID, "", "purpose", 0, seg.PurposeMentions); err != nil {
+		return err
+	}
 	for i, shot := range seg.Shots {
 		id := uuid.NewString()
 		if _, err := tx.Exec(ctx, `INSERT INTO drama_storyboard_shots(id,segment_id,number,description,shot_size,camera,sound,duration) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, seg.ID, i+1, shot.Description, shot.ShotSize, shot.Camera, shot.Sound, shot.Duration); err != nil {
@@ -268,12 +334,24 @@ func (r *DramaRepository) writeStoryboardSegment(ctx context.Context, tx pgx.Tx,
 				return err
 			}
 		}
+		if err := writeStoryboardMentions(ctx, tx, seg.ID, id, "description", 0, shot.DescriptionMentions); err != nil {
+			return err
+		}
+		if err := writeStoryboardMentions(ctx, tx, seg.ID, id, "sound", 0, shot.SoundMentions); err != nil {
+			return err
+		}
 		for j, u := range shot.Utterances {
 			delivery := u.Delivery
 			if delivery == "" {
 				delivery = "spoken"
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO drama_storyboard_utterances(id,shot_id,number,kind,speaker,text,source_line,source_text,delivery,adaptation_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, uuid.NewString(), id, j+1, u.Kind, u.Speaker, u.Text, u.SourceLine, u.SourceText, delivery, u.AdaptationReason); err != nil {
+				return err
+			}
+			if err := writeStoryboardMentions(ctx, tx, seg.ID, id, "utterance", j+1, u.Mentions); err != nil {
+				return err
+			}
+			if err := writeStoryboardMentions(ctx, tx, seg.ID, id, "speaker", j+1, u.SpeakerMentions); err != nil {
 				return err
 			}
 		}
@@ -517,12 +595,33 @@ func (r *DramaRepository) ReopenStoryboardFrom(ctx context.Context, run string, 
 	return nil
 }
 func (r *DramaRepository) ReviseStoryboardPlan(ctx context.Context, run string, s drama.StoryboardSegment) error {
-	tag, err := r.db.Exec(ctx, `UPDATE drama_storyboard_segments s SET title=$3,scene=$4,purpose=$5,start_state=$6,end_state=$7 FROM drama_storyboard_runs r WHERE s.run_id=r.id AND r.id=$1 AND s.id=$2 AND r.status='running' AND s.status='pending'`, run, s.ID, s.Title, s.Scene, s.Purpose, s.StartState, s.EndState)
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE drama_storyboard_segments s SET title=$3,scene=$4,purpose=$5,start_state=$6,end_state=$7 FROM drama_storyboard_runs r WHERE s.run_id=r.id AND r.id=$1 AND s.id=$2 AND r.status='running' AND s.status='pending'`, run, s.ID, s.Title, s.Scene, s.Purpose, s.StartState, s.EndState)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() != 1 {
 		return drama.ErrStoryboardConflict
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM drama_storyboard_text_mentions WHERE segment_id=$1 AND field IN ('scene','purpose')`, s.ID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func writeStoryboardMentions(ctx context.Context, tx pgx.Tx, segment, shot, field string, number int, refs []drama.StoryboardMention) error {
+	var shotID any
+	if shot != "" {
+		shotID = shot
+	}
+	for _, ref := range refs {
+		if _, err := tx.Exec(ctx, `INSERT INTO drama_storyboard_text_mentions(segment_id,shot_id,field,utterance_number,start_offset,end_offset,form_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, segment, shotID, field, number, ref.Start, ref.End, ref.FormID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
