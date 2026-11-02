@@ -308,7 +308,7 @@ func validateStoryboardSegment(seg *StoryboardSegment, lines []string, forms []A
 			if !coverage[n] {
 				return fmt.Errorf("遗漏剧本第%d行", n)
 			}
-			if text := storyboardDialogue(lines[n-1]); text != "" && spoken[n] != text {
+			if text := storyboardDialogue(lines[n-1]); text != "" && storyboardSpeakerLine(lines[n-1], forms) && storyboardSpokenText(spoken[n]) != storyboardSpokenText(text) {
 				return fmt.Errorf("第%d行台词未完整保留或重复，请按原文顺序分配声音", n)
 			}
 		}
@@ -353,4 +353,41 @@ func estimateStoryboardSpeech(text string) float64 {
 		}
 	}
 	return float64(cjk)/4 + float64(words)/3
+}
+
+// 台词外围引号是剧本排版，不要求把引号读出来；正文和句内标点仍完整核对。
+func storyboardSpokenText(text string) string {
+	text = strings.TrimSpace(text)
+	r := []rune(text)
+	if len(r) > 1 {
+		for _, pair := range [][2]rune{{'“', '”'}, {'「', '」'}, {'『', '』'}, {'"', '"'}} {
+			if r[0] == pair[0] && r[len(r)-1] == pair[1] {
+				return string(r[1 : len(r)-1])
+			}
+		}
+	}
+	return text
+}
+
+// 冒号也用于书信、屏幕文字和场记；仅明确角色或声音标签按口播完整性强校验。
+func storyboardSpeakerLine(line string, forms []AssetForm) bool {
+	at := strings.IndexAny(line, "：:")
+	if at < 0 {
+		return false
+	}
+	label := strings.TrimSpace(line[:at])
+	if end := strings.IndexAny(label, "（("); end >= 0 {
+		label = strings.TrimSpace(label[:end])
+	}
+	for _, known := range []string{"旁白", "画外音", "内心独白", "VO", "OS"} {
+		if strings.EqualFold(label, known) {
+			return true
+		}
+	}
+	for _, f := range forms {
+		if f.Kind == "character" && label == f.AssetName {
+			return true
+		}
+	}
+	return false
 }

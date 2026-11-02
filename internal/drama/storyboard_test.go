@@ -12,10 +12,21 @@ import (
 func TestStoryboardValidationCoverageAndDialogue(t *testing.T) {
 	lines := StoryboardLines("【书店 内 夜】\r\n林夏：门怎么开着？\r\n林夏推门。")
 	good := StoryboardSegment{Title: "推门", StartLine: 1, EndLine: 3, FormIDs: []string{"form"}, Shots: []StoryboardShot{{Description: "林夏推门", ShotSize: "中景", Camera: "固定", Duration: 7, SourceLines: []int{1, 2, 3}, Utterances: []StoryboardUtterance{{Kind: "dialogue", Speaker: "林夏", Text: "门怎么开着？", SourceLine: 2}}}}}
-	forms := []AssetForm{{ID: "form"}}
+	forms := []AssetForm{{ID: "form", Kind: "character", AssetName: "林夏"}}
 	if err := validateStoryboardSegment(&good, lines, forms, true); err != nil {
 		t.Fatal(err)
 	}
+	quoted := append([]string{}, lines...)
+	quoted[1] = "林夏：\"门怎么开着？\""
+	if err := validateStoryboardSegment(&good, quoted, forms, true); err != nil {
+		t.Fatalf("外层引号不应被当成新增剧情: %v", err)
+	}
+
+	letter := []string{"信上写着：明日到钟楼。"}
+	if storyboardSpeakerLine(letter[0], forms) {
+		t.Fatal("书信冒号不应强制转成口播")
+	}
+
 	for _, tc := range []struct {
 		name   string
 		mutate func(*StoryboardSegment)
