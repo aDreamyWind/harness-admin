@@ -45,6 +45,11 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 		}
 		callCtx, done := context.WithTimeout(ctx, 10*time.Minute)
 		defer done()
+		if writer, ok := s.writer.(ObservedWriter); ok {
+			return writer.CompleteObserved(callCtx, job.OrganizationID, job.OwnerID, r.ModelCode, prompt, ModelCallOptions{Stage: phase, OnProgress: func(p ModelProgress) error {
+				return s.storyboards.StoryboardProgress(ctx, r.ID, phase, phase+"："+p.Description())
+			}})
+		}
 		if stream, ok := s.writer.(StreamingWriter); ok {
 			last := time.Now()
 			return stream.CompleteStream(callCtx, job.OrganizationID, job.OwnerID, r.ModelCode, prompt, func(text string) error {
@@ -204,7 +209,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 			}
 			var v StoryboardSegment
 			if e = decodeStoryboard(raw, &v); e != nil {
-				return e
+				return storyboardProblem(e, "分镜编写", "generation_format", "shots")
 			}
 			seg.Shots, seg.FormIDs, seg.Notes = v.Shots, v.FormIDs, v.Notes
 			return nil
@@ -250,29 +255,41 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 			}
 		}
 		redirected := false
+		reviewFeedback, invalidReview := "", ""
 		for {
 			if problem == nil {
-				problem = validateStoryboardSegment(&seg, lines, page.Forms, true)
+				checkedAt := time.Now()
+				problem = storyboardProblem(validateStoryboardSegment(&seg, lines, page.Forms, true), "程序校验", "content_validation", "shots")
+				if e := s.storyboards.StoryboardProgress(ctx, r.ID, phase, fmt.Sprintf("%s程序检查结束，用时%d毫秒", phase, time.Since(checkedAt).Milliseconds())); e != nil {
+					return e
+				}
 			}
 			if problem == nil {
 				draft, _ := json.Marshal(seg)
-				review, e := call(phase+"·审阅", `你是分镜审阅师。只依据给定剧本与前段状态检查：关键剧情或台词是否被改变、遗漏，动作和空间状态是否明显矛盾，台词是否能念完。合理构图/表演不要求逐字来自剧本。审美偏好只作为建议，不凭空制造阻断。8～15秒是软目标，不因延长就报错；尚未接入视频模型，不捏造模型能力限制。返回JSON {"blocking":[],"suggestions":[]}，blocking中必须给出镜头、依据与最小修正建议。\n前段状态：`+previous+"\n剧本："+numbered(seg.StartLine, seg.EndLine)+"\n当前草稿："+string(draft))
+				reviewPhase := phase + "·审阅"
+				if invalidReview != "" {
+					reviewPhase += "格式修正"
+				}
+				review, e := call(reviewPhase, `你是分镜审阅师。只依据给定剧本与前段状态检查：关键剧情或台词是否被改变、遗漏，动作和空间状态是否明显矛盾，台词是否能念完。合理构图/表演不要求逐字来自剧本。审美偏好只作为建议，不凭空制造阻断。8～15秒是软目标，不因延长就报错；尚未接入视频模型，不捏造模型能力限制。返回JSON {"blocking":[{"shot":1,"field":"字段名","message":"具体问题","evidence":"剧本依据","fix":"最小修正建议"}],"suggestions":[]}。无问题时两个字段均为空数组。建议也用相同问题对象，禁止返回null。\n前段状态：`+previous+"\n剧本："+numbered(seg.StartLine, seg.EndLine)+"\n当前草稿："+string(draft)+"\n本次审阅格式修正要求："+reviewFeedback+"\n上次未能读取的审阅（只修正审阅格式，禁止因此重写镜头）："+invalidReview)
 				if e != nil {
 					return e
 				}
-				var report struct {
-					Blocking    []string `json:"blocking"`
-					Suggestions []string `json:"suggestions"`
-				}
+				var report storyboardReviewReport
 				problem = decodeStoryboard(review, &report)
 				if problem == nil && (report.Blocking == nil || report.Suggestions == nil) {
 					problem = errors.New("审阅缺少blocking或suggestions数组")
 				}
+				if problem != nil {
+					invalidReview = review
+					problem = storyboardProblem(problem, "分镜审阅", "review_format", "blocking/suggestions")
+				} else {
+					invalidReview = ""
+				}
 				if problem == nil && len(report.Blocking) > 0 {
-					problem = errors.New(strings.Join(report.Blocking, "；"))
+					problem = storyboardProblem(errors.New(strings.Join(report.Blocking, "；")), "分镜审阅", "review_content", "blocking")
 				}
 				if problem == nil {
-					seg.Notes = strings.TrimSpace(seg.Notes + "\n" + strings.Join(report.Suggestions, "；"))
+					seg.Notes = strings.TrimSpace(seg.Notes + "\n" + readableReviewSuggestions(report.Suggestions))
 				}
 			}
 			if err = settle(problem); err != nil {
@@ -291,7 +308,16 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				tools["previous"] = "返回前一片段修正错误结束状态/镜头，重新核对依赖它的当前及后续片段"
 				targets = append(targets, i)
 			}
-			ticket, err = center.choose(problem.Error(), "分镜检查", string(state), numbered(seg.StartLine, seg.EndLine), tools, targets)
+			var diagnostic *workflowProblem
+			if errors.As(problem, &diagnostic) && diagnostic.Code == "review_format" {
+				ticket, err = center.route(fmt.Sprintf("片段%d；%s", i+1, problem.Error()), "分镜检查", string(state)+invalidReview, "reviewer", "只修正审阅输出格式，blocking和suggestions均为数组。保留具体问题，禁止把格式问题当作镜头错误。原始错误："+problem.Error())
+			} else if errors.As(problem, &diagnostic) && diagnostic.Code == "speech_duration" {
+				ticket, err = center.route(problem.Error(), "分镜检查", string(state), "timing", "保持原有画面、完整台词与资产关联，按程序估时下界延长；超过60秒才交编写节点按语义拆镜。")
+			} else if errors.As(problem, &diagnostic) && diagnostic.Code == "generation_format" {
+				ticket, err = center.route(problem.Error(), "分镜检查", string(state), "writer", "修正分镜生成JSON结构："+problem.Error())
+			} else {
+				ticket, err = center.choose(fmt.Sprintf("片段%d；%s", i+1, problem.Error()), "分镜检查", string(state), numbered(seg.StartLine, seg.EndLine), tools, targets)
+			}
 			if err != nil {
 				return fmt.Errorf("%s修正暂未完成：%w", phase, err)
 			}
@@ -325,6 +351,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				}
 
 			case "reviewer": // 返回原检查点重查，不接受中心直接宣布通过。
+				reviewFeedback = ticket.Instructions
 			case "previous":
 				if ticket.TargetItem != i || i == 0 {
 					return errors.New("前段工具只能退回直接前一片段")
@@ -360,10 +387,11 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 		if redirected {
 			continue
 		}
+		savedAt := time.Now()
 		if err = s.storyboards.SaveStoryboardSegment(ctx, r.ID, seg); err != nil {
 			return err
 		}
-		if err = s.storyboards.StoryboardProgress(ctx, r.ID, phase, phase+"已保存"); err != nil {
+		if err = s.storyboards.StoryboardProgress(ctx, r.ID, phase, fmt.Sprintf("%s已保存；保存用时%d毫秒", phase, time.Since(savedAt).Milliseconds())); err != nil {
 			return err
 		}
 		if err = center.resolveDependencies(); err != nil {

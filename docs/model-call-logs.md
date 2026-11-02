@@ -17,3 +17,8 @@ WHERE c.organization_id = $1 AND c.request_id = $2;
 ```
 
 历史调用在该表建立前没有原始正文，无法追补。
+
+
+迁移52为漫剧文字调用增加明确字段：`workflow_stage`、`reasoning_policy`、`requested_at`、`headers_at`、`first_reasoning_at`、`first_content_at`、`finished_at`和`reasoning_tokens`。时间与用量未观测时为空；供应商明确报告0才记录0。其他入口尚未观测的记录和旧记录不返回`timing`，不影响原始请求/响应保存。
+
+`GET /api/v1/model-gateway/calls`返回可选的`timing`，沿用企业权限隔离，前端调用记录可展开查看。`latencyMs`统计本次请求至响应读取完成（或失败），不含后续调用日志事务保存；检查和业务保存用时记在对应漫剧阶段事件。首次正文时间包含供应商等待和思考，不能直接当作网络耗时。思考Token是否缺失与思考是否关闭是两个不同概念，诊断时应同时查看策略及供应商报告值。

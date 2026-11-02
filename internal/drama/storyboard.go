@@ -311,7 +311,7 @@ func validateStoryboardSegment(seg *StoryboardSegment, lines []string, forms []A
 		}
 
 		if strict && speechSeconds > shot.Duration+0.25 {
-			return fmt.Errorf("镜头%d台词按普通语速约需%.1f秒，超过规划%.1f秒，请延长或按语义拆镜，不删台词", i+1, speechSeconds, shot.Duration)
+			return &workflowProblem{Origin: "程序校验", Code: "speech_duration", Field: "duration", Shot: i + 1, Cause: fmt.Errorf("台词按普通语速约需%.1f秒，超过规划%.1f秒，请延长或按语义拆镜，不删台词", speechSeconds, shot.Duration)}
 		}
 	}
 	if strict {

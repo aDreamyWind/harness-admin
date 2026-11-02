@@ -21,6 +21,7 @@ export interface CreatedGatewayAPIKey extends GatewayAPIKey {
 }
 
 export interface GatewayCall {
+  timing?: { stage: string; reasoningPolicy: string; requestedAt: string; headersAt?: string; firstReasoningAt?: string; firstContentAt?: string; finishedAt: string; reasoningTokens?: number }
   id: string
   apiKeyId?: string
   apiKeyName?: string

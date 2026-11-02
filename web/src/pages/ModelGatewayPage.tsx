@@ -369,7 +369,7 @@ export function ModelGatewayPage() {
       key: 'calls', label: `调用记录 ${callsPage.total}`,
       children: <GatewayResource
         title="最近调用"
-        hint="只记录路由、结果和用量，不保存提示词与模型回答。"
+        hint="展示路由、结果、用量及阶段耗时；原始请求与响应另存于服务端日志。"
         action={<Button icon={<ReloadOutlined />} loading={callsQuery.isFetching} onClick={() => callsQuery.refetch()}>刷新</Button>}
         error={callsQuery.isError ? errorMessage(callsQuery.error, '调用记录加载失败') : ''}
         retry={() => callsQuery.refetch()}
@@ -396,6 +396,18 @@ export function ModelGatewayPage() {
         <Table<GatewayCall>
           rowKey="id"
           columns={callColumns}
+          expandable={{ rowExpandable: (item) => !!item.timing, expandedRowRender: (item) => {
+            const t = item.timing!
+            const elapsed = (at?: string) => at ? `${((Date.parse(at) - Date.parse(t.requestedAt)) / 1000).toFixed(2)} 秒` : '未观测到'
+            return <Space orientation="vertical" size={6}>
+              <Text>调用阶段：{t.stage || '常规调用'} · {t.reasoningPolicy}</Text>
+              <Space wrap size="large">
+                <Text>收到响应头：{elapsed(t.headersAt)}</Text><Text>首次思考：{elapsed(t.firstReasoningAt)}</Text>
+                <Text>首次正文：{elapsed(t.firstContentAt)}</Text><Text>生成结束：{elapsed(t.finishedAt)}</Text>
+                <Text>思考用量：{t.reasoningTokens === undefined ? '供应商未报告' : `${t.reasoningTokens.toLocaleString()} Token`}</Text>
+              </Space><Text type="secondary">以上时间均从请求发出时计算；未观测到不等于耗时为零。</Text>
+            </Space>
+          } }}
           dataSource={callsPage.items}
           loading={callsQuery.isLoading}
           pagination={{

@@ -394,10 +394,15 @@ func (r *ModelGatewayRepository) RecordCall(ctx context.Context, input modelgate
 }
 
 func insertModelCallLog(ctx context.Context, tx pgx.Tx, callID string, input modelgateway.RecordCallInput) error {
+	var stage, policy, requested, headers, reasoning, content, finished, tokens any
+	if t := input.Timing; t != nil {
+		stage, policy, requested, headers, reasoning, content, finished, tokens = t.Stage, t.ReasoningPolicy, t.RequestedAt, t.HeadersAt, t.FirstReasoningAt, t.FirstContentAt, t.FinishedAt, t.ReasoningTokens
+	}
 	_, err := tx.Exec(ctx, `INSERT INTO model_call_logs
-		(call_id, organization_id, source, operation, request_body, response_body, response_truncated, error_message)
-		VALUES ($1,$2,$3,$4,COALESCE($5::bytea,''::bytea),COALESCE($6::bytea,''::bytea),$7,$8)`, callID, input.OrganizationID, input.Source,
-		input.Operation, input.RequestBody, input.ResponseBody, input.ResponseTruncated, input.ErrorMessage)
+  (call_id, organization_id, source, operation, request_body, response_body, response_truncated, error_message,
+  workflow_stage,reasoning_policy,requested_at,headers_at,first_reasoning_at,first_content_at,finished_at,reasoning_tokens)
+  VALUES ($1,$2,$3,$4,COALESCE($5::bytea,''::bytea),COALESCE($6::bytea,''::bytea),$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, callID, input.OrganizationID, input.Source,
+		input.Operation, input.RequestBody, input.ResponseBody, input.ResponseTruncated, input.ErrorMessage, stage, policy, requested, headers, reasoning, content, finished, tokens)
 	if err != nil {
 		return fmt.Errorf("保存模型调用正文失败: %w", err)
 	}
@@ -426,8 +431,10 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 		       COALESCE(p.name, ''),
 		       c.streaming, c.result, c.http_status, c.latency_ms, c.prompt_tokens,
 		       c.completion_tokens, c.total_tokens, c.usage_reported, c.quota_exceeded,
-		       c.error_code, c.source_ip, c.created_at
+		       c.error_code, c.source_ip, c.created_at,
+  COALESCE(l.workflow_stage,''),COALESCE(l.reasoning_policy,''),l.requested_at,l.headers_at,l.first_reasoning_at,l.first_content_at,l.finished_at,l.reasoning_tokens
 		FROM model_gateway_calls c
+  LEFT JOIN model_call_logs l ON l.call_id=c.id AND l.organization_id=c.organization_id
 		LEFT JOIN model_gateway_api_keys k
 		  ON k.organization_id = c.organization_id AND k.id = c.api_key_id
 		LEFT JOIN users u
@@ -447,14 +454,22 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 	items := make([]modelgateway.Call, 0)
 	for rows.Next() {
 		var item modelgateway.Call
+		timing := modelgateway.CallTiming{}
+		var requested, finished *time.Time
 		if err := rows.Scan(
 			&item.ID, &item.APIKeyID, &item.APIKeyName, &item.AuthType, &item.UserID, &item.UserName, &item.DepartmentID,
 			&item.RequestID, &item.ModelCode, &item.ModelName, &item.ModelType,
 			&item.UpstreamModelID, &item.ProviderName, &item.Streaming, &item.Result, &item.HTTPStatus, &item.LatencyMS,
 			&item.PromptTokens, &item.CompletionTokens, &item.TotalTokens, &item.UsageReported, &item.QuotaExceeded, &item.ErrorCode,
 			&item.SourceIP, &item.CreatedAt,
+			&timing.Stage, &timing.ReasoningPolicy, &requested, &timing.HeadersAt, &timing.FirstReasoningAt, &timing.FirstContentAt, &finished, &timing.ReasoningTokens,
 		); err != nil {
 			return modelgateway.CallPage{}, err
+		}
+		if requested != nil && finished != nil {
+			timing.RequestedAt = *requested
+			timing.FinishedAt = *finished
+			item.Timing = &timing
 		}
 		items = append(items, item)
 	}

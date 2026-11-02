@@ -310,7 +310,12 @@ func (w *batchWorkflow) writeReviewedEpisode(number, total int, plan EpisodePlan
 				Episode EpisodeDraft
 				History []ReviewIssue
 			}{episode, history})
-			ticket, err = center.choose(problem.Error(), "剧本审校", string(state), original, tools, []int{number})
+			var diagnostic *workflowProblem
+			if errors.As(problem, &diagnostic) && diagnostic.Code == "review_format" {
+				ticket, err = center.route(problem.Error(), "剧本审校", string(state), "reviewer", "修正审校输出的格式和真实引文引用，不修改导演正文，不虚构证据。原问题："+problem.Error())
+			} else {
+				ticket, err = center.choose(problem.Error(), "剧本审校", string(state), original, tools, []int{number})
+			}
 			if err != nil {
 				return episode, err
 			}
@@ -373,7 +378,10 @@ func (w *batchWorkflow) writeReviewedEpisode(number, total int, plan EpisodePlan
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrBatchConflict) {
 				return episode, err
 			}
-			problem = err
+			if errors.Is(err, ErrModelTimeout) || errors.Is(err, ErrModelTemporary) || errors.Is(err, ErrEmptyModelContent) {
+				return episode, err
+			}
+			problem = storyboardProblem(err, "剧本审校", "review_format", "checks/findings")
 			continue
 		}
 		if err = w.service.repository.SaveReviewIssues(w.ctx, w.job, updated); err != nil {

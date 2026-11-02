@@ -142,7 +142,7 @@ export function DramaBatchWorkspace({ project, batches, onBatchesChange }: Props
       setStreamHint('')
       if (event.kind === 'delta') { setLiveScript((text) => (text + event.message).slice(-60000)); return }
       if (event.kind === 'started' && event.stage === 'director') setLiveScript('')
-      setEvents((items) => [...items.filter((item) => item.id !== event.id && !(event.kind === 'receiving' && item.kind === 'receiving' && item.stage === event.stage && item.stepNumber === event.stepNumber)), event].slice(-40))
+      setEvents((items) => [...items.filter((item) => item.id !== event.id && !((event.kind === 'receiving' || event.kind === 'model_thinking' || event.kind === 'model_content') && item.kind === event.kind && item.stage === event.stage && item.stepNumber === event.stepNumber)), event].slice(-40))
       if (['completed', 'failed', 'repair', 'route'].includes(event.kind)) refresh()
     })
     stream.addEventListener('batch-state', () => {

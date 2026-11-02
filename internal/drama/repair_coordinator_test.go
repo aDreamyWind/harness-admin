@@ -88,7 +88,7 @@ func TestStoryboardCenterRepairsDurationWithoutRewritingSavedPrefix(t *testing.T
 		t.Fatal(err)
 	}
 	result := repo.run.Segments[2]
-	if centers != 1 || reviews != 1 || repo.run.Status != "ready" || len(repo.saved) != 1 || repo.saved[0] != 3 || result.Shots[0].Utterances[0].Text != speech || result.Shots[0].Duration < 12 {
+	if centers != 0 || reviews != 1 || repo.run.Status != "ready" || len(repo.saved) != 1 || repo.saved[0] != 3 || result.Shots[0].Utterances[0].Text != speech || result.Shots[0].Duration < 12 {
 		t.Fatalf("未按中心派工保留正文修正时长: centers=%d reviews=%d saved=%v result=%+v", centers, reviews, repo.saved, result)
 	}
 	if len(repairs.tickets) != 1 || repairs.tickets[0].Status != "resolved" {

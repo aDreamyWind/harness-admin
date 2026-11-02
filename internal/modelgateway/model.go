@@ -140,7 +140,20 @@ type SaveVideoTaskInput struct {
 	SourceIP       string
 }
 
+// CallTiming只记录观测到的里程碑，空值表示该入口或供应商未提供该事件。
+type CallTiming struct {
+	Stage            string     `json:"stage"`
+	ReasoningPolicy  string     `json:"reasoningPolicy"`
+	RequestedAt      time.Time  `json:"requestedAt"`
+	HeadersAt        *time.Time `json:"headersAt,omitempty"`
+	FirstReasoningAt *time.Time `json:"firstReasoningAt,omitempty"`
+	FirstContentAt   *time.Time `json:"firstContentAt,omitempty"`
+	FinishedAt       time.Time  `json:"finishedAt"`
+	ReasoningTokens  *int       `json:"reasoningTokens,omitempty"`
+}
+
 type Call struct {
+	Timing           *CallTiming
 	ID               string
 	APIKeyID         string
 	APIKeyName       string
@@ -187,6 +200,7 @@ type CallPage struct {
 }
 
 type RecordCallInput struct {
+	Timing            *CallTiming
 	OrganizationID    string
 	APIKeyID          string
 	UserID            string

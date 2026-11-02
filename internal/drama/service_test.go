@@ -6,10 +6,12 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"strings"
+	"sync"
 	"testing"
 )
 
 type fakeRepository struct {
+	mu           sync.Mutex
 	reviewIssues []ReviewIssue
 	project      Project
 	settings     Settings
@@ -118,9 +120,13 @@ func (r *fakeRepository) QueueBatchAnalysis(_ context.Context, _, _, _, id strin
 	return Batch{}, ErrNotFound
 }
 func (r *fakeRepository) ListBatchSteps(_ context.Context, _, _, _, _ string) ([]BatchStep, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return append([]BatchStep{}, r.steps...), nil
 }
 func (r *fakeRepository) StartBatchStep(_ context.Context, _, _, _, _ string, _ int, step BatchStep) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	step.Status = "running"
 	for i, old := range r.steps {
 		if old.Stage == step.Stage && old.ChunkNumber == step.ChunkNumber {
@@ -134,6 +140,8 @@ func (r *fakeRepository) StartBatchStep(_ context.Context, _, _, _, _ string, _ 
 	return nil
 }
 func (r *fakeRepository) CompleteBatchStep(_ context.Context, _, _, _, _ string, _ int, step BatchStep) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	step.Status = "completed"
 	for i, old := range r.steps {
 		if old.Stage == step.Stage && old.ChunkNumber == step.ChunkNumber {
@@ -220,6 +228,7 @@ func (r *fakeRepository) FailAnalysis(_ context.Context, _, _, _, message string
 }
 
 type fakeWriter struct {
+	mu      sync.Mutex
 	prompts []string
 	replies []string
 	errors  []error
@@ -233,6 +242,8 @@ func (w *fakeWriter) AvailableModels(context.Context, string, string) ([]Model, 
 	}, nil
 }
 func (w *fakeWriter) Complete(_ context.Context, _, _, _ string, prompt string) (string, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.prompts = append(w.prompts, prompt)
 	if len(w.errors) > 0 {
 		err := w.errors[0]
@@ -607,11 +618,15 @@ func TestAnalyzeBatchRejectsMissingArtLists(t *testing.T) {
 }
 
 func (r *fakeRepository) AppendBatchEvent(_ context.Context, _ BatchAnalysisJob, e BatchEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	e.ID = int64(len(r.events) + 1)
 	r.events = append(r.events, e)
 	return nil
 }
 func (r *fakeRepository) ListBatchEvents(_ context.Context, _, _, _, _ string, after int64) ([]BatchEvent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	out := []BatchEvent{}
 	for _, e := range r.events {
 		if e.ID > after {
@@ -621,6 +636,8 @@ func (r *fakeRepository) ListBatchEvents(_ context.Context, _, _, _, _ string, a
 	return out, nil
 }
 func (r *fakeRepository) FailBatchStep(_ context.Context, _ BatchAnalysisJob, stage string, number int, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for i := range r.steps {
 		if r.steps[i].Stage == stage && r.steps[i].ChunkNumber == number {
 			r.steps[i].Status = "failed"

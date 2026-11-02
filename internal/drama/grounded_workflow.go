@@ -246,13 +246,22 @@ func (s *Service) analyzeGroundedWorkflow(job BatchAnalysisJob) error {
 	result.Episodes = []EpisodeDraft{}
 	for i, p := range plan.Episodes {
 		original := string([]rune(source.Text)[units[p.StartUnit-1].Start:units[p.EndUnit-1].End])
-		pJSON, _ := json.Marshal(p)
+		pJSON, _ := json.Marshal(directorPlan(p))
 		previous := preceding
 		if i > 0 {
 			previous = result.Episodes[i-1].Synopsis
 		}
 		// 全批摘要、初始项目背景和全批资产描述都不进入本集生成，避免后文信息倒灌。
 		base := fmt.Sprintf(groundedDirectorPrompt, string(format), string(pJSON), previous, string(catalog), original)
+		// 旧运行的已完成剧本沿用原缓存身份及累计审校约束；只有尚未完成的剧集使用精简输入。
+		if old, ok := w.saved[fmt.Sprintf("director:%d", i+1)]; ok && old.Status == "completed" {
+			fullPlan, _ := json.Marshal(p)
+			legacyTemplate := strings.Replace(groundedDirectorPrompt, "规划中的facts给出需保留的事实ID和简述，逐字依据以本集完整原文为准", "规划中的sources给出原文依据", 1)
+			legacyBase := fmt.Sprintf(legacyTemplate, string(format), string(fullPlan), previous, string(catalog), original)
+			if old.InputHash == inputFingerprint(job, legacyBase) {
+				base = legacyBase
+			}
+		}
 		episode, err := w.writeReviewedEpisode(i+1, len(plan.Episodes), p, assets, original, job.Batch.StartOffset+units[p.StartUnit-1].Start, base, previous)
 		if err != nil {
 			return s.failBatch(job, err)
@@ -287,7 +296,7 @@ const groundedPlanPrompt = `你是漫剧总导演。为整批规划连续剧集�
 返回JSON：{"episodes":[{"title":"简短标题","startUnit":起点,"endUnit":终点,"factIds":["U1F1"]}]}。第一集从1开始，下集从上一集endUnit+1开始，直到全部单元，不遗漏重叠调序，每集最多16000字。每集factIds必须覆盖该范围的全部关键事实，不能引用范围外ID。标题只能依据本集事实，不自由编写梗概和钩子，程序按引用事实构成梗概。原文明确第N集时尊重集界。
 整批事实：%s
 单元长度：%s`
-const groundedDirectorPrompt = `你是漫剧导演兼短剧编剧。按本集规划和本集完整原文生成可拍摄剧本。只允许压缩重复叙述、把心理转化为原文有依据的动作；保留关键身份、时间条件和因果。不能把承接信息再演一遍，也不能借助其他章节知识提前揭示事实。规划中的sources给出原文依据，不能加入范围外的事实。资产目录仅提供统一名称，不证明资产或状态在本集出现。
+const groundedDirectorPrompt = `你是漫剧导演兼短剧编剧。按本集规划和本集完整原文生成可拍摄剧本。只允许压缩重复叙述、把心理转化为原文有依据的动作；保留关键身份、时间条件和因果。不能把承接信息再演一遍，也不能借助其他章节知识提前揭示事实。规划中的facts给出需保留的事实ID和简述，逐字依据以本集完整原文为准，不能加入范围外的事实。资产目录仅提供统一名称，不证明资产或状态在本集出现。
 返回JSON：{"episodes":[{"title":"必须与规划一致","synopsis":"本集梗概","scriptText":"完整中文剧本，每场【地点 内/外 日/夜】及动作对白","characters":[{"name":"目录名称","stateLabel":"本集状态","sourceQuote":"从本集原文逐字复制的一处角色出场依据"}],"scenes":[{"name":"目录名称","stateLabel":"时段状态","sourceQuote":"本集原文场景依据"}],"props":[{"name":"目录名称","stateLabel":"状态","sourceQuote":"本集原文道具依据"}]}]}。只生成这一集，数组不能null，空数组合法。引用依据不能来自承接段或其他集。
 创作格式：%s
 本集规划与证据：%s

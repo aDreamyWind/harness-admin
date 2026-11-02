@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"harness-admin/internal/drama"
 	"io"
 	"net/http"
 	"strings"
@@ -119,5 +121,56 @@ func TestDramaWriterRejectsReasoningOnlyAndInterruptedStream(t *testing.T) {
 		if gateway.record.Result != "failed" || len(gateway.record.ResponseBody) == 0 {
 			t.Fatal("失败流也必须记录原始响应")
 		}
+	}
+}
+
+func TestDramaReasoningPolicyUsesVerifiedVendorAndModel(t *testing.T) {
+	for _, tc := range []struct {
+		host, model, stage string
+		want               any
+	}{
+		{"https://dashscope.aliyuncs.com/compatible-mode/v1", "deepseek-v4-flash-0731", "name", false},
+		{"https://dashscope.aliyuncs.com/compatible-mode/v1", "deepseek-v4-flash-0731", "director", true},
+		{"https://dashscope.aliyuncs.com/compatible-mode/v1", "unknown-model", "name", nil},
+		{"https://other.example.com/v1", "deepseek-v4-flash-0731", "name", nil},
+	} {
+		p := modelgateway.PreparedRequest{Route: modelgateway.Route{ProviderBaseURL: tc.host, UpstreamModelID: tc.model}, Body: []byte(`{"model":"upstream","stream":true}`)}
+		if _, err := applyDramaReasoningPolicy(&p, tc.stage); err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(p.Body, &body); err != nil {
+			t.Fatal(err)
+		}
+		if body["enable_thinking"] != tc.want {
+			t.Fatal("供应商能力匹配错误", string(p.Body))
+		}
+		if tc.stage == "director" && body["reasoning_effort"] != "high" {
+			t.Fatal("导演应保留标准思考强度")
+		}
+	}
+}
+func TestDramaWriterRecordsStreamingMilestonesWithoutExposingThinking(t *testing.T) {
+	gateway := &dramaGatewayStub{}
+	writer := &dramaWriter{gateway: gateway, forwarder: &dramaStreamForwarderStub{payload: "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"隐藏思考文本\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"ok\\\":true}\"},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"completion_tokens\":12,\"completion_tokens_details\":{\"reasoning_tokens\":9}}}\n\ndata: [DONE]\n\n"}}
+	phases := []string{}
+	text, err := writer.CompleteObserved(context.Background(), "org", "user", "model", "样本", drama.ModelCallOptions{Stage: "review", OnProgress: func(p drama.ModelProgress) error {
+		phases = append(phases, p.Phase)
+		if strings.Contains(p.Description(), "隐藏思考") {
+			t.Fatal("不可展示思考正文")
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timing := gateway.record.Timing
+	if text != `{"ok":true}` || timing == nil || timing.HeadersAt == nil || timing.FirstReasoningAt == nil || timing.FirstContentAt == nil || (timing.ReasoningTokens == nil || *timing.ReasoningTokens != 9) || timing.FirstContentAt.Before(*timing.FirstReasoningAt) || timing.FinishedAt.Before(*timing.FirstContentAt) {
+		t.Fatal("流式里程碑未正确记录", text, timing)
+	}
+	if strings.Join(phases, ",") != "sent,headers,thinking,content,finished,recorded" {
+		t.Fatal(phases)
 	}
 }

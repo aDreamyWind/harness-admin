@@ -130,9 +130,9 @@ func TestEpisodePlanCoversEverySourceUnitExactlyOnce(t *testing.T) {
 		t.Fatal("原文末尾丢失")
 	}
 }
-func TestAdaptiveSchedulerHasAtMostTwoConcurrentTasks(t *testing.T) {
+func TestSchedulerHasAtMostTwoConcurrentTasks(t *testing.T) {
 	repo, _, service := workflowFixture("甲")
-	w := &batchWorkflow{service: service, ctx: context.Background(), slowThreshold: time.Millisecond}
+	w := &batchWorkflow{service: service, ctx: context.Background()}
 	var active, peak atomic.Int32
 	tasks := []workflowTask{}
 	for i := 0; i < 7; i++ {

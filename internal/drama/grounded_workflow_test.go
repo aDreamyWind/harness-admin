@@ -17,6 +17,8 @@ type groundedWriter struct {
 }
 
 func (w *groundedWriter) Complete(_ context.Context, _, _, _ string, prompt string) (string, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.prompts = append(w.prompts, prompt)
 	return w.respond(prompt)
 }

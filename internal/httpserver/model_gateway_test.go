@@ -295,7 +295,7 @@ func TestListGatewayAPIKeysIncludesCurrentModelNames(t *testing.T) {
 
 func TestListGatewayCallsParsesFiltersAndPagination(t *testing.T) {
 	gateway := &modelGatewayStub{listItems: []modelgateway.Call{{
-		ID: "30000000-0000-4000-8000-000000000002", ModelCode: "stable-code", ModelName: "当前模型名",
+		Timing: &modelgateway.CallTiming{Stage: "director", ReasoningTokens: func() *int { v := 19; return &v }()}, ID: "30000000-0000-4000-8000-000000000002", ModelCode: "stable-code", ModelName: "当前模型名",
 		ProviderName: "当前供应商名", UpstreamModelID: "upstream-model", ModelType: "image",
 	}}}
 	router := newGatewayTestRouter(gateway)
@@ -307,6 +307,9 @@ func TestListGatewayCallsParsesFiltersAndPagination(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d；响应 = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"timing":{"stage":"director"`) || !strings.Contains(response.Body.String(), `"reasoningTokens":19`) {
+		t.Fatal("计时契约缺失", response.Body.String())
 	}
 	query := gateway.listQuery
 	if query.OrganizationID != "org-1" || query.Page != 2 || query.PageSize != 10 || query.APIKeyID == "" || query.ModelCode != "Main" || query.Result != "failed" || query.StartedAt == nil || query.EndedAt == nil {

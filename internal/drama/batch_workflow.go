@@ -8,8 +8,6 @@ import (
 	"github.com/google/uuid"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -54,12 +52,10 @@ type episodeReview struct {
 }
 type workflowTask struct{ run func() error }
 type batchWorkflow struct {
-	service       *Service
-	job           BatchAnalysisJob
-	ctx           context.Context
-	saved         map[string]BatchStep
-	retried       atomic.Bool
-	slowThreshold time.Duration
+	service *Service
+	job     BatchAnalysisJob
+	ctx     context.Context
+	saved   map[string]BatchStep
 }
 
 var stageLabels = map[string]string{"coordinator": "中心调度", "art": "美术指导", "story": "剧情整理", "evidence": "原文证据单元", "plan": "分集规划", "name": "批次命名", "context": "本批上下文", "repair": "局部修正", "director": "导演", "review": "剧本审校"}
@@ -113,7 +109,6 @@ func (w *batchWorkflow) runStep(stage string, number, total int, prompt string, 
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
-			w.retried.Store(true)
 			if err := w.emit(stage, number, "retry", fmt.Sprintf("%s第 %d 项正在重试：%s", stageLabels[stage], number, lastErr)); err != nil {
 				return nil, err
 			}
@@ -129,6 +124,7 @@ func (w *batchWorkflow) runStep(stage string, number, total int, prompt string, 
 		}
 		response, err := w.complete(stage, number, currentPrompt)
 		if err == nil {
+			checkedAt := time.Now()
 			var data json.RawMessage
 			data, err = parseObject(response)
 			if err == nil {
@@ -137,13 +133,17 @@ func (w *batchWorkflow) runStep(stage string, number, total int, prompt string, 
 			if err == nil && len(normalize) > 0 {
 				data, err = normalize[0](data)
 			}
+			if e := w.emit(stage, number, "checked", fmt.Sprintf("%s程序检查结束，用时%d毫秒", stageLabels[stage], time.Since(checkedAt).Milliseconds())); e != nil {
+				return nil, e
+			}
 			if err == nil {
+				savedAt := time.Now()
 				step.ResultText = string(data)
 				step.DurationMS = time.Since(started).Milliseconds()
 				if err = w.service.repository.CompleteBatchStep(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.Batch.ProjectID, w.job.Batch.ID, w.job.Batch.AnalysisRevision, step); err != nil {
 					return nil, err
 				}
-				if err = w.emit(stage, number, "completed", fmt.Sprintf("%s第 %d/%d 项已保存，用时 %d 秒", stageLabels[stage], number, total, step.DurationMS/1000)); err != nil {
+				if err = w.emit(stage, number, "completed", fmt.Sprintf("%s第 %d/%d 项已保存，总用时 %d 秒；保存%d毫秒", stageLabels[stage], number, total, step.DurationMS/1000, time.Since(savedAt).Milliseconds())); err != nil {
 					return nil, err
 				}
 				return data, nil
@@ -161,17 +161,18 @@ func (w *batchWorkflow) runStep(stage string, number, total int, prompt string, 
 	if err := w.emit(stage, number, "failed", reason); err != nil {
 		return nil, err
 	}
-	return nil, errors.New(reason)
+	return nil, fmt.Errorf("%s第 %d 项失败：%w", stageLabels[stage], number, lastErr)
 }
 func (w *batchWorkflow) complete(stage string, number int, prompt string) (string, error) {
 	streaming, ok := w.service.writer.(StreamingWriter)
-	if !ok {
+	observed, observedOK := w.service.writer.(ObservedWriter)
+	if !ok && !observedOK {
 		return w.service.writer.Complete(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.ModelCode, prompt)
 	}
 	lastText := ""
 	lastReport := time.Now()
 	received := 0
-	response, err := streaming.CompleteStream(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.ModelCode, prompt, func(output string) error {
+	onText := func(output string) error {
 		received = utf8.RuneCountInString(output)
 		if stage == "director" {
 			text := partialScriptText(output)
@@ -187,7 +188,14 @@ func (w *batchWorkflow) complete(stage string, number int, prompt string) (strin
 			return w.emit(stage, number, "receiving", fmt.Sprintf("%s正在生成，已收到 %d 字符", stageLabels[stage], received))
 		}
 		return nil
-	})
+	}
+	var response string
+	var err error
+	if observedOK {
+		response, err = observed.CompleteObserved(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.ModelCode, prompt, ModelCallOptions{Stage: stage, OnText: onText, OnProgress: func(p ModelProgress) error { return w.emit(stage, number, "model_"+p.Phase, p.Description()) }})
+	} else {
+		response, err = streaming.CompleteStream(w.ctx, w.job.OrganizationID, w.job.OwnerID, w.job.ModelCode, prompt, onText)
+	}
 	if err == nil && stage == "director" {
 		finalText := partialScriptText(response)
 		if strings.HasPrefix(finalText, lastText) && len(finalText) > len(lastText) {
@@ -240,51 +248,47 @@ func partialScriptText(output string) string {
 	return ""
 }
 func (w *batchWorkflow) schedule(tasks []workflowTask) error {
-	width := 1
-	threshold := w.slowThreshold
-	if threshold <= 0 {
-		threshold = 45 * time.Second
-	}
-	for offset := 0; offset < len(tasks); {
-		count := min(width, len(tasks)-offset)
-		errs := make([]error, count)
-		durations := make([]time.Duration, count)
-		var group sync.WaitGroup
-		for i := 0; i < count; i++ {
-			group.Add(1)
-			go func(i int) {
-				defer group.Done()
-				start := time.Now()
-				errs[i] = tasks[offset+i].run()
-				durations[i] = time.Since(start)
-			}(i)
-		}
-		group.Wait()
-		for _, err := range errs {
-			if err != nil {
+	// 第二版仅用于旧协议兼容；第三版独立任务使用工作队列。
+	if w.job.WorkflowVersion == 2 {
+		for _, task := range tasks {
+			if err := task.run(); err != nil {
 				return err
 			}
 		}
-		offset += count
-		next := width
-		if w.retried.Swap(false) {
-			next = 1
-		} else {
-			for _, d := range durations {
-				if d >= threshold {
-					next = 2
-				}
-			}
+		return nil
+	}
+	if len(tasks) == 0 {
+		return nil
+	}
+	if err := w.emit("scheduler", 0, "schedule", "独立美术与剧情任务使用最多2路工作队列，空位立即接续；遇到失败停止派发并等待在途任务保存"); err != nil {
+		return err
+	}
+	type result struct{ err error }
+	done := make(chan result, 2)
+	next, active := 0, 0
+	var firstErr error
+	for next < len(tasks) || active > 0 {
+		for firstErr == nil && w.ctx.Err() == nil && active < 2 && next < len(tasks) {
+			task := tasks[next]
+			next++
+			active++
+			go func() { done <- result{task.run()} }()
 		}
-		if next != width && offset < len(tasks) {
-			width = next
-			if err := w.emit("scheduler", 0, "schedule", fmt.Sprintf("根据已完成请求的耗时和重试情况，后续独立任务并行数调整为 %d", width)); err != nil {
-				return err
-			}
+		if active == 0 {
+			return errors.Join(firstErr, w.ctx.Err())
+		}
+		r := <-done
+		active--
+		if r.err != nil {
+			firstErr = errors.Join(firstErr, r.err)
+		}
+		if w.ctx.Err() != nil {
+			firstErr = errors.Join(firstErr, w.ctx.Err())
 		}
 	}
-	return nil
+	return firstErr
 }
+
 func (s *Service) analyzeWorkflowV2(job BatchAnalysisJob) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Hour)
 	defer cancel()
@@ -691,10 +695,15 @@ func (w *batchWorkflow) nameBatch(material string) error {
 	if w.job.Batch.NameManuallyEdited {
 		return nil
 	}
+	compact, err := batchNamingContext(material)
+	if err != nil {
+		return fmt.Errorf("整理批次命名材料失败: %w", err)
+	}
+	material = compact
 	var result struct {
 		Name string `json:"name"`
 	}
-	_, err := w.runStep("name", 1, 1, fmt.Sprintf(`你是漫剧编辑。请根据下方当前批次的全部分集规划，给这一批剧情起一个简短、具体的中文名称。突出本批核心事件或剧情弧，不用作品总名，不写“第N批”，不添加说明、引号或 Markdown，建议4至12个汉字，不得超过80字符。只返回 JSON：{"name":"批次名称"}。
+	_, err = w.runStep("name", 1, 1, fmt.Sprintf(`你是漫剧编辑。请根据下方当前批次的全部分集规划，给这一批剧情起一个简短、具体的中文名称。突出本批核心事件或剧情弧，不用作品总名，不写“第N批”，不添加说明、引号或 Markdown，建议4至12个汉字，不得超过80字符。只返回 JSON：{"name":"批次名称"}。
 作品：%s
 本批分集规划：%s`, w.job.ProjectTitle, material), func(raw json.RawMessage) error {
 		result.Name = ""

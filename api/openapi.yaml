@@ -5013,10 +5013,24 @@ components:
           required: [secret]
           properties:
             secret: { type: string, readOnly: true, description: 创建成功时返回的完整调用密钥；后续可通过密钥查看接口再次读取。 }
+    GatewayCallTiming:
+      type: object
+      description: 观测到的供应商调用里程碑，不包含思考正文；缺少的里程碑表示未观测到
+      required: [stage, reasoningPolicy, requestedAt, finishedAt]
+      properties:
+        stage: { type: string }
+        reasoningPolicy: { type: string }
+        requestedAt: { type: string, format: date-time }
+        headersAt: { type: string, format: date-time }
+        firstReasoningAt: { type: string, format: date-time }
+        firstContentAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+        reasoningTokens: { type: integer }
     GatewayCall:
       type: object
       required: [id, authType, requestId, modelCode, modelName, modelType, upstreamModelId, providerName, streaming, result, httpStatus, latencyMs, promptTokens, completionTokens, totalTokens, usageReported, quotaExceeded, errorCode, sourceIp, createdAt]
       properties:
+        timing: { $ref: '#/components/schemas/GatewayCallTiming' }
         id: { type: string, format: uuid }
         authType: { type: string, enum: [api_key, user] }
         apiKeyId: { type: string, format: uuid, description: authType 为 api_key 时返回。 }

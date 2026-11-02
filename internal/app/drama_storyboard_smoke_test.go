@@ -20,7 +20,44 @@ import (
 )
 
 // 只在显式指定参考项目时调用真实文本模型，临时数据独立创建和清理，不生成图片或视频。
-func TestStoryboardConfiguredModelSmoke(t *testing.T) {
+func TestStoryboardConfiguredModelSmoke(t *testing.T) { configuredStoryboardSample(t, false) }
+
+// 同一虚构小剧本，比较供应商默认思考与按角色策略；不是完整历史版本的性能基准。
+func TestStoryboardReasoningPolicyComparison(t *testing.T) {
+	t.Run("供应商默认", func(t *testing.T) { configuredStoryboardSample(t, true) })
+	t.Run("按角色策略", func(t *testing.T) { configuredStoryboardSample(t, false) })
+}
+
+type meteredDramaWriter struct {
+	*dramaWriter
+	baseline  bool
+	calls     int
+	reasoning int
+}
+
+func (w *meteredDramaWriter) CompleteObserved(ctx context.Context, org, user, model, prompt string, o drama.ModelCallOptions) (string, error) {
+	w.calls++
+	if w.baseline {
+		o.Stage = ""
+	}
+	next := o.OnProgress
+	o.OnProgress = func(p drama.ModelProgress) error {
+		if p.Phase == "finished" {
+			if p.ReasoningTokens != nil {
+				w.reasoning += *p.ReasoningTokens
+			}
+		}
+		if next != nil {
+			return next(p)
+		}
+		return nil
+	}
+	// 临时对比不无限等待，超时也记为失败；不会恢复用户的正式运行。
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	return w.dramaWriter.CompleteObserved(ctx, org, user, model, prompt, o)
+}
+func configuredStoryboardSample(t *testing.T, baseline bool) {
 	reference := os.Getenv("HARNESS_TEST_DRAMA_MODEL_PROJECT_ID")
 	if reference == "" {
 		t.Skip("设置参考项目后才执行真实模型流式联调")
@@ -54,7 +91,7 @@ func TestStoryboardConfiguredModelSmoke(t *testing.T) {
 	}
 	repo := pgstore.NewDramaRepository(db)
 	gateway := modelgateway.NewService(pgstore.NewModelGatewayRepository(db, cipher), cache.NewGatewayRequestLimiter(redis), pgstore.NewModelPolicyRepository(db))
-	writer := &dramaWriter{gateway: gateway, forwarder: modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts)}
+	writer := &meteredDramaWriter{dramaWriter: &dramaWriter{gateway: gateway, forwarder: modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts)}, baseline: baseline}
 
 	service := drama.NewService(repo, writer).WithVisuals(repo, nil, nil).WithStyles(repo).WithStoryboards(repo).WithRepairCoordinator(repo)
 	project, batch, episode, asset := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -107,7 +144,7 @@ func TestStoryboardConfiguredModelSmoke(t *testing.T) {
 	if err = service.ConfirmStoryboard(ctx, org, owner, project, episode, r.ID, r.Revision); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("真实模型联调通过：%d片段，%d镜头，耗时%s", len(r.Segments), shots, time.Since(started).Round(time.Second))
+	t.Logf("真实模型联调通过：默认策略=%t；%d片段，%d镜头；请求%d次，返工%d次；思考%d Token；耗时%s；检查与确认通过", baseline, len(r.Segments), shots, writer.calls, len(r.Repairs), writer.reasoning, time.Since(started).Round(time.Millisecond))
 }
 
 func TestStoryboardRepairConfiguredModelSmoke(t *testing.T) {

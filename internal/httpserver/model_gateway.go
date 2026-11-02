@@ -92,31 +92,32 @@ type gatewayCallPageResponse struct {
 }
 
 type gatewayCallResponse struct {
-	ID               string    `json:"id"`
-	APIKeyID         string    `json:"apiKeyId"`
-	APIKeyName       string    `json:"apiKeyName"`
-	AuthType         string    `json:"authType"`
-	UserID           string    `json:"userId,omitempty"`
-	UserName         string    `json:"userName,omitempty"`
-	DepartmentID     string    `json:"departmentId,omitempty"`
-	RequestID        string    `json:"requestId"`
-	ModelCode        string    `json:"modelCode"`
-	ModelName        string    `json:"modelName"`
-	ModelType        string    `json:"modelType"`
-	UpstreamModelID  string    `json:"upstreamModelId"`
-	ProviderName     string    `json:"providerName"`
-	Streaming        bool      `json:"streaming"`
-	Result           string    `json:"result"`
-	HTTPStatus       int       `json:"httpStatus"`
-	LatencyMS        int64     `json:"latencyMs"`
-	PromptTokens     int       `json:"promptTokens"`
-	CompletionTokens int       `json:"completionTokens"`
-	TotalTokens      int       `json:"totalTokens"`
-	UsageReported    bool      `json:"usageReported"`
-	QuotaExceeded    bool      `json:"quotaExceeded"`
-	ErrorCode        string    `json:"errorCode"`
-	SourceIP         string    `json:"sourceIp"`
-	CreatedAt        time.Time `json:"createdAt"`
+	Timing           *modelgateway.CallTiming `json:"timing,omitempty"`
+	ID               string                   `json:"id"`
+	APIKeyID         string                   `json:"apiKeyId"`
+	APIKeyName       string                   `json:"apiKeyName"`
+	AuthType         string                   `json:"authType"`
+	UserID           string                   `json:"userId,omitempty"`
+	UserName         string                   `json:"userName,omitempty"`
+	DepartmentID     string                   `json:"departmentId,omitempty"`
+	RequestID        string                   `json:"requestId"`
+	ModelCode        string                   `json:"modelCode"`
+	ModelName        string                   `json:"modelName"`
+	ModelType        string                   `json:"modelType"`
+	UpstreamModelID  string                   `json:"upstreamModelId"`
+	ProviderName     string                   `json:"providerName"`
+	Streaming        bool                     `json:"streaming"`
+	Result           string                   `json:"result"`
+	HTTPStatus       int                      `json:"httpStatus"`
+	LatencyMS        int64                    `json:"latencyMs"`
+	PromptTokens     int                      `json:"promptTokens"`
+	CompletionTokens int                      `json:"completionTokens"`
+	TotalTokens      int                      `json:"totalTokens"`
+	UsageReported    bool                     `json:"usageReported"`
+	QuotaExceeded    bool                     `json:"quotaExceeded"`
+	ErrorCode        string                   `json:"errorCode"`
+	SourceIP         string                   `json:"sourceIp"`
+	CreatedAt        time.Time                `json:"createdAt"`
 }
 
 func registerModelGatewayRoutes(router *gin.Engine, deps Dependencies) {
@@ -321,7 +322,7 @@ func listGatewayCallsHandler(deps Dependencies) gin.HandlerFunc {
 		response := make([]gatewayCallResponse, 0, len(result.Items))
 		for _, item := range result.Items {
 			response = append(response, gatewayCallResponse{
-				ID: item.ID, APIKeyID: item.APIKeyID, APIKeyName: item.APIKeyName,
+				Timing: item.Timing, ID: item.ID, APIKeyID: item.APIKeyID, APIKeyName: item.APIKeyName,
 				AuthType: item.AuthType, UserID: item.UserID, UserName: item.UserName, DepartmentID: item.DepartmentID, RequestID: item.RequestID,
 				ModelCode: item.ModelCode, ModelName: item.ModelName, ModelType: item.ModelType,
 				UpstreamModelID: item.UpstreamModelID, ProviderName: item.ProviderName, Streaming: item.Streaming,

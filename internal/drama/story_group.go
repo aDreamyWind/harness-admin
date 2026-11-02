@@ -57,7 +57,6 @@ func (w *batchWorkflow) readStoryGroup(group []sourceUnit, number, total, unitTo
 	for attempt := 0; len(pending) > 0 && attempt < 2; attempt++ {
 		requestPrompt := fmt.Sprintf(groundedStoryPrompt, sourceEvidenceText(pending))
 		if attempt > 0 {
-			w.retried.Store(true)
 			messages := []string{}
 			for _, unit := range pending {
 				messages = append(messages, fmt.Sprintf("单元%d：%s", unit.ID, failures[unit.ID]))
