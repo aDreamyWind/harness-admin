@@ -95,15 +95,15 @@
 .drama-storyboard-source .ant-select {width:100%;}
 .drama-storyboard-segment-fields {display:grid; grid-template-columns:1fr 1fr; gap:10px;}
 .drama-storyboard-segment-fields label {display:flex; flex-direction:column; gap:5px; font-size:12px; color:#647591;}
-.drama-storyboard-preview {position:sticky; top:0; padding:16px; border-radius:8px; border:1px solid #e1e7f0; background:#f8faff; min-height:360px; color:#8795a8; font-size:12px;}
+.drama-storyboard-preview {position:sticky; top:0; display:flex; flex-direction:column; padding:16px; border-radius:8px; border:1px solid #e1e7f0; background:#f8faff; min-height:440px; color:#8795a8; font-size:12px;}
 .drama-storyboard-preview-heading {display:flex; align-items:center; justify-content:space-between; gap:8px;}
 .drama-storyboard-preview h3 {font-size:13px; margin:0; color:#647591;}
 .drama-storyboard-preview > p {line-height:1.8;}
-.drama-storyboard-preview .ant-empty {padding:28px 0;}
+.drama-storyboard-preview .ant-empty {flex:1; display:flex; flex-direction:column; justify-content:center; min-height:240px; padding:28px 0;}
 .drama-storyboard-reference-images {display:grid; grid-template-columns:1fr 1fr; gap:10px;}
 .drama-storyboard-reference-images figure {margin:0;}
 .drama-storyboard-reference-images figure > div:not(.ant-image) {height:100px; display:grid; place-items:center; background:#eef2f8; border-radius:6px;}
-.drama-storyboard-reference-images img {max-height:200px; object-fit:contain; border-radius:6px;}
+.drama-storyboard-reference-images img {display:block; width:auto; max-width:100%; height:auto; max-height:200px; object-fit:contain; object-position:center; border-radius:6px;}
 .drama-storyboard-reference-images figcaption {padding-top:6px; text-align:center;}
 .drama-storyboard-timeline {display:flex; overflow-x:auto; gap:10px; position:sticky; bottom:-20px; background:#fff; border-top:1px solid #e5eaf2; padding:14px 0; margin-top:16px; flex:none; align-items:center;}
 .drama-storyboard-timeline > button:not(.ant-btn) {position:relative; display:flex; flex-direction:column; justify-content:center; gap:8px; flex:0 0 142px; min-height:88px; border:1px solid #e0e6ef; border-radius:7px; background:#f5f7fc; padding:14px 10px 10px 26px; text-align:left; color:#647591; cursor:pointer;}
@@ -115,7 +115,10 @@
 
 .drama-storyboard-segment-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .drama-storyboard-segment-heading h3 { margin:0; }
-.drama-storyboard-pacing-history { margin:14px 0; padding:12px 14px; border:1px solid #e3e8f1; border-radius:8px; background:#fafcff; }
+.drama-storyboard-pacing-history { margin:12px 0; font-size:12px; color:#65748b; }
+.drama-storyboard-pacing-history > summary { cursor:pointer; }
+.drama-storyboard-pacing-history[open] { padding-bottom:10px; }
+.drama-storyboard-pacing-history article { padding:10px 12px; margin-top:8px; background:#f7f9fc; border-radius:6px; }
 .drama-storyboard-pacing-history article + article { margin-top:10px; padding-top:10px; border-top:1px solid #e9edf4; }
 .drama-storyboard-pacing-history p { margin:7px 0 0; font-size:12px; color:#66758b; }
 .drama-storyboard-pacing-history span { font-size:12px; }
@@ -123,3 +126,41 @@
 .drama-storyboard-narration-source {margin:0 10px 12px; color:#65748b; font-size:12px;}
 .drama-storyboard-narration-source summary {cursor:pointer;}
 .drama-storyboard-narration-source p {margin:8px 0; white-space:pre-wrap;}
+
+/* 阅读时将同一片段的镜头放在一个正文区；编辑时沿用独立镜头控件。 */
+.drama-storyboard-reading-sheet { margin-top:14px; padding:18px 20px 22px; min-height:400px; border:1px solid #e2e7f0; border-radius:8px; background:#f7f9fc; color:#34415a; overflow-wrap:anywhere; }
+.drama-storyboard-reading-context { margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid #e4e9f1; }
+.drama-storyboard-reading-context p { margin:0; font-size:13px; line-height:1.9; }
+.drama-storyboard-reading-context p > span { color:#8290a4; font-size:12px; white-space:nowrap; }
+.drama-storyboard-reading-assets { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; font-size:12px; }
+.drama-storyboard-reading-assets > span:first-child { margin-right:3px; color:#8290a4; }
+.drama-storyboard-reading-assets .ant-tag { display:inline-flex; align-items:center; gap:5px; margin:0; padding:1px 7px; border:1px solid #dde5f1; background:#fff; color:#596e91; line-height:22px; }
+.drama-storyboard-reading-assets img { width:20px; height:20px; border-radius:3px; object-fit:cover; }
+.reading .drama-storyboard-shot { padding:0; margin:0; border:0; border-radius:0; background:none; }
+.reading .drama-storyboard-shot + .drama-storyboard-shot { margin-top:18px; }
+.reading .drama-storyboard-shot-picture { margin:0; line-height:2; }
+.drama-storyboard-shot-prefix { display:inline; margin-right:10px; color:#647591; font-size:12px; }
+.drama-storyboard-shot-prefix > strong { margin-right:8px; color:#334863; font-weight:600; }
+.drama-storyboard-shot-time { display:inline-flex; align-items:center; gap:5px; margin-right:8px; padding:0 6px; border:1px solid #dce3ed; border-radius:4px; background:#fff; color:#4d607a; font-variant-numeric:tabular-nums; line-height:20px; white-space:nowrap; }
+.reading .drama-storyboard-utterance { gap:6px; margin:6px 0 0; padding:0; background:none; border-radius:0; line-height:1.9; }
+.reading .drama-storyboard-utterance .ant-tag { border:0; background:none; color:#7c8ba2; padding:0; font-size:12px; }
+.reading .drama-storyboard-utterance strong { color:#4d607a; font-weight:500; }
+.reading .drama-storyboard-utterance strong::after { content:'：'; }
+.reading .drama-storyboard-sound { margin:5px 0 0; line-height:1.8; color:#7c8ba2; }
+.reading .drama-storyboard-narration-source { margin:5px 0 0; }
+.drama-storyboard-details { margin-top:14px; color:#7c8ba2; font-size:12px; }
+.drama-storyboard-details > summary { cursor:pointer; }
+.drama-storyboard-details > p, .drama-storyboard-details > .drama-storyboard-notes { margin:12px 0; line-height:1.8; }
+.drama-storyboard-details > p > strong, .drama-storyboard-details > .drama-storyboard-notes > strong { margin-right:10px; color:#53647e; font-weight:500; }
+.drama-storyboard-details .drama-storyboard-notes p { margin:5px 0 0; white-space:pre-wrap; }
+.drama-storyboard-reference-images .ant-image { display:flex; justify-content:center; width:100%; }
+@media (max-width:700px) {
+ .drama-storyboard-reading-sheet { padding:14px; min-height:300px; }
+ .drama-storyboard-reading-context p > span { white-space:normal; }
+ .drama-storyboard-preview { min-height:300px; }
+ .drama-storyboard-reading-assets .ant-tag { max-width:100%; white-space:normal; }
+}
+
+.drama-storyboard-preview-assets { flex:none; margin-top:12px; border-top:1px solid #e3e8f1; padding-top:12px; }
+.drama-storyboard-preview-assets > summary { color:#65748b; cursor:pointer; }
+.drama-storyboard-preview-assets .drama-storyboard-reference-images { margin-top:12px; }
