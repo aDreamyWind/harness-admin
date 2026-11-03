@@ -89,7 +89,7 @@ func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.Se
 	if err != nil {
 		return nil, err
 	}
-	task, err := w.videoCall(ctx, prepared, "video", loggedBody, func() (*http.Response, error) {
+	task, err := w.videoCall(ctx, prepared, in.VideoID, "video", loggedBody, func() (*http.Response, error) {
 		return w.forwarder.Forward(ctx, route, providerBody, false)
 	})
 	if err != nil {
@@ -121,7 +121,7 @@ func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.Se
 			return nil, &drama.SegmentVideoFailure{Message: "等待视频模型超时，请先查看调用记录再重试", Cause: ctx.Err()}
 		case <-timer.C:
 		}
-		task, err = w.videoCall(ctx, prepared, "video_task_query", queryBody, func() (*http.Response, error) {
+		task, err = w.videoCall(ctx, prepared, in.VideoID, "video_task_query", queryBody, func() (*http.Response, error) {
 			return w.forwarder.QueryVideoTask(ctx, route, taskID)
 		})
 		if err != nil {
@@ -130,7 +130,7 @@ func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.Se
 	}
 }
 
-func (w *dramaVideoEngine) videoCall(ctx context.Context, prepared modelgateway.PreparedRequest, operation string, body []byte, call func() (*http.Response, error)) (dramaVideoOutput, error) {
+func (w *dramaVideoEngine) videoCall(ctx context.Context, prepared modelgateway.PreparedRequest, videoID, operation string, body []byte, call func() (*http.Response, error)) (dramaVideoOutput, error) {
 	start := time.Now()
 	response, err := call()
 	status, result, message := http.StatusBadGateway, "success", ""
@@ -174,7 +174,7 @@ func (w *dramaVideoEngine) videoCall(ctx context.Context, prepared modelgateway.
 		OrganizationID: caller.OrganizationID, UserID: caller.UserID, DepartmentID: caller.DepartmentID, AuthType: "user",
 		ModelID: route.ModelID, ProviderID: route.ProviderID, ModelCode: route.ModelCode, ModelType: "video", UpstreamModelID: route.UpstreamModelID,
 		RequestID: uuid.NewString(), Result: result, HTTPStatus: status, LatencyMS: time.Since(start).Milliseconds(),
-		Source: "ai_drama", Operation: operation, RequestBody: body, ResponseBody: raw, ResponseTruncated: truncated, ErrorMessage: message,
+		Source: "ai_drama", Operation: operation, SegmentVideoID: videoID, RequestBody: body, ResponseBody: raw, ResponseTruncated: truncated, ErrorMessage: message,
 	})
 	return task, errors.Join(err, logErr)
 }

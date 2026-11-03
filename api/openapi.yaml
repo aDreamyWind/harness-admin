@@ -613,6 +613,39 @@ paths:
         '403': { description: 请求校验失败 }
         '404': { description: 项目或片段不存在 }
         '409': { description: 版本不可生成、未配置模型或已有任务在运行 }
+  /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}/segments/{segmentId}/videos/{videoId}/calls:
+    get:
+      summary: 查看当前用户的片段视频模型调用记录
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: segmentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: videoId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 当前任务的提交和查询记录，按时间倒序
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [operation, result, httpStatus, model, createdAt]
+                      properties:
+                        operation: { type: string, enum: [video, video_task_query] }
+                        result: { type: string, enum: [success, failed] }
+                        httpStatus: { type: integer }
+                        model: { type: string }
+                        code: { type: string }
+                        message: { type: string }
+                        createdAt: { type: string, format: date-time }
+        '401': { description: 未登录 }
+        '404': { description: 任务不存在或不属于当前用户 }
   /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}/segments/{segmentId}/videos/{videoId}/content:
     get:
       summary: 播放已生成的片段视频，支持字节范围请求

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -111,4 +112,66 @@ func (r *DramaRepository) FinishSegmentVideo(ctx context.Context, id, status, me
 func (r *DramaRepository) FailInterruptedSegmentVideos(ctx context.Context) error {
 	_, err := r.db.Exec(ctx, `UPDATE drama_segment_videos SET status='failed',error_message='本地服务重启，视频生成状态已中断；请查看调用记录后重试',finished_at=now() WHERE status='running'`)
 	return err
+}
+
+func (r *DramaRepository) ListSegmentVideoCalls(ctx context.Context, scope drama.SegmentVideoScope, id string) ([]drama.SegmentVideoCall, error) {
+	job, err := r.ReadSegmentVideo(ctx, scope, id)
+	if err != nil {
+		return nil, err
+	}
+	// 历史版本没有任务主键。仅在同一用户和模型没有重叠任务时，按任务时间窗口找回旧日志。
+	rows, err := r.db.Query(ctx, `
+ SELECT l.operation,c.result,c.http_status,c.upstream_model_id,l.error_message,c.created_at,substring(l.response_body from 1 for 8192)
+ FROM drama_segment_videos job
+ JOIN model_gateway_calls c ON c.organization_id=$2 AND c.user_id=$3
+ JOIN model_call_logs l ON l.call_id=c.id AND l.organization_id=c.organization_id
+ WHERE job.id=$1 AND l.source='ai_drama' AND l.operation IN ('video','video_task_query')
+ AND (l.segment_video_id=job.id OR (
+   l.segment_video_id IS NULL AND c.model_code=job.model_code
+   AND c.created_at BETWEEN job.created_at AND job.finished_at
+   AND NOT EXISTS (
+    SELECT 1 FROM drama_segment_videos other
+    JOIN drama_storyboard_segments s ON s.id=other.segment_id
+    JOIN drama_storyboard_runs run ON run.id=s.run_id
+    JOIN drama_projects p ON p.id=run.project_id
+    WHERE other.id<>job.id AND p.organization_id=$2 AND p.owner_id=$3 AND other.model_code=job.model_code
+    AND other.created_at<=job.finished_at AND COALESCE(other.finished_at,now())>=job.created_at
+   )
+ ))
+ ORDER BY c.created_at DESC LIMIT 100`, job.ID, scope.OrganizationID, scope.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	calls := []drama.SegmentVideoCall{}
+	for rows.Next() {
+		var call drama.SegmentVideoCall
+		var raw []byte
+		if err = rows.Scan(&call.Operation, &call.Result, &call.HTTPStatus, &call.Model, &call.Message, &call.CreatedAt, &raw); err != nil {
+			return nil, err
+		}
+		var result struct {
+			Code, Message string
+			Output        struct{ Code, Message string }
+		}
+		if call.Result == "failed" && json.Unmarshal(raw, &result) == nil {
+			call.Code = result.Code
+			if result.Output.Code != "" {
+				call.Code = result.Output.Code
+			}
+			detail := result.Output.Message
+			if detail == "" {
+				detail = result.Message
+			}
+			if detail != "" {
+				chars := []rune(detail)
+				if len(chars) > 500 {
+					chars = chars[:500]
+				}
+				call.Message = string(chars)
+			}
+		}
+		calls = append(calls, call)
+	}
+	return calls, rows.Err()
 }

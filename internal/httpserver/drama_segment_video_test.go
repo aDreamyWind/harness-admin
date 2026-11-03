@@ -45,6 +45,14 @@ func (s *segmentVideoHTTPStub) SegmentVideoContent(_ context.Context, scope dram
 	return videoTestFile{strings.NewReader("0123456789")}, time.Time{}, nil
 }
 
+func (s *segmentVideoHTTPStub) SegmentVideoCalls(_ context.Context, scope drama.SegmentVideoScope, id string) ([]drama.SegmentVideoCall, error) {
+	s.scope = scope
+	if id != "video" {
+		return nil, drama.ErrNotFound
+	}
+	return []drama.SegmentVideoCall{{Code: "DataInspectionFailed"}}, nil
+}
+
 func TestSegmentVideoRoutesEnforceSessionCSRFAndServeRanges(t *testing.T) {
 	stub := &segmentVideoHTTPStub{generated: make(chan string, 1)}
 	session := accountTestSession()
@@ -60,6 +68,9 @@ func TestSegmentVideoRoutesEnforceSessionCSRFAndServeRanges(t *testing.T) {
 		{"POST", base, `{"revision":2}`, true, false, 403},
 		{"POST", base, `{"revision":1}`, true, true, 409},
 		{"POST", base, `{"revision":2}`, true, true, 202},
+		{"GET", base + "/video/calls", "", false, false, 401},
+		{"GET", base + "/video/calls", "", true, false, 200},
+		{"GET", base + "/missing/calls", "", true, false, 404},
 		{"GET", base + "/video/content", "", true, false, 206},
 		{"GET", base + "/missing/content", "", true, false, 404},
 	} {

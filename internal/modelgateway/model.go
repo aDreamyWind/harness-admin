@@ -200,6 +200,7 @@ type CallPage struct {
 }
 
 type RecordCallInput struct {
+	SegmentVideoID    string
 	Timing            *CallTiming
 	OrganizationID    string
 	APIKeyID          string

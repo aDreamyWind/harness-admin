@@ -258,3 +258,16 @@ export const startDramaSegmentVideo = (project: string, episode: string, run: st
   })
 export const dramaSegmentVideoURL = (project: string, episode: string, run: string, segment: string, video: string) =>
   `${segmentVideoBase(project, episode, run, segment)}/${video}/content`
+
+export interface DramaSegmentVideoCall {
+  operation: 'video' | 'video_task_query'
+  result: 'success' | 'failed'
+  httpStatus: number
+  model: string
+  code?: string
+  message?: string
+  createdAt: string
+}
+
+export const listDramaSegmentVideoCalls = (project: string, episode: string, run: string, segment: string, video: string) =>
+  request<DramaSegmentVideoCall[]>(`${segmentVideoBase(project, episode, run, segment)}/${video}/calls`)

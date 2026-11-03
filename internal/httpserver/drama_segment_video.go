@@ -16,6 +16,7 @@ type DramaSegmentVideoService interface {
 	StartSegmentVideo(context.Context, drama.SegmentVideoScope, int) (drama.SegmentVideoJob, error)
 	GenerateSegmentVideo(drama.SegmentVideoJob) error
 	SegmentVideos(context.Context, drama.SegmentVideoScope) ([]drama.SegmentVideo, error)
+	SegmentVideoCalls(context.Context, drama.SegmentVideoScope, string) ([]drama.SegmentVideoCall, error)
 	SegmentVideoContent(context.Context, drama.SegmentVideoScope, string) (io.ReadSeekCloser, time.Time, error)
 }
 
@@ -59,6 +60,16 @@ func registerDramaSegmentVideoRoutes(router *gin.Engine, deps Dependencies) {
 		}()
 		httpx.OK(c, http.StatusAccepted, job.Video)
 	})
+	group.GET("/:videoId/calls", func(c *gin.Context) {
+		calls, err := deps.DramaSegmentVideos.SegmentVideoCalls(c.Request.Context(), segmentVideoScope(c), c.Param("videoId"))
+		if err != nil {
+			handleDramaError(c, deps, err)
+			return
+		}
+		c.Header("Cache-Control", "private, no-store")
+		httpx.OK(c, http.StatusOK, calls)
+	})
+
 	group.GET("/:videoId/content", func(c *gin.Context) {
 		file, modified, err := deps.DramaSegmentVideos.SegmentVideoContent(c.Request.Context(), segmentVideoScope(c), c.Param("videoId"))
 		if err != nil {

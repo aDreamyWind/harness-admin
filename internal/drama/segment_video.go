@@ -28,11 +28,22 @@ type SegmentVideo struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+type SegmentVideoCall struct {
+	Operation  string    `json:"operation"`
+	Result     string    `json:"result"`
+	HTTPStatus int       `json:"httpStatus"`
+	Model      string    `json:"model"`
+	Code       string    `json:"code,omitempty"`
+	Message    string    `json:"message,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
 type SegmentVideoScope struct{ OrganizationID, UserID, ProjectID, EpisodeID, RunID, SegmentID string }
 
 type SegmentVideoRepository interface {
 	CreateSegmentVideo(context.Context, SegmentVideoScope, SegmentVideo) (SegmentVideo, error)
 	ListSegmentVideos(context.Context, SegmentVideoScope) ([]SegmentVideo, error)
+	ListSegmentVideoCalls(context.Context, SegmentVideoScope, string) ([]SegmentVideoCall, error)
 	ReadSegmentVideo(context.Context, SegmentVideoScope, string) (SegmentVideo, error)
 	FinishSegmentVideo(context.Context, string, string, string) error
 	FailInterruptedSegmentVideos(context.Context) error
@@ -44,10 +55,10 @@ type SegmentVideoMedia interface {
 }
 
 type SegmentVideoRequest struct {
-	OrganizationID, UserID, ModelCode, Prompt, AspectRatio string
-	Duration                                               int
-	ReferenceImages                                        []string
-	ImageIDs                                               []string
+	OrganizationID, UserID, ModelCode, Prompt, AspectRatio, VideoID string
+	Duration                                                        int
+	ReferenceImages                                                 []string
+	ImageIDs                                                        []string
 }
 
 type SegmentVideoGenerator interface {
@@ -308,6 +319,7 @@ func (s *Service) GenerateSegmentVideo(job SegmentVideoJob) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
 	request := job.Request
+	request.VideoID = job.Video.ID
 	err := s.loadSegmentVideoImages(ctx, job.Scope, &request)
 	if err == nil {
 		var data []byte
@@ -371,4 +383,11 @@ func (s *Service) SegmentVideoContent(ctx context.Context, scope SegmentVideoSco
 		return nil, time.Time{}, ErrNotFound
 	}
 	return s.videoMedia.OpenVideo(ctx, video.ID)
+}
+
+func (s *Service) SegmentVideoCalls(ctx context.Context, scope SegmentVideoScope, id string) ([]SegmentVideoCall, error) {
+	if !validVideoScope(scope) || !validVisualIDs(id) {
+		return nil, ErrInvalidInput
+	}
+	return s.segmentVideos.ListSegmentVideoCalls(ctx, scope, id)
 }

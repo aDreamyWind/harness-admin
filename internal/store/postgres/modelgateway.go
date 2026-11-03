@@ -400,9 +400,9 @@ func insertModelCallLog(ctx context.Context, tx pgx.Tx, callID string, input mod
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO model_call_logs
   (call_id, organization_id, source, operation, request_body, response_body, response_truncated, error_message,
-  workflow_stage,reasoning_policy,requested_at,headers_at,first_reasoning_at,first_content_at,finished_at,reasoning_tokens)
-  VALUES ($1,$2,$3,$4,COALESCE($5::bytea,''::bytea),COALESCE($6::bytea,''::bytea),$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, callID, input.OrganizationID, input.Source,
-		input.Operation, input.RequestBody, input.ResponseBody, input.ResponseTruncated, input.ErrorMessage, stage, policy, requested, headers, reasoning, content, finished, tokens)
+  workflow_stage,reasoning_policy,requested_at,headers_at,first_reasoning_at,first_content_at,finished_at,reasoning_tokens,segment_video_id)
+  VALUES ($1,$2,$3,$4,COALESCE($5::bytea,''::bytea),COALESCE($6::bytea,''::bytea),$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULLIF($17,'')::uuid)`, callID, input.OrganizationID, input.Source,
+		input.Operation, input.RequestBody, input.ResponseBody, input.ResponseTruncated, input.ErrorMessage, stage, policy, requested, headers, reasoning, content, finished, tokens, input.SegmentVideoID)
 	if err != nil {
 		return fmt.Errorf("保存模型调用正文失败: %w", err)
 	}

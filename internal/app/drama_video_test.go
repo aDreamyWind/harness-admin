@@ -46,7 +46,7 @@ func TestDramaVideoEngineSubmitsReferencesAndLogsTaskQuery(t *testing.T) {
 	gateway, forwarder := &dramaVideoGatewayStub{}, &dramaVideoForwarderStub{}
 	engine := &dramaVideoEngine{gateway: gateway, forwarder: forwarder}
 	result, err := engine.GenerateSegmentVideo(context.Background(), drama.SegmentVideoRequest{
-		OrganizationID: "org", UserID: "user", ModelCode: "video", Prompt: "人物看向图1", AspectRatio: "9:16",
+		OrganizationID: "org", UserID: "user", VideoID: "job-1", ModelCode: "video", Prompt: "人物看向图1", AspectRatio: "9:16",
 		Duration: 4, ReferenceImages: []string{"data:image/png;base64,abc"}, ImageIDs: []string{"image1"},
 	})
 	if err != nil || string(result) != "虚构视频" || forwarder.task != "fake-task" {
@@ -57,7 +57,7 @@ func TestDramaVideoEngineSubmitsReferencesAndLogsTaskQuery(t *testing.T) {
 			t.Fatalf("请求缺少 %s：%s", fragment, forwarder.payload)
 		}
 	}
-	if len(gateway.records) != 2 || gateway.records[1].Operation != "video_task_query" || !strings.Contains(string(gateway.records[0].RequestBody), "image-job:image1") || strings.Contains(string(gateway.records[0].RequestBody), "base64") {
+	if len(gateway.records) != 2 || gateway.records[1].Operation != "video_task_query" || gateway.records[1].SegmentVideoID != "job-1" || !strings.Contains(string(gateway.records[0].RequestBody), "image-job:image1") || strings.Contains(string(gateway.records[0].RequestBody), "base64") {
 		t.Fatalf("调用记录不正确：%+v", gateway.records)
 	}
 }
@@ -65,7 +65,7 @@ func TestDramaVideoEngineSubmitsReferencesAndLogsTaskQuery(t *testing.T) {
 func TestDramaVideoInspectionFailureKeepsActionableImageMessage(t *testing.T) {
 	gateway := &dramaVideoGatewayStub{}
 	engine := &dramaVideoEngine{gateway: gateway}
-	_, err := engine.videoCall(context.Background(), modelgateway.PreparedRequest{}, "video_task_query", nil, func() (*http.Response, error) {
+	_, err := engine.videoCall(context.Background(), modelgateway.PreparedRequest{}, "video", "video_task_query", nil, func() (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"output":{"task_status":"FAILED","code":"DataInspectionFailed","message":"Green net check rejected image (input)"}}`))}, nil
 	})
 	var failure *drama.SegmentVideoFailure
