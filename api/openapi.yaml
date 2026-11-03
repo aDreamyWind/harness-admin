@@ -3942,6 +3942,17 @@ components:
       type: object
       required: [id, number, title, scene, purpose, startLine, endLine, startState, endState, status, notes, formIds, bindings, shots]
       properties:
+        videoReferences:
+          type: array
+          readOnly: true
+          description: 当前片段实际引用的生成参考图，imageId 为空表示待生成
+          items:
+            type: object
+            required: [formId, imageId, name]
+            properties:
+              formId: { type: string, format: uuid }
+              imageId: { type: string }
+              name: { type: string }
         sceneMentions: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardMention' } }
         purposeMentions: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/DramaStoryboardMention' } }
         id: { type: string, format: uuid }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -128,18 +129,14 @@ func (s *Service) StartSegmentVideo(ctx context.Context, scope SegmentVideoScope
 	return SegmentVideoJob{Video: video, Scope: scope, Request: request}, err
 }
 
-func planSegmentVideo(seg StoryboardSegment, catalog []AssetForm, style, ratio string) (SegmentVideoRequest, error) {
-	total := storyboardSeconds(seg)
-	duration := int(math.Ceil(total))
-	if duration < 2 || duration > 30 {
-		return SegmentVideoRequest{}, fmt.Errorf("%w：片段时长为 %.1f 秒，当前视频模型支持 2–30 秒，请调整分镜后再生成", ErrInvalidInput, total)
-	}
-	if ratio != "16:9" && ratio != "9:16" && ratio != "1:1" {
-		return SegmentVideoRequest{}, fmt.Errorf("%w：当前视频模型不支持此分镜画幅", ErrInvalidInput)
-	}
-	if len(seg.FormIDs) > 10 {
-		return SegmentVideoRequest{}, fmt.Errorf("%w：当前视频模型每片段最多使用 10 张参考图，请调整片段的资产引用", ErrInvalidInput)
-	}
+type SegmentVideoReference struct {
+	FormID  string `json:"formId"`
+	ImageID string `json:"imageId"`
+	Name    string `json:"name"`
+	Kind    string `json:"-"`
+}
+
+func segmentVideoReferences(seg StoryboardSegment, catalog []AssetForm) []SegmentVideoReference {
 	forms := make(map[string]AssetForm, len(catalog))
 	for _, form := range catalog {
 		forms[form.ID] = form
@@ -149,33 +146,125 @@ func planSegmentVideo(seg StoryboardSegment, catalog []AssetForm, style, ratio s
 		bindings[binding.FormID] = binding.ImageID
 	}
 
-	req := SegmentVideoRequest{Duration: duration, AspectRatio: ratio, ImageIDs: []string{}}
-	var prompt strings.Builder
-	fmt.Fprintf(&prompt, "画面风格：%s\n场次：%s\n动作和声音按镜头顺序表现，保持人物、场景与道具连续。对白按原句呈现，避免额外口播。\n", style, seg.Scene)
-	missing := []string{}
-	for i, id := range seg.FormIDs {
+	// 旧分镜可能没有位置引用。只在片段候选形象中匹配唯一的完整名称，与正文标签保持一致。
+	names := make(map[string]string)
+	for _, id := range seg.FormIDs {
 		form, ok := forms[id]
 		if !ok {
-			return SegmentVideoRequest{}, fmt.Errorf("%w：片段引用的形象已不可用，请重新选择资产", ErrInvalidInput)
+			continue
 		}
+		labels := []string{form.AssetName, form.AssetName + "-" + form.Name}
+		if form.Name != "" && form.Name != "默认形象" {
+			labels = append(labels, form.AssetName+" · "+form.Name)
+		}
+		for _, label := range labels {
+			if utf8.RuneCountInString(label) < 2 {
+				continue
+			}
+			if existing, ok := names[label]; ok && existing != id {
+				names[label] = ""
+			} else {
+				names[label] = id
+			}
+		}
+	}
+	keys := make([]string, 0, len(names))
+	for label, id := range names {
+		if id != "" {
+			keys = append(keys, label)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	refs := []SegmentVideoReference{}
+	seen := map[string]bool{}
+	add := func(id string) {
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+		form := forms[id]
 		image := bindings[id]
 		if image == "" {
 			image = form.CurrentImageID
 		}
-		if image == "" {
-			missing = append(missing, form.AssetName+" · "+form.Name)
+		name := form.AssetName
+		if form.Name != "" {
+			name += " · " + form.Name
+		}
+		if name == "" {
+			name = "已不可用的资产形象"
+		}
+		refs = append(refs, SegmentVideoReference{FormID: id, ImageID: image, Name: name, Kind: form.Kind})
+	}
+	visit := func(text string, mentions []StoryboardMention) {
+		if mentions != nil {
+			for _, ref := range mentions {
+				add(ref.FormID)
+			}
+			return
+		}
+		for text != "" {
+			found := false
+			for _, label := range keys {
+				if strings.HasPrefix(text, label) {
+					add(names[label])
+					text = text[len(label):]
+					found = true
+					break
+				}
+			}
+			if !found {
+				_, size := utf8.DecodeRuneInString(text)
+				text = text[size:]
+			}
+		}
+	}
+	visit(seg.Scene, seg.SceneMentions)
+	for _, shot := range seg.Shots {
+		visit(shot.Description, shot.DescriptionMentions)
+		visit(shot.Sound, shot.SoundMentions)
+		for _, voice := range shot.Utterances {
+			if voice.Delivery == "visual" {
+				continue
+			}
+			visit(voice.Speaker, voice.SpeakerMentions)
+			visit(voice.Text, voice.Mentions)
+		}
+	}
+	return refs
+}
+
+func planSegmentVideo(seg StoryboardSegment, catalog []AssetForm, style, ratio string) (SegmentVideoRequest, error) {
+	total := storyboardSeconds(seg)
+	duration := int(math.Ceil(total))
+	if duration < 2 || duration > 30 {
+		return SegmentVideoRequest{}, fmt.Errorf("%w：片段时长为 %.1f 秒，当前视频模型支持 2–30 秒，请调整分镜后再生成", ErrInvalidInput, total)
+	}
+	if ratio != "16:9" && ratio != "9:16" && ratio != "1:1" {
+		return SegmentVideoRequest{}, fmt.Errorf("%w：当前视频模型不支持此分镜画幅", ErrInvalidInput)
+	}
+	references := segmentVideoReferences(seg, catalog)
+	if len(references) > 10 {
+		return SegmentVideoRequest{}, fmt.Errorf("%w：当前视频模型每片段最多使用 10 张参考图，请调整片段的资产引用", ErrInvalidInput)
+	}
+	req := SegmentVideoRequest{Duration: duration, AspectRatio: ratio, ImageIDs: []string{}}
+	var prompt strings.Builder
+	fmt.Fprintf(&prompt, "画面风格：%s\n场次：%s\n动作和声音按镜头顺序表现，保持人物、场景与道具连续。对白按原句呈现，避免额外口播。\n", style, seg.Scene)
+	missing := []string{}
+	numbers := make(map[string]int, len(references))
+	for i, ref := range references {
+		if ref.ImageID == "" {
+			missing = append(missing, ref.Name)
 			continue
 		}
-		req.ImageIDs = append(req.ImageIDs, image)
-		fmt.Fprintf(&prompt, "图%d（Image %d）：%s · %s（%s）\n", i+1, i+1, form.AssetName, form.Name, form.Kind)
+		req.ImageIDs = append(req.ImageIDs, ref.ImageID)
+		numbers[ref.FormID] = i + 1
+		fmt.Fprintf(&prompt, "图%d（Image %d）：%s（%s）\n", i+1, i+1, ref.Name, ref.Kind)
 	}
 	if len(missing) > 0 {
 		return SegmentVideoRequest{}, fmt.Errorf("%w：请先为以下形象生成参考图：%s", ErrInvalidInput, strings.Join(missing, "、"))
 	}
-	numbers := make(map[string]int, len(seg.FormIDs))
-	for i, id := range seg.FormIDs {
-		numbers[id] = i + 1
-	}
+
 	elapsed := 0.0
 	for i, shot := range seg.Shots {
 		fmt.Fprintf(&prompt, "\n镜头%d（%.1f–%.1f秒，%s，%s）：%s\n", i+1, elapsed, elapsed+shot.Duration, shot.ShotSize, shot.Camera, videoPicture(shot, numbers))

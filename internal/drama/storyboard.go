@@ -49,22 +49,23 @@ type StoryboardMention struct {
 	FormID string `json:"formId"`
 }
 type StoryboardSegment struct {
-	SceneMentions   []StoryboardMention `json:"sceneMentions,omitempty"`
-	PurposeMentions []StoryboardMention `json:"purposeMentions,omitempty"`
-	ID              string              `json:"id"`
-	Number          int                 `json:"number"`
-	Title           string              `json:"title"`
-	Scene           string              `json:"scene"`
-	Purpose         string              `json:"purpose"`
-	StartLine       int                 `json:"startLine"`
-	EndLine         int                 `json:"endLine"`
-	StartState      string              `json:"startState"`
-	EndState        string              `json:"endState"`
-	Status          string              `json:"status"`
-	Notes           string              `json:"notes"`
-	FormIDs         []string            `json:"formIds"`
-	Bindings        []StoryboardBinding `json:"bindings"`
-	Shots           []StoryboardShot    `json:"shots"`
+	VideoReferences []SegmentVideoReference `json:"videoReferences,omitempty"`
+	SceneMentions   []StoryboardMention     `json:"sceneMentions,omitempty"`
+	PurposeMentions []StoryboardMention     `json:"purposeMentions,omitempty"`
+	ID              string                  `json:"id"`
+	Number          int                     `json:"number"`
+	Title           string                  `json:"title"`
+	Scene           string                  `json:"scene"`
+	Purpose         string                  `json:"purpose"`
+	StartLine       int                     `json:"startLine"`
+	EndLine         int                     `json:"endLine"`
+	StartState      string                  `json:"startState"`
+	EndState        string                  `json:"endState"`
+	Status          string                  `json:"status"`
+	Notes           string                  `json:"notes"`
+	FormIDs         []string                `json:"formIds"`
+	Bindings        []StoryboardBinding     `json:"bindings"`
+	Shots           []StoryboardShot        `json:"shots"`
 }
 type StoryboardBinding struct {
 	FormID  string `json:"formId"`
@@ -217,6 +218,9 @@ func (s *Service) Storyboards(ctx context.Context, org, user, project, episode, 
 					}
 				}
 			}
+		}
+		for i := range r.Segments {
+			r.Segments[i].VideoReferences = segmentVideoReferences(r.Segments[i], out.CatalogForms)
 		}
 		r.Stale = r.SourceHash != storyboardHash(w) || w.Episode.ScriptNeedsReview
 		r.Repairs = []RepairTicket{}

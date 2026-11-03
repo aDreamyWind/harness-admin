@@ -2,13 +2,14 @@ import { Alert, Button, Empty, Spin } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dramaSegmentVideoURL, listDramaSegmentVideos, startDramaSegmentVideo } from '../api/drama'
 
-export function DramaSegmentVideoPreview({ projectId, episodeId, runId, segmentId, revision, canGenerate }: {
+export function DramaSegmentVideoPreview({ projectId, episodeId, runId, segmentId, revision, canGenerate, missingReferences }: {
   projectId: string
   episodeId: string
   runId: string
   segmentId: string
   revision: number
   canGenerate: boolean
+  missingReferences: string[]
 }) {
   const client = useQueryClient()
   const scope = [projectId, episodeId, runId, segmentId] as const
@@ -25,17 +26,19 @@ export function DramaSegmentVideoPreview({ projectId, episodeId, runId, segmentI
   })
   const latest = query.data?.[0]
   const completed = query.data?.find((video) => video.status === 'succeeded')
+  const missing = missingReferences.length > 0
   const running = latest?.status === 'running'
   const label = running ? '生成中' : latest?.status === 'failed' ? '重试生成' : completed ? '重新生成' : '生成视频'
 
   return <>
     <div className="drama-storyboard-preview-heading">
       <h3>片段预览</h3>
-      <Button type="primary" disabled={!canGenerate || running || query.isPending || query.isError} loading={start.isPending}
+      <Button type="primary" disabled={!canGenerate || missing || running || query.isPending || query.isError} loading={start.isPending}
         onClick={() => start.mutate()}>{label}</Button>
     </div>
     {query.isError && <Alert type="error" showIcon title="读取视频任务失败" action={<Button size="small" onClick={() => void query.refetch()}>重试</Button>} />}
-    {start.isError && <Alert type="error" showIcon title={start.error.message} />}
+    {missing && !running && <Alert type="info" showIcon title={`请先生成参考图：${missingReferences.join("、")}`} />}
+    {!missing && start.isError && <Alert type="error" showIcon title={start.error.message} />}
     {latest?.status === 'failed' && <Alert type="error" showIcon title={latest.error || '片段视频生成失败'} />}
     {running && <Alert type="info" icon={<Spin size="small" />} showIcon title="正在生成片段视频，可以切换片段或稍后回来查看。" />}
     {completed

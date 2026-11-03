@@ -8,14 +8,18 @@ import (
 )
 
 func TestSegmentVideoUsesPinnedImageAndCurrentImageOnlyWhenUnpinned(t *testing.T) {
-	seg := StoryboardSegment{Scene: "小院", FormIDs: []string{"scene", "actor"},
+	seg := StoryboardSegment{Scene: "小院", FormIDs: []string{"scene", "actor", "other"},
 		Bindings: []StoryboardBinding{{FormID: "scene", ImageID: "adopted"}},
 		Shots: []StoryboardShot{{Description: "小院里有人", Duration: 4.5, DescriptionMentions: []StoryboardMention{{Start: 0, End: 2, FormID: "scene"}},
 			Utterances: []StoryboardUtterance{{Kind: "dialogue", Speaker: "林夏", Text: "你好。"}, {Kind: "vo", Delivery: "visual", SourceText: "这句已改为画面"}}}},
 	}
-	forms := []AssetForm{{ID: "scene", AssetName: "小院子", CurrentImageID: "newer"}, {ID: "actor", AssetName: "林夏"}}
+	forms := []AssetForm{{ID: "scene", AssetName: "小院子", CurrentImageID: "newer"}, {ID: "actor", AssetName: "林夏"}, {ID: "other", AssetName: "其他片段场景"}}
 	if _, err := planSegmentVideo(seg, forms, "水墨", "9:16"); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "林夏") {
 		t.Fatalf("应提示具体缺图：%v", err)
+	}
+	references := segmentVideoReferences(seg, forms)
+	if len(references) != 2 || references[0].ImageID != "adopted" || references[1].Name != "林夏" || references[1].ImageID != "" {
+		t.Fatalf("预览应只返回当前片段使用的形象和缺图状态：%+v", references)
 	}
 	forms[1].CurrentImageID = "actor-image"
 	request, err := planSegmentVideo(seg, forms, "水墨", "9:16")
