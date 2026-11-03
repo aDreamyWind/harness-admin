@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -30,12 +31,14 @@ type dramaVideoEngine struct {
 
 type dramaVideoOutput struct {
 	Output struct {
-		ID     string `json:"task_id"`
-		Status string `json:"task_status"`
-		URL    string `json:"video_url"`
-		Code   string `json:"code"`
+		ID      string `json:"task_id"`
+		Status  string `json:"task_status"`
+		URL     string `json:"video_url"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
 	} `json:"output"`
-	Code string `json:"code"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.SegmentVideoRequest) ([]byte, error) {
@@ -145,14 +148,18 @@ func (w *dramaVideoEngine) videoCall(ctx context.Context, prepared modelgateway.
 			raw, truncated, err = raw[:limit], true, errors.New("视频模型响应超过限制")
 		}
 	}
-	if err == nil && (status < 200 || status >= 300) {
-		err = fmt.Errorf("视频供应商返回 HTTP %d", status)
-	}
 	if err == nil {
-		err = json.Unmarshal(raw, &task)
-	}
-	if err == nil && (task.Code != "" || task.Output.Status == "FAILED" || task.Output.Status == "CANCELED" || task.Output.Status == "UNKNOWN") {
-		err = fmt.Errorf("视频供应商返回错误 %s %s %s", task.Code, task.Output.Status, task.Output.Code)
+		if status < 200 || status >= 300 {
+			err = fmt.Errorf("视频供应商返回 HTTP %d", status)
+			// HTTP 错误也可能带有可识别的供应商错误码。
+			if json.Unmarshal(raw, &task) == nil {
+				err = videoProviderFailure(task, err)
+			}
+		} else if err = json.Unmarshal(raw, &task); err == nil &&
+			(task.Code != "" || task.Output.Status == "FAILED" || task.Output.Status == "CANCELED" || task.Output.Status == "UNKNOWN") {
+			cause := fmt.Errorf("视频供应商返回错误 %s %s %s", task.Code, task.Output.Status, task.Output.Code)
+			err = videoProviderFailure(task, cause)
+		}
 	}
 	if err == nil && operation == "video" && task.Output.ID == "" {
 		err = errors.New("视频供应商未返回任务编号")
@@ -170,6 +177,25 @@ func (w *dramaVideoEngine) videoCall(ctx context.Context, prepared modelgateway.
 		Source: "ai_drama", Operation: operation, RequestBody: body, ResponseBody: raw, ResponseTruncated: truncated, ErrorMessage: message,
 	})
 	return task, errors.Join(err, logErr)
+}
+
+func videoProviderFailure(task dramaVideoOutput, cause error) error {
+	code, detail := task.Output.Code, task.Output.Message
+	if code == "" {
+		code, detail = task.Code, task.Message
+	}
+	if !strings.EqualFold(code, "DataInspectionFailed") && !strings.EqualFold(code, "data_inspection_failed") {
+		return cause
+	}
+	message := "百炼内容审核未通过，请检查当前片段的分镜内容和参考图"
+	detail = strings.ToLower(detail)
+	switch {
+	case strings.Contains(detail, "rejected image (input)"), strings.HasPrefix(detail, "input image"):
+		message = "输入参考图审核未通过（百炼），请检查或更换当前片段的参考图"
+	case strings.HasPrefix(detail, "output data"):
+		message = "生成的视频未通过百炼输出审核，请检查当前片段的分镜内容"
+	}
+	return &drama.SegmentVideoFailure{Message: message, Cause: cause}
 }
 
 func (f *dramaMediaFiles) PutVideo(ctx context.Context, id string, data []byte) error {
