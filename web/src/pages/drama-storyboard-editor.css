@@ -35,15 +35,15 @@
 
 .drama-storyboard-choice-popup .ant-select-dropdown-list-holder { scrollbar-width:thin; scrollbar-color:#b4c0d2 transparent; }
 .drama-storyboard-choice-popup .ant-select-item-option-content { white-space:normal; overflow-wrap:anywhere; }
+.drama-storyboard-script { --drama-storyboard-label-width:96px; --drama-storyboard-line-gap:6px; }
 .drama-storyboard-shot-prefix { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 5px; }
-.drama-storyboard-shot-prefix > strong { min-width:78px; margin:0; }
-.drama-storyboard-line { display:grid; grid-template-columns:78px minmax(0,1fr) auto; gap:6px; align-items:start; line-height:24px; }
+.drama-storyboard-shot-prefix > strong { min-width:var(--drama-storyboard-label-width); margin:0; }
+.drama-storyboard-line { display:grid; grid-template-columns:var(--drama-storyboard-label-width) minmax(0,1fr) auto; gap:var(--drama-storyboard-line-gap); align-items:start; line-height:24px; }
 .drama-storyboard-line-label { color:#637691; font-size:12px; }
 .drama-storyboard-voice { margin-top:4px; }
-.drama-storyboard-voice > .drama-inline-choice { width:78px; min-width:0; }
-.drama-storyboard-voice > .drama-inline-choice .ant-select-selector { padding-inline:0; }
+.drama-storyboard-voice > .drama-inline-choice { width:100%; min-width:0; padding-inline-start:0; border-inline-start-width:0; color:#637691; }
 .drama-storyboard-speaker { color:#4d607a; font-weight:500; }
-.drama-storyboard-voice-entry .drama-storyboard-narration-source { margin-inline-start:84px; }
+.drama-storyboard-voice-entry .drama-storyboard-narration-source { margin-inline-start:calc(var(--drama-storyboard-label-width) + var(--drama-storyboard-line-gap)); }
 .drama-storyboard-draft-bar { position:sticky; top:-20px; z-index:8; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; margin-bottom:12px; border:1px solid #dce6f4; border-radius:6px; background:#f5f8fd; color:#53647e; }
 .drama-storyboard-approval { margin-top:8px; }
 .drama-storyboard-toolbar button[aria-pressed=true] { color:#2857b8; border-color:#a7bce9; background:#edf3ff; }
