@@ -84,10 +84,6 @@
 .drama-storyboard-shot-heading > span {color:#8190a5;}
 .drama-storyboard-shot-heading .ant-select {min-width:95px;}
 .drama-storyboard-shot-picture {white-space:pre-wrap; margin:10px 0;}
-.drama-storyboard-utterance {display:flex; align-items:start; gap:8px; margin:10px 0; padding:8px 10px; background:#f6f8fc; border-radius:5px;}
-.drama-storyboard-utterance > .ant-select {min-width:100px;}
-.drama-storyboard-utterance > input {width:95px; flex:none;}
-.drama-storyboard-utterance .ant-tag,.drama-storyboard-utterance strong {flex:none;}
 .drama-storyboard-sound {color:#8190a5; font-size:12px;}
 .drama-storyboard-source {font-size:12px; color:#8895a9; margin-top:10px;}
 .drama-storyboard-source summary {cursor:pointer;}
@@ -111,7 +107,7 @@
 .drama-storyboard-timeline strong {position:absolute; top:7px; left:8px; font-size:11px; color:#8b98ae;}
 .drama-storyboard-timeline small {font-size:10px; color:#97a3b6;}
 @media(max-width:1200px){.drama-storyboard-editing-layout{grid-template-columns:1fr}.drama-storyboard-preview{position:static; min-height:180px}.drama-storyboard-reference-images{grid-template-columns:repeat(4,1fr)}}
-@media(max-width:700px){.drama-storyboard-segment-fields{grid-template-columns:1fr}.drama-storyboard-utterance{flex-wrap:wrap}.drama-storyboard-editing-layout{display:block}}
+@media(max-width:700px){.drama-storyboard-segment-fields{grid-template-columns:1fr}.drama-storyboard-editing-layout{display:block}}
 
 .drama-storyboard-segment-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .drama-storyboard-segment-heading h3 { margin:0; }
@@ -139,13 +135,7 @@
 .reading .drama-storyboard-shot { padding:0; margin:0; border:0; border-radius:0; background:none; }
 .reading .drama-storyboard-shot + .drama-storyboard-shot { margin-top:18px; }
 .reading .drama-storyboard-shot-picture { margin:0; line-height:2; }
-.drama-storyboard-shot-prefix { display:inline; margin-right:10px; color:#647591; font-size:12px; }
-.drama-storyboard-shot-prefix > strong { margin-right:8px; color:#334863; font-weight:600; }
 .drama-storyboard-shot-time { display:inline-flex; align-items:center; gap:5px; margin-right:8px; padding:0 6px; border:1px solid #dce3ed; border-radius:4px; background:#fff; color:#4d607a; font-variant-numeric:tabular-nums; line-height:20px; white-space:nowrap; }
-.reading .drama-storyboard-utterance { gap:6px; margin:6px 0 0; padding:0; background:none; border-radius:0; line-height:1.9; }
-.reading .drama-storyboard-utterance .ant-tag { border:0; background:none; color:#7c8ba2; padding:0; font-size:12px; }
-.reading .drama-storyboard-utterance strong { color:#4d607a; font-weight:500; }
-.reading .drama-storyboard-utterance strong::after { content:'：'; }
 .reading .drama-storyboard-sound { margin:5px 0 0; line-height:1.8; color:#7c8ba2; }
 .reading .drama-storyboard-narration-source { margin:5px 0 0; }
 .drama-storyboard-details { margin-top:14px; color:#7c8ba2; font-size:12px; }

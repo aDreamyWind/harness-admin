@@ -28,9 +28,22 @@
 .drama-mention-options > .ant-empty { grid-column:1/-1; margin:20px 0; }
 .drama-storyboard-shot-time .ant-input-number { width:47px; background:none; font-size:12px; box-shadow:none; }
 .drama-storyboard-shot-time .ant-input-number-input { padding:0; text-align:center; height:20px; }
-.drama-inline-choice { margin-right:4px; min-width:70px; font-size:12px; }
+.drama-inline-choice { min-width:92px; max-width:164px; font-size:12px; }
 .drama-inline-choice .ant-select-selection-item { color:#647591; font-size:12px; }
 .drama-storyboard-inline-hint { color:#92a0b4; font-size:11px; margin:10px 0 0; }
 @media(max-width:700px){ .drama-mention-scope { gap:14px; } .drama-mention-scope > span { display:none; } .drama-inline-asset { white-space:normal; } }
 
-.drama-storyboard-toolbar.has-draft { position:sticky; top:-20px; z-index:8; background:#fff; padding:12px 0; border-bottom:1px solid #e2e8f2; }
+.drama-storyboard-choice-popup .ant-select-dropdown-list-holder { scrollbar-width:thin; scrollbar-color:#b4c0d2 transparent; }
+.drama-storyboard-choice-popup .ant-select-item-option-content { white-space:normal; overflow-wrap:anywhere; }
+.drama-storyboard-shot-prefix { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 5px; }
+.drama-storyboard-shot-prefix > strong { min-width:78px; margin:0; }
+.drama-storyboard-line { display:grid; grid-template-columns:78px minmax(0,1fr) auto; gap:6px; align-items:start; line-height:24px; }
+.drama-storyboard-line-label { color:#637691; font-size:12px; }
+.drama-storyboard-voice { margin-top:4px; }
+.drama-storyboard-voice > .drama-inline-choice { width:78px; min-width:0; }
+.drama-storyboard-voice > .drama-inline-choice .ant-select-selector { padding-inline:0; }
+.drama-storyboard-speaker { color:#4d607a; font-weight:500; }
+.drama-storyboard-voice-entry .drama-storyboard-narration-source { margin-inline-start:84px; }
+.drama-storyboard-draft-bar { position:sticky; top:-20px; z-index:8; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; margin-bottom:12px; border:1px solid #dce6f4; border-radius:6px; background:#f5f8fd; color:#53647e; }
+.drama-storyboard-approval { margin-top:8px; }
+.drama-storyboard-toolbar button[aria-pressed=true] { color:#2857b8; border-color:#a7bce9; background:#edf3ff; }
