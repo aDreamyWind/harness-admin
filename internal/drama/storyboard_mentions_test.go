@@ -76,3 +76,28 @@ func TestPacingDoesNotReuseOffsetsAfterRewritingPicture(t *testing.T) {
 		t.Fatal("模型重写文字不能沿用旧位置或自报错误位置", err)
 	}
 }
+
+func TestStoryboardDescriptionAssetsUseModelEvidenceWithoutRenaming(t *testing.T) {
+	const description = "😀小院墙根下，老房喊儿子，远处有灯，近处也有灯。"
+	segment := StoryboardSegment{
+		FormIDs: []string{"person"},
+		Shots:   []StoryboardShot{{Description: description, DescriptionMentions: []StoryboardMention{{Start: 7, End: 9, FormID: "person"}}}},
+	}
+	forms := []AssetForm{{ID: "person", AssetName: "老房"}, {ID: "scene", AssetName: "小院子"}, {ID: "other", AssetName: "老房子"}}
+	applyStoryboardDescriptionAssets(&segment, []storyboardDescriptionAsset{
+		{Shot: 1, Quote: "小院", FormID: "scene"},
+		{Shot: 1, Quote: "老房", FormID: "other"},
+		{Shot: 1, Quote: "儿子", FormID: "unavailable"},
+		{Shot: 1, Quote: "灯", FormID: "other"},
+		{Shot: 1, Quote: "没出现", FormID: "other"},
+		{Shot: 2, Quote: "小院", FormID: "other"},
+	}, forms)
+	shot := segment.Shots[0]
+	refs := shot.DescriptionMentions
+	if shot.Description != description || len(refs) != 2 || refs[0] != (StoryboardMention{Start: 1, End: 3, FormID: "scene"}) || refs[1].FormID != "person" {
+		t.Fatalf("应保留原文及已有引用，仅定位模型提供的有效引用：%+v", shot)
+	}
+	if len(segment.FormIDs) != 2 || segment.FormIDs[1] != "scene" {
+		t.Fatalf("应关联有效的真实形象：%v", segment.FormIDs)
+	}
+}

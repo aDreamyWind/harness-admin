@@ -286,9 +286,10 @@ func optimizeStoryboardPacing(center *repairCenter, before StoryboardSegment, is
 			lastErr = e
 			continue
 		}
+		catalog, _ := json.Marshal(forms)
 		raw, e = call(phase+"·节奏复核", `你是分镜审阅师。复核节奏优化后的实际镜头，只依据剧本、原稿与前段状态。检查是否保留关键剧情、可见动作、台词、完整因果与空间承接，是否真正消除了指派的重复铺垫/无信息停留。不能因为无对白就否定关键动作、悬念或情绪停顿；不把30秒或8～15秒当通用硬上限。任何新增事实、改写角色对白或关键心声均不可通过。解释性旁白可精简或转为画面：sourceText为程序保存的真实原句，text为实际口播，delivery=visual则不发声。必须逐项检查原句的关键身份、时间条件、因果和情绪线索是否仍在声音或画面中，不能凭空声称已保留。
 返回JSON：{"blocking":[],"suggestions":[],"pacing":[],"pacingChecks":[{"id":"P1","resolved":true,"reason":"实际镜头如何合并/缩短、关键动作如何保留"}]}。逐项回答全部指派ID，尚未真正解决则resolved=false，不能只写已采纳。内容问题放blocking，审美偏好只放suggestions。pacing只有仍需执行的重复铺垫或无信息停留问题，结构沿用kind/action/shots/reason/fix。
-指派：`+string(issueJSON)+"\n前段状态："+previous+"\n剧本："+source+"\n优化前："+encodedStoryboard(before)+"\n优化后实际稿："+encodedStoryboard(candidate))
+指派：`+string(issueJSON)+"\n前段状态："+previous+"\n剧本："+source+"\n优化前："+encodedStoryboard(before)+"\n优化后实际稿："+encodedStoryboard(candidate)+storyboardDescriptionAssetContract+"\n本集真实形象目录："+string(catalog))
 		if e != nil {
 			lastErr = e
 			continue
@@ -301,6 +302,7 @@ func optimizeStoryboardPacing(center *repairCenter, before StoryboardSegment, is
 			lastErr = e
 			continue
 		}
+		applyStoryboardDescriptionAssets(&candidate, report.DescriptionAssets, forms)
 		candidate.Notes = readableReviewSuggestions(report.Suggestions)
 		// 实际镜头与采纳结果原子提交，崩溃/保存失败不会留下“已采纳但未修改”的记录。
 		count, seconds := len(candidate.Shots), storyboardSeconds(candidate)

@@ -300,7 +300,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				if invalidReview != "" {
 					reviewPhase += "格式修正"
 				}
-				review, e := call(reviewPhase, `你是分镜审阅师。只依据给定剧本与前段状态检查：关键剧情或台词是否被改变、遗漏，动作和空间状态是否明显矛盾，台词是否能念完。合理构图/表演不要求逐字来自剧本。审美偏好只作为建议，不凭空制造阻断。8～15秒是软目标，不因延长就报错；尚未接入视频模型，不捏造模型能力限制。返回JSON {"blocking":[{"shot":1,"field":"字段名","message":"具体问题","evidence":"剧本依据","fix":"最小修正建议"}],"suggestions":[]}。另返回pacing数组，专门列需要执行的节奏优化：[{"kind":"repeated_exposition或idle_hold","action":"merge或shorten","shots":[1,2],"reason":"具体哪些动作/信息重复或无信息停留过长","fix":"保留哪些关键动作并如何合并/缩短"}]。同一信息反复交代、普通上工/回忆铺垫过长应列pacing，而非仅在suggestions中建议。不得因没有台词或总时长大就直接要求压缩；重要动作、悬念、情绪变化可保留必要停顿。合并只引用当前片段内连续镜头。用户允许压缩冗余解释性旁白或改用画面表达。请主动检查旁白文字是否重复解释同一事实：即使当前秒数恰好够念完，仍应将可安全精简的重复旁白列入pacing，kind=repeated_exposition、action=shorten、shots列具体镜头，不能把口播下界当作禁止精简旁白的理由。关键身份、条件、因果及情绪线索必须保留。旁白精简/转画面时sourceText保留原句，delivery=visual表示只在画面表达、不计入口播；角色对白与心声不得改写。节奏判断应结合逐镜口播下界，不能要求压缩角色台词或把台词已占满的镜头当成无信息停留。审美偏好仍放suggestions。无问题时blocking、suggestions、pacing均为空数组，禁止返回null。\n前段状态：`+previous+"\n剧本："+numbered(seg.StartLine, seg.EndLine)+"\n实际节奏统计："+storyboardPacingStats(seg)+"\n逐镜口播下界："+storyboardSpeechBounds(seg)+"\n当前草稿："+string(draft)+"\n本次审阅格式修正要求："+reviewFeedback+"\n上次未能读取的审阅（只修正审阅格式，禁止因此重写镜头）："+invalidReview)
+				review, e := call(reviewPhase, `你是分镜审阅师。只依据给定剧本与前段状态检查：关键剧情或台词是否被改变、遗漏，动作和空间状态是否明显矛盾，台词是否能念完。合理构图/表演不要求逐字来自剧本。审美偏好只作为建议，不凭空制造阻断。8～15秒是软目标，不因延长就报错；尚未接入视频模型，不捏造模型能力限制。返回JSON {"blocking":[{"shot":1,"field":"字段名","message":"具体问题","evidence":"剧本依据","fix":"最小修正建议"}],"suggestions":[]}。另返回pacing数组，专门列需要执行的节奏优化：[{"kind":"repeated_exposition或idle_hold","action":"merge或shorten","shots":[1,2],"reason":"具体哪些动作/信息重复或无信息停留过长","fix":"保留哪些关键动作并如何合并/缩短"}]。同一信息反复交代、普通上工/回忆铺垫过长应列pacing，而非仅在suggestions中建议。不得因没有台词或总时长大就直接要求压缩；重要动作、悬念、情绪变化可保留必要停顿。合并只引用当前片段内连续镜头。用户允许压缩冗余解释性旁白或改用画面表达。请主动检查旁白文字是否重复解释同一事实：即使当前秒数恰好够念完，仍应将可安全精简的重复旁白列入pacing，kind=repeated_exposition、action=shorten、shots列具体镜头，不能把口播下界当作禁止精简旁白的理由。关键身份、条件、因果及情绪线索必须保留。旁白精简/转画面时sourceText保留原句，delivery=visual表示只在画面表达、不计入口播；角色对白与心声不得改写。节奏判断应结合逐镜口播下界，不能要求压缩角色台词或把台词已占满的镜头当成无信息停留。审美偏好仍放suggestions。无问题时blocking、suggestions、pacing均为空数组，禁止返回null。\n前段状态：`+previous+"\n剧本："+numbered(seg.StartLine, seg.EndLine)+"\n实际节奏统计："+storyboardPacingStats(seg)+"\n逐镜口播下界："+storyboardSpeechBounds(seg)+"\n当前草稿："+string(draft)+"\n本次审阅格式修正要求："+reviewFeedback+"\n上次未能读取的审阅（只修正审阅格式，禁止因此重写镜头）："+invalidReview+storyboardDescriptionAssetContract+"\n本集真实形象目录："+string(forms))
 				if e != nil {
 					return e
 				}
@@ -318,6 +318,7 @@ func (s *Service) GenerateStoryboard(job StoryboardJob) (result error) {
 				if problem == nil {
 					seg.Notes = strings.TrimSpace(seg.Notes + "\n" + readableReviewSuggestions(report.Suggestions))
 					pacing = report.Pacing
+					applyStoryboardDescriptionAssets(&seg, report.DescriptionAssets, page.Forms)
 				}
 			}
 			if err = settle(problem); err != nil {

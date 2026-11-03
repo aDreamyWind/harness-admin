@@ -3,7 +3,7 @@ import { Empty, Input } from 'antd'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { DramaAssetForm, DramaAssetKind } from '../api/drama'
-import { formLabel, storyboardSceneAlias, type StoryboardTextDocument } from './storyboardMentions'
+import { formLabel, type StoryboardTextDocument } from './storyboardMentions'
 import './drama-storyboard-editor.css'
 
 const length = (text: string) => Array.from(text).length
@@ -82,7 +82,7 @@ function fragment(value: StoryboardTextDocument, forms: DramaAssetForm[]) {
     chip.title = form ? `${form.assetName} · ${form.name}` : '历史资产形象'
     if (form?.imageUrl) { const image = document.createElement('img'); image.src = form.imageUrl; image.alt = ''; image.draggable = false; chip.append(image) }
     const original = chip.dataset.dramaLabel
-    chip.append(document.createTextNode(form && original !== storyboardSceneAlias(form) ? formLabel(form) : original))
+    chip.append(document.createTextNode(form && original === form.assetName ? formLabel(form) : original))
     result.append(chip); at = ref.end
   }
   appendText(chars.slice(at).join(''))
