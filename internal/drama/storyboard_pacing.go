@@ -53,6 +53,97 @@ func storyboardPacingStats(s StoryboardSegment) string {
 	}
 	return fmt.Sprintf("实际规划：%d镜头，合计%.1f秒，无口播镜头%.1f秒，首次口播前%.1f秒。无口播不等于无剧情，须结合动作和叙事职责判断。", len(s.Shots), storyboardSeconds(s), silent, lead)
 }
+
+// 把跨片段的无口播时长交给审阅，是否拖沓仍由实际动作和叙事变化决定。
+func storyboardOpeningGap(previous []StoryboardSegment, current StoryboardSegment) string {
+	lead := 0.0
+	for _, shot := range current.Shots {
+		if storyboardHasSpeech(shot) {
+			break
+		}
+		lead += shot.Duration
+	}
+	if lead == 0 {
+		return ""
+	}
+	tail := 0.0
+	for i := len(previous) - 1; i >= 0; i-- {
+		seg := previous[i]
+		if seg.Status != "ready" || len(seg.Shots) == 0 {
+			break
+		}
+		for j := len(seg.Shots) - 1; j >= 0; j-- {
+			shot := seg.Shots[j]
+			if storyboardHasSpeech(shot) {
+				return fmt.Sprintf("跨片段连续无口播%.1f秒，其中前段累计%.1f秒，本段开头%.1f秒。", tail+lead, tail, lead)
+			}
+			tail += shot.Duration
+		}
+	}
+	return fmt.Sprintf("跨片段连续无口播%.1f秒，其中前段累计%.1f秒，本段开头%.1f秒。", tail+lead, tail, lead)
+}
+
+// 手动优化时补查审阅漏掉的长停留和旁白，交给局部改写及事实复核。
+func supplementManualPacingIssues(issues []pacingIssue, segment StoryboardSegment, lines []string, forms []AssetForm) []pacingIssue {
+	// 先检查整组停留，避免几个各自不长的镜头叠成一段重复铺垫。
+	start, quiet := 0, 0.0
+	for index, shot := range segment.Shots {
+		if !storyboardHasSpeech(shot) {
+			quiet += shot.Duration
+			if index+1 < len(segment.Shots) {
+				continue
+			}
+		}
+		if len(issues) < 4 && index > start && quiet >= 7 {
+			shots := make([]int, 0, index-start+1)
+			for n := start; n <= index; n++ {
+				shots = append(shots, n+1)
+			}
+			issues = append(issues, pacingIssue{
+				ID: fmt.Sprintf("P%d", len(issues)+1), Kind: "idle_hold", Action: "merge", Shots: shots,
+				Reason: fmt.Sprintf("相邻镜头累计铺垫 %.1f 秒无口播，需整体检查是否重复呈现同一动作或情绪", quiet),
+				Fix:    "如为同一动作或反应，合成一到两个镜头。心声可在抬眼、回望或反应时响起，保留原台词、必要动作和新信息。按并行发生的画面和口播估时，删掉重复停顿。若每镜都有不可替代的叙事推进，保留其所需时长。",
+			})
+		}
+		start, quiet = index+1, 0
+	}
+
+	for index, shot := range segment.Shots {
+		if len(issues) >= 4 {
+			break
+		}
+		number := index + 1
+		covered := false
+		for _, issue := range issues {
+			for _, assigned := range issue.Shots {
+				covered = covered || assigned == number
+			}
+		}
+		if covered {
+			continue
+		}
+		issue := pacingIssue{ID: fmt.Sprintf("P%d", len(issues)+1), Action: "shorten", Shots: []int{number}}
+		for _, voice := range shot.Utterances {
+			if voice.Delivery != "visual" && narrationSpeaker(voice) && voice.SourceLine > 0 &&
+				voice.SourceLine <= len(lines) && narrationSource(lines[voice.SourceLine-1], forms) {
+				issue.Kind = "repeated_exposition"
+				issue.Reason = "仍有叙述者口播"
+				issue.Fix = "优先用一个可见动作或道具交代原句信息，改为画面后按实际动作缩短停留。"
+				break
+			}
+		}
+		if issue.Kind == "" && shot.Duration > 5 && storyboardSpeechSeconds(shot) <= 3 {
+			issue.Kind = "idle_hold"
+			issue.Reason = fmt.Sprintf("镜头 %.1f 秒，口播占用约 %.1f 秒", shot.Duration, storyboardSpeechSeconds(shot))
+			issue.Fix = "检查是否有必须演完的动作。普通交代目标 1～3 秒，保留关键动作和完整角色台词。"
+		}
+		if issue.Kind != "" {
+			issues = append(issues, issue)
+		}
+	}
+	return issues
+}
+
 func validatePacingIssues(issues []pacingIssue, s StoryboardSegment) error {
 	if len(issues) > 4 {
 		return errors.New("单次节奏审阅最多列4项需执行的改动")
@@ -269,7 +360,7 @@ func optimizeStoryboardPacing(center *repairCenter, before StoryboardSegment, is
 		if lastErr != nil {
 			feedback = "\n上次未采纳的原因：" + lastErr.Error() + "。按原稿重新给出最小局部改动，不要重复相同错误。"
 		}
-		raw, e := call(phase+"·节奏优化", `你是快节奏漫剧的分镜优化师。只按中心指派合并重复铺垫或缩短无新信息停留，保留关键动作、剧情、角色完整对白、关键心声、声音类型、说话者和每条台词来源行；不把所有无对白镜头都视为拖沓，不牺牲悬念、情绪或必要动作时长。不要新增事实或口播；角色对白与心声逐字保留。允许压缩重复解释性旁白或转为画面，但必须保留关键事实，不能把核心信息当冗余删掉，不跨场次或更改人物起止状态。30秒等建议只是具体目标，不是通用硬上限。
+		raw, e := call(phase+"·节奏优化", `你是快节奏漫剧的分镜优化师。只按中心指派合并重复铺垫或缩短无新信息停留，保留关键动作、剧情、角色完整对白、关键心声、声音类型、说话者和每条台词来源行；不把所有无对白镜头都视为拖沓，不牺牲悬念、情绪或必要动作时长。不要新增事实或口播；角色对白与心声逐字保留。解释性旁白默认转为画面，尤其是画面已经能交代的内容；只有画面确实无法交代的关键事实才保留最短口播。普通交代镜头以1～3秒为目标，遇到七八秒的简单特写要按实际动作重新估时。同一人物的观察、反应和紧接的心声按一个叙事节拍处理；能与心声同时呈现的表情和动作，不在心声前再留一轮停顿。必须保留关键事实，不能把核心信息当冗余删掉，不跨场次或更改人物起止状态。30秒等建议只是具体目标，不是通用硬上限。
 只返回局部替换JSON：{"edits":[{"startShot":1,"endShot":3,"shots":[{"description":"合并后完整动作","shotSize":"中景","camera":"跟拍","sound":"环境音","duration":4,"sourceLines":[1,2],"utterances":[]}]}]}。startShot/endShot是原稿内从1开始的包含端点镜头编号，范围必须属于指派镜头、不重叠。每处替换都应实际减少停留时间且不增加镜头数；合并必须保留范围内全部剧本行与按原顺序保留的utterances。不能直接删除任何声音条目：冗余旁白可改写为更短text，或保留同一kind/speaker/sourceLine并设置delivery=visual、text为空，将内容明确呈现在description；原句sourceText由程序自动填写。角色对白、关键心声及角色画外音必须逐字原样保留。未修改的镜头不要输出。时长仍须足够演完动作和念完台词。
 中心指派：`+string(issueJSON)+"\n原稿："+encodedStoryboard(before)+"\n原稿统计："+storyboardPacingStats(before)+"\n逐镜口播下界："+storyboardSpeechBounds(before)+"\n声音契约："+storyboardVoiceContract+"\n本片段剧本："+source+feedback)
 		if e != nil {

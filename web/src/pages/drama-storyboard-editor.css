@@ -3,12 +3,12 @@
 .drama-inline-editor.editable:hover { background:#eaf0f8; }
 .drama-inline-editor.editable:focus { outline:1px solid #a7bce9; background:#fff; }
 .drama-inline-editor.editable[data-empty=true]::before { content:attr(data-placeholder); color:#a1adbf; pointer-events:none; }
-.drama-inline-asset { display:inline-flex; vertical-align:baseline; align-items:center; gap:4px; max-width:100%; margin:0 3px; padding:0 5px; border:1px solid #d7cdf4; border-radius:4px; background:#f2eefc; color:#7352bb; font-size:12px; line-height:21px; white-space:nowrap; user-select:all; }
+.drama-inline-asset { display:inline-flex; vertical-align:middle; align-items:center; box-sizing:border-box; height:22px; gap:4px; max-width:100%; margin:0 3px; padding:0 5px; border:1px solid #d7cdf4; border-radius:4px; background:#f2eefc; color:#7352bb; font-size:12px; line-height:1; white-space:nowrap; user-select:all; }
 .drama-inline-editor.editable .drama-inline-asset { cursor:pointer; }
 .drama-inline-editor.editable .drama-inline-asset:hover { filter:brightness(.96); }
 .drama-inline-asset.scene { border-color:#b6e0dc; background:#eaf8f5; color:#268e86; }
 .drama-inline-asset.prop { border-color:#d1dbef; background:#edf3fb; color:#4e70aa; }
-.drama-inline-asset img { width:18px; height:18px; border-radius:3px; object-fit:cover; }
+.drama-inline-asset img { display:block; flex:none; width:18px; height:18px; border-radius:3px; object-fit:cover; }
 .drama-mention-picker { position:fixed; z-index:1600; width:min(480px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow-y:auto; padding:14px; border:1px solid #e5eaf3; border-radius:10px; background:#fff; box-shadow:0 8px 28px #1d32531a; color:#34415a; font-size:12px; }
 .drama-mention-picker button { border:0; background:none; color:inherit; cursor:pointer; font:inherit; }
 .drama-mention-picker button:focus-visible { outline:2px solid #587dd5; outline-offset:2px; }
@@ -33,7 +33,7 @@
 .drama-inline-choice { min-width:92px; max-width:164px; font-size:12px; }
 .drama-inline-choice .ant-select-selection-item { color:#647591; font-size:12px; }
 .drama-storyboard-inline-hint { color:#92a0b4; font-size:11px; margin:10px 0 0; }
-@media(max-width:700px){ .drama-mention-scope { gap:14px; } .drama-mention-scope > span { display:none; } .drama-inline-asset { white-space:normal; } }
+@media(max-width:700px){ .drama-mention-scope { gap:14px; } .drama-mention-scope > span { display:none; } }
 
 .drama-storyboard-choice-popup .ant-select-dropdown-list-holder { scrollbar-width:thin; scrollbar-color:#b4c0d2 transparent; }
 .drama-storyboard-choice-popup .ant-select-item-option-content { white-space:normal; overflow-wrap:anywhere; }

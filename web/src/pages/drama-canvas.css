@@ -52,3 +52,31 @@
 .drama-canvas-shell .react-flow__minimap {bottom:20px; right:20px; border:1px solid #e4e8f1; border-radius:12px; overflow:hidden;}
 @media(max-width:1050px) {.drama-canvas-generation {width:calc(100% - 90px); left:55%; max-width:800px;}.drama-canvas-shell .react-flow__minimap {display:none;}.drama-canvas-header {padding-inline:10px; gap:8px;}.drama-canvas-header>div {gap:6px;}.drama-canvas-header strong {max-width:140px;}}
 @media(max-width:650px) {.drama-canvas-generation {left:50%; width:calc(100% - 30px); bottom:70px; padding:10px;}.drama-canvas-generation-toolbar {flex-wrap:wrap;}.drama-canvas-generation-toolbar>span {display:none;}.drama-canvas-header>div:first-child>span {display:none;}.drama-canvas-header>div:last-child>.ant-btn {display:none;}.drama-canvas-header .ant-select {min-width:140px!important;}.drama-canvas-header strong {max-width:90px;}}
+
+/* 图钉与细线保留在素材边缘，悬停和选择时才强调操作。 */
+.drama-canvas-shell .react-flow__edge-path { stroke:#8798b4; stroke-width:1.6; }
+.drama-canvas-shell .drama-canvas-lineage .react-flow__edge-path { stroke:#a396bf; stroke-dasharray:5 4; }
+.drama-canvas-shell .react-flow__edge:not(.drama-canvas-lineage):hover .react-flow__edge-path,
+.drama-canvas-shell .react-flow__edge.selected .react-flow__edge-path,
+.drama-canvas-shell .react-flow__connection-path { stroke:#7255cd; stroke-width:2.2; }
+.drama-canvas-node .react-flow__handle { width:13px; height:13px; border:2px solid #fff; background:#8798b4; box-shadow:0 0 0 1px #ccd4e1; z-index:2; }
+.drama-canvas-node .react-flow__handle:hover,
+.drama-canvas-node .react-flow__handle.valid { background:#7255cd; box-shadow:0 0 0 3px #7255cd32; }
+.drama-canvas-derive { top:8px; right:-15px; width:28px; height:28px; opacity:0; }
+.drama-canvas-node:hover .drama-canvas-derive,
+.drama-canvas-node.selected .drama-canvas-derive,
+.drama-canvas-derive:focus-visible,
+.drama-canvas-preview:focus-visible { opacity:1; }
+.drama-canvas-node.video video { display:block; width:calc(100% - 12px); margin:6px; border-radius:9px; aspect-ratio:16 / 9; background:#1b2332; }
+.drama-canvas-node.video .drama-canvas-node-caption .anticon { color:#a66328; }
+.drama-canvas-selection-tools { position:absolute; top:76px; right:22px; z-index:8; }
+@media(max-width:650px) {
+  .drama-canvas-header>div:last-child>.ant-btn:has(.anticon-plus) { display:inline-flex; }
+  .drama-canvas-header>div:last-child>.ant-select { display:none; }
+}
+
+.drama-canvas-menu-layer { position:fixed; inset:0; z-index:24; }
+.drama-canvas-menu { position:fixed; width:172px; display:grid; padding:5px; border:1px solid #e4e8f1; border-radius:8px; background:#fff; box-shadow:0 8px 24px #27355020; }
+.drama-canvas-menu .ant-btn { justify-content:flex-start; }
+.drama-canvas-text { max-height:200px; overflow:auto; padding:14px; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; }
+.drama-canvas-node.media audio { display:block; width:calc(100% - 12px); margin:6px; }

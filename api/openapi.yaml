@@ -568,12 +568,12 @@ paths:
       - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
       - { name: segmentId, in: path, required: true, schema: { type: string, format: uuid } }
     get:
-      summary: 查询当前分镜片段的视频生成记录
+      summary: 查询同一片段各版本的视频生成记录
       security:
         - sessionCookie: []
       responses:
         '200':
-          description: 最近的视频任务，按创建时间倒序
+          description: 同一片段各版本的视频任务，按创建时间倒序
           content:
             application/json:
               schema:
@@ -3975,6 +3975,18 @@ components:
       type: object
       required: [id, number, title, scene, purpose, startLine, endLine, startState, endState, status, notes, formIds, bindings, shots]
       properties:
+        lineageId: { type: string, format: uuid, readOnly: true, description: 跨快照稳定的片段标识 }
+        version: { type: integer, minimum: 1, readOnly: true, description: 片段自身的版本号 }
+        versions:
+          type: array
+          readOnly: true
+          items:
+            type: object
+            required: [version, runId, segmentId]
+            properties:
+              version: { type: integer, minimum: 1 }
+              runId: { type: string, format: uuid }
+              segmentId: { type: string, format: uuid }
         videoReferences:
           type: array
           readOnly: true
@@ -4012,10 +4024,11 @@ components:
         shots: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/DramaStoryboardShot' } }
     DramaSegmentVideo:
       type: object
-      required: [id, segmentId, revision, modelCode, duration, imageIds, status, createdAt]
+      required: [id, segmentId, segmentVersion, revision, modelCode, duration, imageIds, status, createdAt]
       properties:
         id: { type: string, format: uuid }
         segmentId: { type: string, format: uuid }
+        segmentVersion: { type: integer, minimum: 1, description: 视频生成时对应的片段版本 }
         revision: { type: integer }
         modelCode: { type: string }
         duration: { type: integer }

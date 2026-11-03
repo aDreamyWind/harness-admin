@@ -242,6 +242,18 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 		t.Fatal("编辑没有创建新版本", err)
 	}
 
+	if edited.Segments[0].Version != 2 || edited.Segments[0].LineageID != run.Segments[0].LineageID || len(edited.Segments[0].Versions) != 2 {
+		t.Fatalf("片段独立版本或历史异常：%+v", edited.Segments[0].Versions)
+	}
+	videoScope := drama.SegmentVideoScope{OrganizationID: org, UserID: user, ProjectID: project, EpisodeID: episode, RunID: edited.ID, SegmentID: edited.Segments[0].ID}
+	history, err := repo.ListSegmentVideos(ctx, videoScope)
+	if err != nil || len(history) != 1 || history[0].SegmentVersion != 1 || history[0].Status != "succeeded" {
+		t.Fatalf("新片段版本未显示历史成片：%+v %v", history, err)
+	}
+	if _, err = repo.ReadSegmentVideo(ctx, videoScope, history[0].ID); err != nil {
+		t.Fatal("新版本不能读取历史成片", err)
+	}
+
 	if len(edited.Segments[0].SceneMentions) != 1 || edited.Segments[0].SceneMentions[0].FormID != form || len(edited.Segments[0].Shots[0].DescriptionMentions) != 1 || edited.Segments[0].Shots[0].DescriptionMentions[0].Start != 1 || len(edited.Segments[1].Shots[0].Utterances[0].SpeakerMentions) != 1 {
 		t.Fatal("文字位置和真实形象引用未随新版本保存")
 	}
@@ -433,5 +445,19 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	}
 	if _, err = repo.QueueStoryboard(ctx, org, user, failed, true); !errors.Is(err, drama.ErrStoryboardConflict) {
 		t.Fatal("来源变化仍能续跑", err)
+	}
+}
+
+func TestStoryboardSegmentVersionIgnoresSnapshotIdentity(t *testing.T) {
+	first := drama.StoryboardSegment{ID: "old", Number: 1, Version: 1, Shots: []drama.StoryboardShot{{ID: "old-shot", Number: 1, Duration: 4}}}
+	second := first
+	second.ID, second.Number = "new", 2
+	second.Shots = []drama.StoryboardShot{{ID: "new-shot", Number: 1, Duration: 4}}
+	if !sameStoryboardSegmentContent(first, second) {
+		t.Fatal("快照主键和片段位置变化不应增加片段版本")
+	}
+	second.Shots[0].Duration = 5
+	if sameStoryboardSegmentContent(first, second) {
+		t.Fatal("修改镜头时长应增加片段版本")
 	}
 }

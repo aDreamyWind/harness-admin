@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"reflect"
 	"strings"
@@ -229,5 +230,16 @@ func TestPacingResumeClosesUncommittedOptimizationTicket(t *testing.T) {
 	}
 	if repairs.tickets[0].Status != "declined" || !strings.Contains(repairs.tickets[0].Outcome, "未提交改动") || *repairs.tickets[0].AfterDuration != 22 {
 		t.Fatal("中断派单不能永远停留在优化中")
+	}
+}
+
+func TestManualPacingGroupsShortSilentShotsBeforeThought(t *testing.T) {
+	segment := StoryboardSegment{Shots: []StoryboardShot{
+		{Duration: 4}, {Duration: 3},
+		{Duration: 5, Utterances: []StoryboardUtterance{{Kind: "os", Text: "我还能回去吗？"}}},
+	}}
+	issues := supplementManualPacingIssues(nil, segment, nil, nil)
+	if len(issues) != 1 || issues[0].Action != "merge" || fmt.Sprint(issues[0].Shots) != "[1 2 3]" {
+		t.Fatalf("应当把连续铺垫和紧接的心声一起派工，实际为 %+v", issues)
 	}
 }

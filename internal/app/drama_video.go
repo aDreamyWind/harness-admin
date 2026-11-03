@@ -71,8 +71,17 @@ func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.Se
 		return nil, &drama.SegmentVideoFailure{Message: "请在漫剧设置中选择万相 2.7 参考生视频（wan2.7-r2v）或万相 3.0", Cause: drama.ErrModelUnavailable}
 	}
 	if older {
-		if in.Duration > 15 || len(media) < 1 || len(media) > 5 || utf8.RuneCountInString(in.Prompt) > 5000 {
-			return nil, &drama.SegmentVideoFailure{Message: "万相 2.7 参考生视频要求 2–15 秒、1–5 张参考图、提示词最多 5000 字，请调整片段或切换模型", Cause: drama.ErrInvalidInput}
+		var detail string
+		switch {
+		case in.Duration < 2 || in.Duration > 15:
+			detail = fmt.Sprintf("当前片段 %d 秒，万相 2.7 支持 2–15 秒，请缩短或拆成多个片段", in.Duration)
+		case len(media) < 1 || len(media) > 5:
+			detail = fmt.Sprintf("当前片段有 %d 张参考图，万相 2.7 需要 1–5 张，请调整引用", len(media))
+		case utf8.RuneCountInString(in.Prompt) > 5000:
+			detail = fmt.Sprintf("当前视频提示词 %d 字，万相 2.7 最多支持 5000 字，请精简分镜描述", utf8.RuneCountInString(in.Prompt))
+		}
+		if detail != "" {
+			return nil, &drama.SegmentVideoFailure{Message: detail, Cause: drama.ErrInvalidInput}
 		}
 		delete(payload["parameters"].(map[string]any), "audio")
 	}

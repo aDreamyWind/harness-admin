@@ -48,24 +48,33 @@ type StoryboardMention struct {
 	End    int    `json:"end"`
 	FormID string `json:"formId"`
 }
+type StoryboardSegmentVersion struct {
+	Version   int    `json:"version"`
+	RunID     string `json:"runId"`
+	SegmentID string `json:"segmentId"`
+}
+
 type StoryboardSegment struct {
-	VideoReferences []SegmentVideoReference `json:"videoReferences,omitempty"`
-	SceneMentions   []StoryboardMention     `json:"sceneMentions,omitempty"`
-	PurposeMentions []StoryboardMention     `json:"purposeMentions,omitempty"`
-	ID              string                  `json:"id"`
-	Number          int                     `json:"number"`
-	Title           string                  `json:"title"`
-	Scene           string                  `json:"scene"`
-	Purpose         string                  `json:"purpose"`
-	StartLine       int                     `json:"startLine"`
-	EndLine         int                     `json:"endLine"`
-	StartState      string                  `json:"startState"`
-	EndState        string                  `json:"endState"`
-	Status          string                  `json:"status"`
-	Notes           string                  `json:"notes"`
-	FormIDs         []string                `json:"formIds"`
-	Bindings        []StoryboardBinding     `json:"bindings"`
-	Shots           []StoryboardShot        `json:"shots"`
+	LineageID       string                     `json:"lineageId"`
+	Version         int                        `json:"version"`
+	Versions        []StoryboardSegmentVersion `json:"versions,omitempty"`
+	VideoReferences []SegmentVideoReference    `json:"videoReferences,omitempty"`
+	SceneMentions   []StoryboardMention        `json:"sceneMentions,omitempty"`
+	PurposeMentions []StoryboardMention        `json:"purposeMentions,omitempty"`
+	ID              string                     `json:"id"`
+	Number          int                        `json:"number"`
+	Title           string                     `json:"title"`
+	Scene           string                     `json:"scene"`
+	Purpose         string                     `json:"purpose"`
+	StartLine       int                        `json:"startLine"`
+	EndLine         int                        `json:"endLine"`
+	StartState      string                     `json:"startState"`
+	EndState        string                     `json:"endState"`
+	Status          string                     `json:"status"`
+	Notes           string                     `json:"notes"`
+	FormIDs         []string                   `json:"formIds"`
+	Bindings        []StoryboardBinding        `json:"bindings"`
+	Shots           []StoryboardShot           `json:"shots"`
 }
 type StoryboardBinding struct {
 	FormID  string `json:"formId"`

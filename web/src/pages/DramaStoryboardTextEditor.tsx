@@ -126,7 +126,16 @@ export function DramaStoryboardTextEditor({ value, forms, episodeFormIds, editab
     window.addEventListener('resize', scroll)
     return () => { document.removeEventListener('mousedown', outside); document.removeEventListener('scroll', scroll, true); window.removeEventListener('resize', scroll) }
   }, [!!picker])
-  useEffect(() => { pickerElement.current?.querySelector('[role=option][aria-selected=true]')?.scrollIntoView({ block: 'nearest' }) }, [active, search, scope, kind])
+  useLayoutEffect(() => {
+    if (!picker) return
+    const list = pickerElement.current?.querySelector<HTMLElement>('.drama-mention-options')
+    const option = list?.querySelector<HTMLElement>('[aria-selected=true]')
+    if (!list || !option) return
+    const bounds = list.getBoundingClientRect()
+    const selected = option.getBoundingClientRect()
+    if (selected.top < bounds.top) list.scrollTop += selected.top - bounds.top
+    else if (selected.bottom > bounds.bottom) list.scrollTop += selected.bottom - bounds.bottom
+  }, [picker, active, search, scope, kind])
   function publish(doc: StoryboardTextDocument, nextCursor: Cursor, remember = true) {
     if (JSON.stringify(doc) !== JSON.stringify(current.current)) {
       if (remember) { history.current.undo.push({ ...current.current, cursor: caret.current }); history.current.undo = history.current.undo.slice(-100); history.current.redo = [] }
@@ -162,10 +171,14 @@ export function DramaStoryboardTextEditor({ value, forms, episodeFormIds, editab
     before.setEndBefore(chip)
     const start = length(read(before.cloneContents()).text)
     const end = start + length(chip.dataset.dramaLabel ?? '')
-    const form = forms.find((item) => item.id === chip.dataset.dramaForm)
-    setKind(form?.kind ?? 'character')
-    setScope(episodeFormIds.includes(chip.dataset.dramaForm) ? 'episode' : 'project')
-    openPicker({ start, end }, chip.getBoundingClientRect(), '', chip.dataset.dramaForm)
+    const formId = chip.dataset.dramaForm
+    const targetKind = forms.find((item) => item.id === formId)?.kind ?? 'character'
+    const targetScope = episodeFormIds.includes(formId) ? 'episode' : 'project'
+    const options = forms.filter((item) => item.kind === targetKind && (targetScope === 'project' || episodeFormIds.includes(item.id)))
+    setKind(targetKind)
+    setScope(targetScope)
+    openPicker({ start, end }, chip.getBoundingClientRect(), '', formId)
+    setActive(Math.max(0, options.findIndex((item) => item.id === formId)))
   }
   function detect() {
     const el = root.current, selection = window.getSelection(), where = el && cursor(el)

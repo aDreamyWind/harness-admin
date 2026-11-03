@@ -27,17 +27,26 @@ func (r *DramaRepository) CreateSegmentVideo(ctx context.Context, scope drama.Se
 	}
 	defer tx.Rollback(ctx)
 	args := append(segmentVideoArgs(scope), job.Revision)
-	var id string
-	err = tx.QueryRow(ctx, "SELECT s.id"+segmentVideoScopeSQL+`
+	var id, lineage string
+	err = tx.QueryRow(ctx, "SELECT s.id,s.lineage_id,s.segment_version"+segmentVideoScopeSQL+`
  AND r.revision=$7 AND r.status IN ('ready','confirmed') AND s.status='ready'
  AND r.script_text=(SELECT script_text FROM drama_script_episodes WHERE id=r.episode_id)
  AND NOT EXISTS(SELECT 1 FROM drama_storyboard_runs newer WHERE newer.source_episode_id=r.source_episode_id AND newer.version>r.version)
- FOR UPDATE OF p,r,s`, args...).Scan(&id)
+ FOR UPDATE OF p,r,s`, args...).Scan(&id, &lineage, &job.SegmentVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return job, drama.ErrStoryboardConflict
 	}
 	if err != nil {
 		return job, err
+	}
+	var running bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM drama_segment_videos v
+		JOIN drama_storyboard_segments s ON s.id=v.segment_id
+		WHERE s.lineage_id=$1 AND v.status='running')`, lineage).Scan(&running); err != nil {
+		return job, err
+	}
+	if running {
+		return job, drama.ErrSegmentVideoBusy
 	}
 	err = tx.QueryRow(ctx, `INSERT INTO drama_segment_videos(id,segment_id,storyboard_revision,model_code,duration_seconds,reference_image_ids,status)
  VALUES($1,$2,$3,$4,$5,$6::text[]::uuid[],'running')
@@ -52,16 +61,22 @@ func (r *DramaRepository) CreateSegmentVideo(ctx context.Context, scope drama.Se
 	return job, tx.Commit(ctx)
 }
 
-const segmentVideoSelect = `SELECT v.id,v.segment_id,v.storyboard_revision,v.model_code,v.duration_seconds,v.reference_image_ids::text[],v.status,v.error_message,v.created_at`
+const segmentVideoSelect = `SELECT v.id,v.segment_id,v.storyboard_revision,v.model_code,v.duration_seconds,v.reference_image_ids::text[],v.status,v.error_message,v.created_at,history.segment_version`
 
 func scanSegmentVideo(row interface{ Scan(...any) error }) (drama.SegmentVideo, error) {
 	var job drama.SegmentVideo
-	err := row.Scan(&job.ID, &job.SegmentID, &job.Revision, &job.ModelCode, &job.Duration, &job.ImageIDs, &job.Status, &job.Error, &job.CreatedAt)
+	err := row.Scan(&job.ID, &job.SegmentID, &job.Revision, &job.ModelCode, &job.Duration, &job.ImageIDs, &job.Status, &job.Error, &job.CreatedAt, &job.SegmentVersion)
 	return job, err
 }
 
-const segmentVideoReadSQL = ` FROM drama_segment_videos v JOIN drama_storyboard_segments s ON s.id=v.segment_id
- JOIN drama_storyboard_runs r ON r.id=s.run_id JOIN drama_projects p ON p.id=r.project_id
+const segmentVideoReadSQL = `
+ FROM drama_storyboard_segments s
+ JOIN drama_storyboard_runs r ON r.id=s.run_id
+ JOIN drama_projects p ON p.id=r.project_id
+ JOIN drama_storyboard_segments history ON history.lineage_id=s.lineage_id
+ JOIN drama_storyboard_runs historical_run ON historical_run.id=history.run_id
+     AND historical_run.project_id=r.project_id AND historical_run.source_episode_id=r.source_episode_id
+ JOIN drama_segment_videos v ON v.segment_id=history.id
  WHERE p.organization_id=$1 AND p.owner_id=$2 AND p.id=$3 AND r.source_episode_id=$4 AND r.id=$5 AND s.id=$6`
 
 func (r *DramaRepository) ListSegmentVideos(ctx context.Context, scope drama.SegmentVideoScope) ([]drama.SegmentVideo, error) {
@@ -74,7 +89,7 @@ func (r *DramaRepository) ListSegmentVideos(ctx context.Context, scope drama.Seg
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.db.Query(ctx, segmentVideoSelect+segmentVideoReadSQL+" ORDER BY v.created_at DESC,v.id DESC LIMIT 20", args...)
+	rows, err := r.db.Query(ctx, segmentVideoSelect+segmentVideoReadSQL+" ORDER BY v.created_at DESC,v.id DESC", args...)
 	if err != nil {
 		return nil, err
 	}

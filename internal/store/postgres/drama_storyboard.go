@@ -1,12 +1,15 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"harness-admin/internal/drama"
+	"slices"
 )
 
 const storyboardColumns = `r.id,r.source_episode_id,r.project_id,r.version,r.revision,r.status,r.phase,r.message,r.error_message,r.script_text,r.source_hash,r.model_code,r.style_id,r.aspect_ratio,r.created_at,r.updated_at,r.pacing_target`
@@ -47,13 +50,13 @@ func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project,
 	if err != nil {
 		return out, err
 	}
-	rows, err := tx.Query(ctx, `SELECT id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes FROM drama_storyboard_segments WHERE run_id=$1 ORDER BY number`, id)
+	rows, err := tx.Query(ctx, `SELECT id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes,lineage_id,segment_version FROM drama_storyboard_segments WHERE run_id=$1 ORDER BY number`, id)
 	if err != nil {
 		return out, err
 	}
 	for rows.Next() {
 		v := drama.StoryboardSegment{Shots: []drama.StoryboardShot{}, FormIDs: []string{}, Bindings: []drama.StoryboardBinding{}}
-		if err = rows.Scan(&v.ID, &v.Number, &v.Title, &v.Scene, &v.Purpose, &v.StartLine, &v.EndLine, &v.StartState, &v.EndState, &v.Status, &v.Notes); err != nil {
+		if err = rows.Scan(&v.ID, &v.Number, &v.Title, &v.Scene, &v.Purpose, &v.StartLine, &v.EndLine, &v.StartState, &v.EndState, &v.Status, &v.Notes, &v.LineageID, &v.Version); err != nil {
 			rows.Close()
 			return out, err
 		}
@@ -70,6 +73,32 @@ func (r *DramaRepository) GetStoryboard(ctx context.Context, org, user, project,
 	for i, seg := range out.Segments {
 		positions[seg.ID] = i
 	}
+	rows, err = tx.Query(ctx, `
+		SELECT DISTINCT ON (anchor.id, history.segment_version) anchor.id, history.segment_version, history.run_id, history.id
+		FROM drama_storyboard_segments anchor
+		JOIN drama_storyboard_segments history ON history.lineage_id=anchor.lineage_id
+		JOIN drama_storyboard_runs snapshot ON snapshot.id=history.run_id
+		WHERE anchor.run_id=$1 AND snapshot.project_id=$2 AND snapshot.source_episode_id=$3 AND history.status='ready'
+		ORDER BY anchor.id, history.segment_version DESC, snapshot.version DESC`, id, project, episode)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var anchor string
+		var version drama.StoryboardSegmentVersion
+		if err = rows.Scan(&anchor, &version.Version, &version.RunID, &version.SegmentID); err != nil {
+			rows.Close()
+			return out, err
+		}
+		seg := &out.Segments[positions[anchor]]
+		seg.Versions = append(seg.Versions, version)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return out, err
+	}
+
 	rows, err = tx.Query(ctx, `SELECT b.segment_id,b.form_id,COALESCE(b.image_id::text,'') FROM drama_storyboard_bindings b JOIN drama_storyboard_segments s ON s.id=b.segment_id WHERE s.run_id=$1 ORDER BY s.number,b.form_id`, id)
 	if err != nil {
 		return out, err
@@ -526,13 +555,14 @@ func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user 
 	if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_runs(id,episode_id,source_episode_id,project_id,version,status,phase,message,script_text,source_hash,model_code,style_id,aspect_ratio,pacing_target) VALUES($1,$2,$2,$3,$4,$10,$11,$12,$5,$6,$7,$8,$9,$13)`, in.ID, in.EpisodeID, in.ProjectID, in.Version, in.ScriptText, in.SourceHash, in.ModelCode, in.StyleID, in.AspectRatio, newStatus, phase, message, in.PacingTarget); err != nil {
 		return in, err
 	}
+	priorByID := make(map[string]drama.StoryboardSegment, len(old.Segments))
+	for _, prior := range old.Segments {
+		priorByID[prior.ID] = prior
+	}
 	for i, seg := range in.Segments {
-		var bindings []drama.StoryboardBinding
-		for _, prior := range old.Segments {
-			if prior.ID == seg.ID {
-				bindings = prior.Bindings
-			}
-		}
+		prior, inherited := priorByID[seg.ID]
+		delete(priorByID, seg.ID)
+		lineage, segmentVersion := uuid.NewString(), 1
 		segmentStatus := "ready"
 		if pacingSegment != "" || continuation {
 			segmentStatus = seg.Status
@@ -540,11 +570,18 @@ func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user 
 		if seg.ID == pacingSegment {
 			segmentStatus = "pending"
 		}
+		if inherited {
+			lineage, segmentVersion = prior.LineageID, prior.Version
+			if seg.ID == pacingSegment || (continuation && seg.Status != "ready") ||
+				(pacingSegment == "" && !continuation && !sameStoryboardSegmentContent(prior, seg)) {
+				segmentVersion++
+			}
+		}
 		seg.ID = uuid.NewString()
-		if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_segments(id,run_id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$12,$11)`, seg.ID, in.ID, i+1, seg.Title, seg.Scene, seg.Purpose, seg.StartLine, seg.EndLine, seg.StartState, seg.EndState, seg.Notes, segmentStatus); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO drama_storyboard_segments(id,run_id,number,title,scene,purpose,start_line,end_line,start_state,end_state,status,notes,lineage_id,segment_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$12,$11,$13,$14)`, seg.ID, in.ID, i+1, seg.Title, seg.Scene, seg.Purpose, seg.StartLine, seg.EndLine, seg.StartState, seg.EndState, seg.Notes, segmentStatus, lineage, segmentVersion); err != nil {
 			return in, err
 		}
-		if err = r.writeStoryboardSegment(ctx, tx, in, seg, bindings, pacingSegment == "" && !continuation); err != nil {
+		if err = r.writeStoryboardSegment(ctx, tx, in, seg, prior.Bindings, pacingSegment == "" && !continuation); err != nil {
 			return in, err
 		}
 	}
@@ -558,6 +595,34 @@ func (r *DramaRepository) cloneStoryboardVersion(ctx context.Context, org, user 
 	}
 	return r.GetStoryboard(ctx, org, user, in.ProjectID, in.EpisodeID, in.ID)
 }
+
+// 位置、数据库行主键和展示信息不影响片段自身的内容版本。
+func sameStoryboardSegmentContent(a, b drama.StoryboardSegment) bool {
+	normalize := func(seg drama.StoryboardSegment) drama.StoryboardSegment {
+		seg.ID, seg.LineageID, seg.Number, seg.Version = "", "", 0, 0
+		seg.Status, seg.Notes, seg.Versions, seg.VideoReferences, seg.Bindings = "", "", nil, nil, nil
+		seg.FormIDs = append([]string{}, seg.FormIDs...)
+		slices.Sort(seg.FormIDs)
+		seg.Shots = slices.Clone(seg.Shots)
+		for i := range seg.Shots {
+			shot := &seg.Shots[i]
+			shot.ID, shot.Number = "", 0
+			shot.SourceLines = slices.Clone(shot.SourceLines)
+			slices.Sort(shot.SourceLines)
+			shot.Utterances = append([]drama.StoryboardUtterance{}, shot.Utterances...)
+			for j := range shot.Utterances {
+				if shot.Utterances[j].Delivery == "spoken" {
+					shot.Utterances[j].Delivery = ""
+				}
+			}
+		}
+		return seg
+	}
+	left, leftErr := json.Marshal(normalize(a))
+	right, rightErr := json.Marshal(normalize(b))
+	return leftErr == nil && rightErr == nil && bytes.Equal(left, right)
+}
+
 func (r *DramaRepository) ConfirmStoryboard(ctx context.Context, org, user, project, episode, id string, revision int) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

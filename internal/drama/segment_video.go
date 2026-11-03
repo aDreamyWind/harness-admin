@@ -17,15 +17,16 @@ import (
 var ErrSegmentVideoBusy = errors.New("此片段正在生成视频，请等待任务结束")
 
 type SegmentVideo struct {
-	ID        string    `json:"id"`
-	SegmentID string    `json:"segmentId"`
-	Revision  int       `json:"revision"`
-	ModelCode string    `json:"modelCode"`
-	Duration  int       `json:"duration"`
-	ImageIDs  []string  `json:"imageIds"`
-	Status    string    `json:"status"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID             string    `json:"id"`
+	SegmentID      string    `json:"segmentId"`
+	SegmentVersion int       `json:"segmentVersion"`
+	Revision       int       `json:"revision"`
+	ModelCode      string    `json:"modelCode"`
+	Duration       int       `json:"duration"`
+	ImageIDs       []string  `json:"imageIds"`
+	Status         string    `json:"status"`
+	Error          string    `json:"error,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 type SegmentVideoCall struct {

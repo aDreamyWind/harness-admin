@@ -225,7 +225,7 @@ export const listDramaStyles = () => request<DramaStyleOption[]>('/api/v1/ai-dra
 export interface DramaStoryboardMention { start: number; end: number; formId: string }
 export interface DramaStoryboardUtterance { mentions?: DramaStoryboardMention[]; speakerMentions?: DramaStoryboardMention[]; kind: 'dialogue' | 'os' | 'vo'; speaker: string; text: string; sourceLine: number; sourceText?: string; delivery?: 'spoken' | 'visual'; adaptationReason?: string }
 export interface DramaStoryboardShot { descriptionMentions?: DramaStoryboardMention[]; soundMentions?: DramaStoryboardMention[]; id: string; number: number; description: string; shotSize: string; camera: string; sound: string; duration: number; sourceLines: number[]; utterances: DramaStoryboardUtterance[] }
-export interface DramaStoryboardSegment { videoReferences?: { formId: string; imageId: string; name: string }[]; sceneMentions?: DramaStoryboardMention[]; purposeMentions?: DramaStoryboardMention[]; id: string; number: number; title: string; scene: string; purpose: string; startLine: number; endLine: number; startState: string; endState: string; status: string; notes: string; formIds: string[]; bindings: {formId: string; imageId: string}[]; shots: DramaStoryboardShot[] }
+export interface DramaStoryboardSegment { version?: number; lineageId?: string; versions?: { version: number; runId: string; segmentId: string }[]; videoReferences?: { formId: string; imageId: string; name: string }[]; sceneMentions?: DramaStoryboardMention[]; purposeMentions?: DramaStoryboardMention[]; id: string; number: number; title: string; scene: string; purpose: string; startLine: number; endLine: number; startState: string; endState: string; status: string; notes: string; formIds: string[]; bindings: {formId: string; imageId: string}[]; shots: DramaStoryboardShot[] }
 export interface DramaStoryboardRun { pacingTarget?: number; repairs?: DramaRepairTicket[]; id: string; episodeId: string; projectId: string; version: number; revision: number; status: string; phase: string; message: string; error: string; scriptText: string; modelCode: string; styleId: string; aspectRatio: string; createdAt: string; updatedAt: string; stale: boolean; segments: DramaStoryboardSegment[]; events: {id: number; message: string; createdAt: string}[] }
 export interface DramaStoryboardPage { catalogForms?: DramaAssetForm[]; runs: DramaStoryboardRun[]; current: DramaStoryboardRun | null; forms: DramaAssetForm[] }
 const storyboardBase = (project: string, episode: string) => `${visualBase(project)}/video-episodes/${episode}/storyboards`
@@ -239,6 +239,7 @@ export interface DramaRepairTicket { id: string; kind: 'batch' | 'storyboard'; i
 export interface DramaSegmentVideo {
   id: string
   segmentId: string
+  segmentVersion: number
   revision: number
   modelCode: string
   duration: number
