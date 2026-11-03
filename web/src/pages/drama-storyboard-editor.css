@@ -45,5 +45,4 @@
 .drama-storyboard-speaker { color:#4d607a; font-weight:500; }
 .drama-storyboard-voice-entry .drama-storyboard-narration-source { margin-inline-start:calc(var(--drama-storyboard-label-width) + var(--drama-storyboard-line-gap)); }
 .drama-storyboard-draft-bar { position:sticky; top:-20px; z-index:8; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; margin-bottom:12px; border:1px solid #dce6f4; border-radius:6px; background:#f5f8fd; color:#53647e; }
-.drama-storyboard-approval { margin-top:8px; }
 .drama-storyboard-toolbar button[aria-pressed=true] { color:#2857b8; border-color:#a7bce9; background:#edf3ff; }

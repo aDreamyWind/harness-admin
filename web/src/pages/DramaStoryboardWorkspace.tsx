@@ -1,14 +1,14 @@
-import { ClockCircleOutlined, CheckOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, PlusOutlined, ReloadOutlined, VideoCameraOutlined } from '@ant-design/icons'
+import { ClockCircleOutlined, DeleteOutlined, EditOutlined, HistoryOutlined, PlusOutlined, ReloadOutlined, VideoCameraOutlined } from '@ant-design/icons'
 import { Alert, Button, Empty, Image, Input, InputNumber, Modal, Progress, Select, Skeleton, Space, Tag, Tooltip, message } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { optimizeDramaStoryboardPacing, type DramaRepairTicket, confirmDramaStoryboard, getDramaStoryboards, saveDramaStoryboard, startDramaStoryboard, type DramaStoryboardSegment, type DramaStoryboardShot, type DramaStoryboardUtterance, type DramaAssetForm } from '../api/drama'
+import { optimizeDramaStoryboardPacing, type DramaRepairTicket, getDramaStoryboards, saveDramaStoryboard, startDramaStoryboard, type DramaStoryboardSegment, type DramaStoryboardShot, type DramaStoryboardUtterance, type DramaAssetForm } from '../api/drama'
 
 import { DramaStoryboardTextEditor } from './DramaStoryboardTextEditor'
 import { inferStoryboardMentions, materializeStoryboardMentions, type StoryboardTextDocument } from './storyboardMentions'
 
-export const storyboardStatusLabels: Record<string, string> = { pending: '待拆分', queued: '等待拆分', running: '拆分中', failed: '需重试', partial: '待继续', ready: '待确认', confirmed: '已确认', stale: '来源已变化' }
+export const storyboardStatusLabels: Record<string, string> = { pending: '待拆分', queued: '等待拆分', running: '拆分中', failed: '需重试', partial: '待继续', ready: '已保存', confirmed: '已保存', stale: '来源已变化' }
 const soundLabels = { dialogue: '对白', os: '内心独白', vo: '画外音' }
 const soundDescriptions = { dialogue: '角色在故事里说出口的话', os: '角色心里想的话，其他角色听不到', vo: '来自画面之外的声音，可以是旁白或未入镜的角色' }
 const choicePopup = { popupMatchSelectWidth: 184, virtual: false, classNames: { popup: { root: 'drama-storyboard-choice-popup' } } }
@@ -30,7 +30,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
   const [draft, setDraft] = useState<DramaStoryboardSegment[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [structureEditing, setStructureEditing] = useState(false)
-  const [dialog, setDialog] = useState<'discard' | 'approve' | null>(null)
+  const [discardOpen, setDiscardOpen] = useState(false)
   const [recordView, setRecordView] = useState<'events' | 'repairs' | null>(null)
   const [error, setError] = useState('')
   const draftRef = useRef(draft); draftRef.current = draft
@@ -117,15 +117,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
     setDraft(null)
     setStructureEditing(false)
     setError('')
-    setDialog(null)
-  }
-  function approveStoryboard() {
-    if (!run || draft || busy || readonly) return
-    setDialog(null)
-    void action(async () => {
-      await confirmDramaStoryboard(projectId, episodeId, run)
-      messageApi.success('分镜已确认')
-    })
+    setDiscardOpen(false)
   }
   function moveSegment(direction: number) { if (!draft || !selected) return; const next = [...draft]; const at = next.findIndex((s) => s.id === selected.id); const target = at + direction; if (target < 0 || target >= next.length) return; [next[at], next[target]] = [next[target], next[at]]; setDraft(next) }
   function moveShot(index: number, direction: number) { if (!selected) return; const next = [...selected.shots]; const target = index + direction; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; changeSegment({ shots: next }) }
@@ -134,12 +126,8 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
   if (query.isError) return <Alert type="error" showIcon title="读取分镜失败" description={query.error.message} action={<Button onClick={() => void query.refetch()}>重试</Button>} />
   return <>
     {messageHolder}
-    <Modal mask={{ closable: false }} open={dialog === 'discard'} title="放弃未保存的修改？" okText="放弃修改" cancelText="继续编辑"
-      okButtonProps={{ danger: true }} onOk={discardDraft} onCancel={() => setDialog(null)} />
-    <Modal mask={{ closable: false }} open={dialog === 'approve'} title="将这版分镜标记为已确认？" okText="标记已确认" cancelText="返回检查"
-      onOk={approveStoryboard} onCancel={() => setDialog(null)}>
-      <p>表示你已审阅这版分镜。此操作只更新状态。</p>
-    </Modal>
+    <Modal mask={{ closable: false }} open={discardOpen} title="放弃未保存的修改？" okText="放弃修改" cancelText="继续编辑"
+      okButtonProps={{ danger: true }} onOk={discardDraft} onCancel={() => setDiscardOpen(false)} />
     {run && <Modal open={recordView !== null} title={recordView === 'events' ? '创作动态' : '中心调度'}
       width={760} footer={null} onCancel={() => setRecordView(null)}>
       {recordView === 'events'
@@ -148,7 +136,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
           : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无自动修正记录" />)}
     </Modal>}
     <div className="drama-storyboard-toolbar">
-      <div><h2>分镜脚本</h2>{run && <Tag color={run.status === 'failed' ? 'error' : run.status === 'confirmed' ? 'success' : 'processing'}>{storyboardStatusLabels[run.status]}</Tag>}<span>{segments.length} 个片段 · {duration(segments.flatMap((s) => s.shots)).toFixed(1)} 秒</span>
+      <div><h2>分镜脚本</h2>{run && <Tag color={run.status === 'failed' ? 'error' : (run.status === 'ready' || run.status === 'confirmed') ? 'success' : 'processing'}>{storyboardStatusLabels[run.status]}</Tag>}<span>{segments.length} 个片段 · {duration(segments.flatMap((s) => s.shots)).toFixed(1)} 秒</span>
         {run && <Space className="drama-storyboard-record-actions" wrap>
           <Button size="small" onClick={() => setRecordView('events')}>创作动态</Button>
           <Button size="small" onClick={() => setRecordView('repairs')}>中心调度</Button>
@@ -166,7 +154,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
     {draft && <div className="drama-storyboard-draft-bar">
       <span>{structural ? '可增删、排序或调整剧本来源。再次点击「管理片段与镜头」可收起。' : '有未保存的修改。'}</span>
       <Space wrap>
-        <Button disabled={busy} onClick={() => setDialog('discard')}>放弃修改</Button>
+        <Button disabled={busy} onClick={() => setDiscardOpen(true)}>放弃修改</Button>
         <Button type="primary" loading={busy} onClick={() => void action(async () => {
           if (!run) return
           const saved = await saveDramaStoryboard(projectId, episodeId, run, draft)
@@ -180,11 +168,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} title={error} />}
     {run?.stale && <Alert type="warning" showIcon title="来源剧本或关联资产已变化" description="当前分镜保留供查看，需要按最新剧本重新拆分。" />}
     {!latest && <Alert type="info" title="正在查看历史版本，内容只读；最新版本和失败前成果均会保留。" />}
-    {run && <div className={`drama-storyboard-progress ${run.status}`}><div><span>{run.status === 'failed' ? '自动修正暂未完成，已保留成果和修正记录' : run.message || run.phase}</span></div>
-      {run.status === 'ready' && latest && <div className="drama-storyboard-approval">
-        <span>审阅完成后，可将当前版本标记为已确认。</span>
-        <Button size="small" icon={<CheckOutlined />} disabled={readonly || !!draft || busy} onClick={() => setDialog('approve')}>标记已确认</Button>
-      </div>}
+    {run && run.status !== 'ready' && run.status !== 'confirmed' && <div className={`drama-storyboard-progress ${run.status}`}><div><span>{run.status === 'failed' ? '自动修正暂未完成，已保留成果和修正记录' : run.message || run.phase}</span></div>
       {active && <Progress percent={segments.length ? Math.round(100 * segments.filter((s) => s.status === 'ready').length / segments.length) : 0} status="active" size="small" />}
       {['failed', 'partial'].includes(run.status) && <div><span>{run.error}</span>{latest && !run.stale && !needsReview && <Button danger={run.status === 'failed'} size="small" loading={busy} onClick={() => start(true)}>{run.status === 'partial' ? '继续未完成片段' : '从失败处继续'}</Button>}</div>}
     </div>}
