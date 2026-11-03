@@ -69,7 +69,7 @@
 .drama-storyboard-progress > div {display:flex; align-items:center; justify-content:space-between; gap:16px;}
 .drama-storyboard-progress.failed {background:#fff2ef; border-color:#ffd8d0; color:#b74434;}
 .drama-storyboard-progress.confirmed,.drama-storyboard-progress.ready {background:#eef8f3; border-color:#d0eadd;}
-.drama-storyboard-events {padding:8px 0 0; margin:0; max-height:220px; overflow:auto; list-style:none;}
+.drama-storyboard-events {padding:8px 0 0; margin:0; max-height:min(55vh,480px); overflow:auto; list-style:none;}
 .drama-storyboard-events li {display:flex; gap:16px; padding:5px 0; line-height:1.7;}
 .drama-storyboard-events time {color:#8795a8; flex:none;}
 .drama-storyboard-editing-layout {display:grid; grid-template-columns:minmax(340px,1fr) minmax(240px,30%); gap:18px; align-items:start; flex:1;}
@@ -154,3 +154,6 @@
 .drama-storyboard-preview-assets { flex:none; margin-top:12px; border-top:1px solid #e3e8f1; padding-top:12px; }
 .drama-storyboard-preview-assets > summary { color:#65748b; cursor:pointer; }
 .drama-storyboard-preview-assets .drama-storyboard-reference-images { margin-top:12px; }
+
+.drama-storyboard-record-actions { margin-inline-start:12px; }
+.drama-storyboard-repair-history.drama-storyboard-records { margin:0; max-height:min(55vh,480px); overflow:auto; }

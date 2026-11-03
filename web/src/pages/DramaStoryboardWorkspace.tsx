@@ -31,7 +31,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
   const [busy, setBusy] = useState(false)
   const [structureEditing, setStructureEditing] = useState(false)
   const [dialog, setDialog] = useState<'discard' | 'approve' | null>(null)
-  const [eventsOpen, setEventsOpen] = useState(false)
+  const [recordView, setRecordView] = useState<'events' | 'repairs' | null>(null)
   const [error, setError] = useState('')
   const draftRef = useRef(draft); draftRef.current = draft
   const query = useQuery({ queryKey: ['drama-storyboards', projectId, episodeId, runId], queryFn: () => getDramaStoryboards(projectId, episodeId, runId), refetchInterval: (q) => ['queued', 'running'].includes(q.state.data?.runs[0]?.status || '') ? 2000 : false, refetchOnWindowFocus: !draft })
@@ -140,8 +140,20 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
       onOk={approveStoryboard} onCancel={() => setDialog(null)}>
       <p>表示你已审阅这版分镜。此操作只更新状态。</p>
     </Modal>
+    {run && <Modal open={recordView !== null} title={recordView === 'events' ? '创作动态' : '中心调度'}
+      width={760} footer={null} onCancel={() => setRecordView(null)}>
+      {recordView === 'events'
+        ? (run.events.length ? <ol className="drama-storyboard-events">{run.events.map((event) => <li key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString()}</time>{event.message}</li>)}</ol> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无创作动态" />)
+        : (run.repairs?.length ? <div className="drama-storyboard-repair-history drama-storyboard-records">{run.repairs.map((ticket) => <article key={ticket.id}><Tag color={ticket.status === 'resolved' ? 'success' : ticket.status === 'blocked' ? 'error' : 'processing'}>{repairLabel(ticket)}</Tag><strong>{ticket.reporter} → {({ pacing: '节奏优化', timing: '时长校正', writer: '分镜编写', planner: '导演规划', reviewer: '审阅', previous: '前片段修正', pause: '人工处理' } as Record<string, string>)[ticket.node] || ticket.node} · 目标 {ticket.targetItem}</strong><p>{ticket.reason}</p><small>{ticket.outcome || ticket.instructions} · 返回{ticket.returnTo}</small></article>)}</div>
+          : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无自动修正记录" />)}
+    </Modal>}
     <div className="drama-storyboard-toolbar">
-      <div><h2>分镜脚本</h2>{run && <Tag color={run.status === 'failed' ? 'error' : run.status === 'confirmed' ? 'success' : 'processing'}>{storyboardStatusLabels[run.status]}</Tag>}<span>{segments.length} 个片段 · {duration(segments.flatMap((s) => s.shots)).toFixed(1)} 秒</span></div>
+      <div><h2>分镜脚本</h2>{run && <Tag color={run.status === 'failed' ? 'error' : run.status === 'confirmed' ? 'success' : 'processing'}>{storyboardStatusLabels[run.status]}</Tag>}<span>{segments.length} 个片段 · {duration(segments.flatMap((s) => s.shots)).toFixed(1)} 秒</span>
+        {run && <Space className="drama-storyboard-record-actions" wrap>
+          <Button size="small" onClick={() => setRecordView('events')}>创作动态</Button>
+          <Button size="small" onClick={() => setRecordView('repairs')}>中心调度</Button>
+        </Space>}
+      </div>
       <Space wrap>
         {!!page?.runs.length && <Select aria-label="分镜历史版本" prefix={<HistoryOutlined />} value={run?.id} disabled={!!draft || busy} style={{ width: 200 }} options={page.runs.map((v, i) => ({ value: v.id, label: `版本 ${v.version} · ${storyboardStatusLabels[v.status]}${i === 0 ? '（最新）' : ''}` }))} onChange={(id) => setParams((p) => { const next = new URLSearchParams(p); if (id === page.runs[0].id) next.delete('storyboard'); else next.set('storyboard', id); next.delete('segment'); return next })} />}
         {run && <Button icon={<EditOutlined />} aria-pressed={structural} disabled={!inlineEditable} onClick={() => {
@@ -168,16 +180,14 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} title={error} />}
     {run?.stale && <Alert type="warning" showIcon title="来源剧本或关联资产已变化" description="当前分镜保留供查看，需要按最新剧本重新拆分。" />}
     {!latest && <Alert type="info" title="正在查看历史版本，内容只读；最新版本和失败前成果均会保留。" />}
-    {run && <div className={`drama-storyboard-progress ${run.status}`}><div><span>{run.status === 'failed' ? '自动修正暂未完成，已保留成果和修正记录' : run.message || run.phase}</span><Button type="link" size="small" onClick={() => setEventsOpen((v) => !v)}>{eventsOpen ? '收起动态' : '创作动态'}</Button></div>
+    {run && <div className={`drama-storyboard-progress ${run.status}`}><div><span>{run.status === 'failed' ? '自动修正暂未完成，已保留成果和修正记录' : run.message || run.phase}</span></div>
       {run.status === 'ready' && latest && <div className="drama-storyboard-approval">
         <span>审阅完成后，可将当前版本标记为已确认。</span>
         <Button size="small" icon={<CheckOutlined />} disabled={readonly || !!draft || busy} onClick={() => setDialog('approve')}>标记已确认</Button>
       </div>}
       {active && <Progress percent={segments.length ? Math.round(100 * segments.filter((s) => s.status === 'ready').length / segments.length) : 0} status="active" size="small" />}
       {['failed', 'partial'].includes(run.status) && <div><span>{run.error}</span>{latest && !run.stale && !needsReview && <Button danger={run.status === 'failed'} size="small" loading={busy} onClick={() => start(true)}>{run.status === 'partial' ? '继续未完成片段' : '从失败处继续'}</Button>}</div>}
-      {eventsOpen && <ol className="drama-storyboard-events">{run.events.map((event) => <li key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString()}</time>{event.message}</li>)}</ol>}
     </div>}
-    {!!run?.repairs?.length && <details className="drama-storyboard-repair-history" open={active}><summary>中心调度 · {run.repairs.length} 次派工</summary>{run.repairs.map((ticket) => <article key={ticket.id}><Tag color={ticket.status === 'resolved' ? 'success' : ticket.status === 'blocked' ? 'error' : 'processing'}>{repairLabel(ticket)}</Tag><strong>{ticket.reporter} → {({ pacing: '节奏优化', timing: '时长校正', writer: '分镜编写', planner: '导演规划', reviewer: '审阅', previous: '前片段修正', pause: '人工处理' } as Record<string, string>)[ticket.node] || ticket.node} · 目标 {ticket.targetItem}</strong><p>{ticket.reason}</p><small>{ticket.outcome || ticket.instructions} · 返回{ticket.returnTo}</small></article>)}</details>}
     {!segments.length ? <div className="drama-video-storyboard-empty"><VideoCameraOutlined /><h3>{active ? '正在规划场次与片段' : '暂未拆分分镜'}</h3><p>{active ? '通过检查的片段会陆续保存并显示，可离开后回来查看。' : '将本集剧本转换成可编辑的片段和镜头。'}</p></div> : <>
       <div className="drama-storyboard-editing-layout">
         <section className={`drama-storyboard-script${structural ? ' editing' : ' reading'}`} aria-label="片段分镜内容">
