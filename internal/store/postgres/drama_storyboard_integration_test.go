@@ -193,6 +193,36 @@ func TestStoryboardPersistenceScopeResumeVersionsAndImages(t *testing.T) {
 	if err = repo.FinishStoryboard(ctx, run.ID, "ready", "完成"); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("片段视频关联版本并防止重复生成", func(t *testing.T) {
+		ready, err := repo.GetStoryboard(ctx, org, user, project, episode, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scope := drama.SegmentVideoScope{OrganizationID: org, UserID: user, ProjectID: project, EpisodeID: episode, RunID: run.ID, SegmentID: ready.Segments[0].ID}
+		job := drama.SegmentVideo{ID: uuid.NewString(), SegmentID: scope.SegmentID, Revision: ready.Revision, ModelCode: "video-test", Duration: 4, ImageIDs: []string{image1}}
+		created, err := repo.CreateSegmentVideo(ctx, scope, job)
+		if err != nil || created.Status != "running" {
+			t.Fatal(created, err)
+		}
+		duplicate := job
+		duplicate.ID = uuid.NewString()
+		if _, err = repo.CreateSegmentVideo(ctx, scope, duplicate); !errors.Is(err, drama.ErrSegmentVideoBusy) {
+			t.Fatal("重复提交未拒绝", err)
+		}
+		unauthorized := scope
+		unauthorized.UserID = uuid.NewString()
+		if _, err = repo.ReadSegmentVideo(ctx, unauthorized, job.ID); !errors.Is(err, drama.ErrNotFound) {
+			t.Fatal("不能跨用户查询视频", err)
+		}
+		if err = repo.FinishSegmentVideo(ctx, job.ID, "succeeded", ""); err != nil {
+			t.Fatal(err)
+		}
+		history, err := repo.ListSegmentVideos(ctx, scope)
+		if err != nil || len(history) != 1 || history[0].Status != "succeeded" || len(history[0].ImageIDs) != 1 || history[0].ImageIDs[0] != image1 {
+			t.Fatal(history, err)
+		}
+	})
+
 	run, err = repo.GetStoryboard(ctx, org, user, project, episode, run.ID)
 	if err != nil {
 		t.Fatal(err)

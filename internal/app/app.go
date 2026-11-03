@@ -92,7 +92,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelPolicyService := modelgateway.NewPolicyService(modelPolicyRepository)
 	modelForwarder := modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts)
 	dramaRepository := pgstore.NewDramaRepository(db)
-	dramaService := drama.NewService(dramaRepository, &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder}).WithVisuals(dramaRepository, &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}, &dramaMediaFiles{directory: cfg.DramaMediaDirectory}).WithStyles(dramaRepository).WithStoryboards(dramaRepository).WithRepairCoordinator(dramaRepository)
+	dramaMedia := &dramaMediaFiles{directory: cfg.DramaMediaDirectory}
+	dramaService := drama.NewService(dramaRepository, &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder}).WithVisuals(dramaRepository, &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}, dramaMedia).WithStyles(dramaRepository).WithStoryboards(dramaRepository).WithRepairCoordinator(dramaRepository).WithSegmentVideos(dramaRepository, &dramaVideoEngine{gateway: modelGatewayService, forwarder: modelForwarder}, dramaMedia)
 	if err := dramaService.Recover(startupCtx); err != nil {
 		redisClient.Close()
 		db.Close()
@@ -153,6 +154,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		Drama:                 dramaService,
 		DramaVisual:           dramaService,
 		DramaStoryboards:      dramaService,
+		DramaSegmentVideos:    dramaService,
 		DramaStyles:           dramaService,
 		MCPToolCaller:         mcpUpstream,
 		GatewayForwarder:      modelForwarder,

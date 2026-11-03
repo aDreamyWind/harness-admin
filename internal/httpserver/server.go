@@ -40,6 +40,7 @@ type Dependencies struct {
 	Drama                 DramaService
 	DramaVisual           DramaVisualService
 	DramaStoryboards      DramaStoryboardService
+	DramaSegmentVideos    DramaSegmentVideoService
 	DramaStyles           DramaStyleService
 	GatewayForwarder      ModelGatewayForwarder
 	OIDCAdmin             OIDCAdminService
@@ -123,6 +124,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.Drama != nil {
 		registerDramaRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.DramaSegmentVideos != nil {
+		registerDramaSegmentVideoRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.DramaStoryboards != nil {
 		registerDramaStoryboardRoutes(router, deps)

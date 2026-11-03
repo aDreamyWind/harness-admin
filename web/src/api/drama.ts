@@ -235,3 +235,26 @@ export const saveDramaStoryboard = (project: string, episode: string, run: Drama
 export const optimizeDramaStoryboardPacing = (project: string, episode: string, run: DramaStoryboardRun, segmentId: string) => request<DramaStoryboardRun>(`${storyboardBase(project, episode)}/${run.id}/optimize-pacing`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision: run.revision, segmentId }) })
 
 export interface DramaRepairTicket { id: string; kind: 'batch' | 'storyboard'; item: number; reporter: string; problem: string; node: string; targetItem: number; reason: string; instructions: string; returnTo: string; status: 'assigned' | 'resolved' | 'feedback' | 'blocked' | 'declined'; beforeShotCount?: number; afterShotCount?: number; beforeDuration?: number; afterDuration?: number; outcome: string; createdAt: string }
+
+export interface DramaSegmentVideo {
+  id: string
+  segmentId: string
+  revision: number
+  modelCode: string
+  duration: number
+  imageIds: string[]
+  status: 'running' | 'failed' | 'succeeded'
+  error?: string
+  createdAt: string
+}
+
+const segmentVideoBase = (project: string, episode: string, run: string, segment: string) =>
+  `${storyboardBase(project, episode)}/${run}/segments/${segment}/videos`
+export const listDramaSegmentVideos = (project: string, episode: string, run: string, segment: string) =>
+  request<DramaSegmentVideo[]>(segmentVideoBase(project, episode, run, segment))
+export const startDramaSegmentVideo = (project: string, episode: string, run: string, segment: string, revision: number) =>
+  request<DramaSegmentVideo>(segmentVideoBase(project, episode, run, segment), {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision }),
+  })
+export const dramaSegmentVideoURL = (project: string, episode: string, run: string, segment: string, video: string) =>
+  `${segmentVideoBase(project, episode, run, segment)}/${video}/content`

@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { optimizeDramaStoryboardPacing, type DramaRepairTicket, getDramaStoryboards, saveDramaStoryboard, startDramaStoryboard, type DramaStoryboardSegment, type DramaStoryboardShot, type DramaStoryboardUtterance, type DramaAssetForm } from '../api/drama'
 
+import { DramaSegmentVideoPreview } from './DramaSegmentVideoPreview'
 import { DramaStoryboardTextEditor } from './DramaStoryboardTextEditor'
 import { inferStoryboardMentions, materializeStoryboardMentions, type StoryboardTextDocument } from './storyboardMentions'
 
@@ -232,7 +233,9 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
             {structural && selected.notes && <p className="drama-storyboard-notes">{selected.notes}</p>}
           </>}
         </section>
-        <aside className="drama-storyboard-preview" aria-label="片段素材预览"><div className="drama-storyboard-preview-heading"><h3>片段预览</h3><Tooltip title="视频生成将在后续接入；当前步骤只拆分文字分镜"><Button disabled>生成视频</Button></Tooltip></div><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前片段视频尚未生成" />{!!selected?.formIds.length && <details className="drama-storyboard-preview-assets"><summary>参考素材 · {selected.formIds.length}</summary><div className="drama-storyboard-reference-images">{selected.formIds.map((id) => { const form = page?.forms.find((f) => f.id === id); const imageId = selected.bindings.find((b) => b.formId === id)?.imageId; return <figure key={id}>{imageId ? <Image src={`/api/v1/ai-drama/projects/${projectId}/images/${imageId}/content`} alt={form?.assetName || '采用的参考图'} /> : <div>待素材</div>}<figcaption>{form?.assetName} · {form?.name}</figcaption></figure> })}</div></details>}</aside>
+        <aside className="drama-storyboard-preview" aria-label="片段素材预览">{run && selected && <DramaSegmentVideoPreview key={`${run.id}/${selected.id}`} projectId={projectId} episodeId={episodeId}
+          runId={run.id} segmentId={selected.id} revision={run.revision}
+          canGenerate={!readonly && !draft && !busy && ['ready', 'confirmed'].includes(run.status) && selected.status === 'ready'} />}{!!selected?.formIds.length && <details className="drama-storyboard-preview-assets"><summary>参考素材 · {selected.formIds.length}</summary><div className="drama-storyboard-reference-images">{selected.formIds.map((id) => { const form = (page?.catalogForms ?? page?.forms)?.find((f) => f.id === id); const imageId = selected.bindings.find((b) => b.formId === id)?.imageId; const imageUrl = imageId ? `/api/v1/ai-drama/projects/${projectId}/images/${imageId}/content` : form?.imageUrl; return <figure key={id}>{imageUrl ? <Image src={imageUrl} alt={form?.assetName || '采用的参考图'} /> : <div>待素材</div>}<figcaption>{form?.assetName} · {form?.name}</figcaption></figure> })}</div></details>}</aside>
       </div>
       <nav className="drama-storyboard-timeline" aria-label="片段列表">{segments.map((s, i) => <button type="button" key={s.id} aria-current={selected?.id === s.id ? 'true' : undefined} onClick={() => chooseSegment(s.id)}><strong>{i + 1}</strong><span>{s.title}</span><small>{s.status === 'ready' ? `${s.shots.length} 镜头 · ${duration(s.shots).toFixed(1)} 秒` : '待编写'}</small></button>)}{structural && <Button icon={<PlusOutlined />} onClick={addSegment}>新增片段</Button>}</nav>
     </>}

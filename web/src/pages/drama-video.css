@@ -157,3 +157,5 @@
 
 .drama-storyboard-record-actions { margin-inline-start:12px; }
 .drama-storyboard-repair-history.drama-storyboard-records { margin:0; max-height:min(55vh,480px); overflow:auto; }
+
+.drama-segment-video { display:block; width:100%; max-height:65vh; margin:12px 0; border-radius:6px; background:#151922; }

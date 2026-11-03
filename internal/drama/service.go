@@ -125,14 +125,17 @@ type Model struct {
 }
 
 type Service struct {
-	repository  Repository
-	writer      Writer
-	visual      VisualRepository
-	images      ImageGenerator
-	files       ImageFiles
-	styles      StyleRepository
-	storyboards StoryboardRepository
-	repairs     RepairRepository
+	repository     Repository
+	writer         Writer
+	visual         VisualRepository
+	images         ImageGenerator
+	files          ImageFiles
+	styles         StyleRepository
+	storyboards    StoryboardRepository
+	repairs        RepairRepository
+	segmentVideos  SegmentVideoRepository
+	videoGenerator SegmentVideoGenerator
+	videoMedia     SegmentVideoMedia
 }
 
 func NewService(repository Repository, writer Writer) *Service {
@@ -152,7 +155,12 @@ func (s *Service) Recover(ctx context.Context) error {
 		}
 	}
 	if s.visual != nil {
-		return s.visual.FailInterruptedImages(ctx)
+		if err := s.visual.FailInterruptedImages(ctx); err != nil {
+			return err
+		}
+	}
+	if s.segmentVideos != nil {
+		return s.segmentVideos.FailInterruptedSegmentVideos(ctx)
 	}
 	return nil
 }

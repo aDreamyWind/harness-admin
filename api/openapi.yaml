@@ -561,6 +561,78 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: 运行中、非最新版本、修订号冲突或来源已变化
+  /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}/segments/{segmentId}/videos:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: segmentId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 查询当前分镜片段的视频生成记录
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: 最近的视频任务，按创建时间倒序
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/DramaSegmentVideo' }
+        '401': { description: 未登录 }
+        '404': { description: 片段不存在或不属于当前用户 }
+    post:
+      summary: 使用当前已保存的分镜版本异步生成片段视频
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, minimum: 1 }
+      responses:
+        '202':
+          description: 视频任务已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DramaSegmentVideo' }
+        '400': { description: 参数错误、缺少参考图或超出模型限制 }
+        '401': { description: 未登录 }
+        '403': { description: 请求校验失败 }
+        '404': { description: 项目或片段不存在 }
+        '409': { description: 版本不可生成、未配置模型或已有任务在运行 }
+  /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}/segments/{segmentId}/videos/{videoId}/content:
+    get:
+      summary: 播放已生成的片段视频，支持字节范围请求
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: episodeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: segmentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: videoId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: MP4 视频
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+        '206': { description: 请求的视频字节范围 }
+        '401': { description: 未登录 }
+        '404': { description: 视频不可读取或不属于当前用户 }
   /ai-drama/projects/{id}/video-episodes/{episodeId}/storyboards/{runId}/confirm:
     post:
       summary: 确认最新分镜版本
@@ -3894,6 +3966,21 @@ components:
               formId: { type: string, format: uuid }
               imageId: { type: string, description: 已采用的成功图片主键；空字符串表示待素材。 }
         shots: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/DramaStoryboardShot' } }
+    DramaSegmentVideo:
+      type: object
+      required: [id, segmentId, revision, modelCode, duration, imageIds, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        segmentId: { type: string, format: uuid }
+        revision: { type: integer }
+        modelCode: { type: string }
+        duration: { type: integer }
+        imageIds:
+          type: array
+          items: { type: string, format: uuid }
+        status: { type: string, enum: [running, failed, succeeded] }
+        error: { type: string }
+        createdAt: { type: string, format: date-time }
     DramaStoryboardRun:
       type: object
       required: [id, episodeId, projectId, version, revision, status, phase, message, error, scriptText, modelCode, styleId, aspectRatio, createdAt, updatedAt, segments, events, stale, repairs]
