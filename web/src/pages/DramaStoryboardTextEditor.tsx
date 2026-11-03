@@ -3,7 +3,7 @@ import { Empty, Input } from 'antd'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { DramaAssetForm, DramaAssetKind } from '../api/drama'
-import { formLabel, type StoryboardTextDocument } from './storyboardMentions'
+import { formLabel, storyboardSceneAlias, type StoryboardTextDocument } from './storyboardMentions'
 import './drama-storyboard-editor.css'
 
 const length = (text: string) => Array.from(text).length
@@ -81,7 +81,8 @@ function fragment(value: StoryboardTextDocument, forms: DramaAssetForm[]) {
     chip.dataset.dramaForm = ref.formId; chip.dataset.dramaLabel = chars.slice(ref.start, ref.end).join(''); chip.contentEditable = 'false'
     chip.title = form ? `${form.assetName} · ${form.name}` : '历史资产形象'
     if (form?.imageUrl) { const image = document.createElement('img'); image.src = form.imageUrl; image.alt = ''; image.draggable = false; chip.append(image) }
-    chip.append(document.createTextNode(form ? formLabel(form) : chars.slice(ref.start, ref.end).join('')))
+    const original = chip.dataset.dramaLabel
+    chip.append(document.createTextNode(form && original !== storyboardSceneAlias(form) ? formLabel(form) : original))
     result.append(chip); at = ref.end
   }
   appendText(chars.slice(at).join(''))
@@ -102,7 +103,7 @@ export function DramaStoryboardTextEditor({ value, forms, episodeFormIds, editab
   const initialized = useRef(false)
   const current = useRef(value), caret = useRef<Cursor>({ start: 0, end: 0 })
   const history = useRef<{ undo: Snapshot[]; redo: Snapshot[] }>({ undo: [], redo: [] })
-  const [picker, setPicker] = useState<{ start: number; end: number; left: number; top: number; query: string } | null>(null)
+  const [picker, setPicker] = useState<{ start: number; end: number; left: number; top: number; replacementFormId?: string } | null>(null)
   const [scope, setScope] = useState<'episode' | 'project'>('episode'), [kind, setKind] = useState<DramaAssetKind>('character')
   const [search, setSearch] = useState(''), [active, setActive] = useState(0)
   const listId = useId()
@@ -140,15 +141,38 @@ export function DramaStoryboardTextEditor({ value, forms, episodeFormIds, editab
     target.push({ ...current.current, cursor: caret.current }); setPicker(null)
     paint(previous, previous.cursor); publish({ text: previous.text, mentions: previous.mentions }, previous.cursor, false)
   }
+  function openPicker(where: Cursor, rect: DOMRect, query: string, replacementFormId?: string) {
+    const fallback = root.current!.getBoundingClientRect()
+    const left = Math.max(12, Math.min(rect.width || rect.x ? rect.x : fallback.x, innerWidth - Math.min(480, innerWidth - 24) - 12))
+    const top = Math.max(12, Math.min(rect.bottom || fallback.bottom, innerHeight - 400)) + 6
+    setPicker({ ...where, left, top, replacementFormId })
+    setSearch(query)
+    setActive(0)
+  }
+  function replaceMention(event: React.MouseEvent<HTMLSpanElement>) {
+    const el = root.current
+    const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-drama-form]') : null
+    if (!editable || !el) return
+    if (!chip || !el.contains(chip) || !chip.dataset.dramaForm) {
+      if (picker?.replacementFormId) setPicker(null)
+      return
+    }
+    const before = document.createRange()
+    before.selectNodeContents(el)
+    before.setEndBefore(chip)
+    const start = length(read(before.cloneContents()).text)
+    const end = start + length(chip.dataset.dramaLabel ?? '')
+    const form = forms.find((item) => item.id === chip.dataset.dramaForm)
+    setKind(form?.kind ?? 'character')
+    setScope(episodeFormIds.includes(chip.dataset.dramaForm) ? 'episode' : 'project')
+    openPicker({ start, end }, chip.getBoundingClientRect(), '', chip.dataset.dramaForm)
+  }
   function detect() {
     const el = root.current, selection = window.getSelection(), where = el && cursor(el)
     if (!el || !where || !selection?.rangeCount || where.start !== where.end) { setPicker(null); return }
     const prefix = Array.from(read(el).text).slice(0, where.start).join(''), match = /@([^\s@]{0,40})$/u.exec(prefix)
     if (!match) { setPicker(null); return }
-    const rect = selection.getRangeAt(0).getBoundingClientRect(), fallback = el.getBoundingClientRect()
-    const left = Math.max(12, Math.min(rect.width || rect.x ? rect.x : fallback.x, innerWidth - Math.min(480, innerWidth - 24) - 12))
-    const top = Math.max(12, Math.min(rect.bottom || fallback.bottom, innerHeight - 400)) + 6
-    setPicker({ start: where.start - length(match[0]), end: where.end, left, top, query: match[1] }); setSearch(match[1]); setActive(0)
+    openPicker({ start: where.start - length(match[0]), end: where.end }, selection.getRangeAt(0).getBoundingClientRect(), match[1])
   }
   function changed() {
     const el = root.current; if (!el || composing.current || !editable) return
@@ -164,8 +188,9 @@ export function DramaStoryboardTextEditor({ value, forms, episodeFormIds, editab
   }
   function choose(form: DramaAssetForm) {
     if (!picker) return
+    if (picker.replacementFormId === form.id) { setPicker(null); return }
     const name = form.assetName
-    insert({ text: `${name} `, mentions: [{ start: 0, end: length(name), formId: form.id }] }, { start: picker.start, end: picker.end })
+    insert({ text: picker.replacementFormId ? name : `${name} `, mentions: [{ start: 0, end: length(name), formId: form.id }] }, { start: picker.start, end: picker.end })
   }
   useEffect(() => {
     const el = root.current
@@ -188,16 +213,16 @@ export function DramaStoryboardTextEditor({ value, forms, episodeFormIds, editab
   function key(event: React.KeyboardEvent) {
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
     if (editable && root.current?.contains(event.target as Node) && (event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); moveHistory(event.key.toLowerCase() === 'z' && !event.shiftKey); return }
-    if (editable && root.current?.contains(event.target as Node) && event.key === 'Enter' && (!picker || !eligible.length)) { event.preventDefault(); insert({ text: '\n', mentions: [] }); return }
+    if (editable && root.current?.contains(event.target as Node) && event.key === 'Enter' && !picker) { event.preventDefault(); insert({ text: '\n', mentions: [] }); return }
     if (!picker) return
     if (event.key === 'Escape') { event.preventDefault(); setPicker(null) }
     if (['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); setActive((v) => Math.max(0, Math.min(eligible.length - 1, v + (event.key === 'ArrowDown' ? 1 : -1)))) }
-    if (event.key === 'Enter' && eligible.length) { event.preventDefault(); choose(eligible[active] ?? eligible[0]) }
+    if (event.key === 'Enter') { event.preventDefault(); if (eligible.length) choose(eligible[active] ?? eligible[0]) }
   }
   return <><span ref={root} role="textbox" aria-label={label} aria-multiline="true" aria-readonly={!editable} aria-autocomplete="list" aria-expanded={!!picker} aria-controls={picker ? listId : undefined}
     className={`drama-inline-editor${editable ? ' editable' : ''}`} contentEditable={editable} suppressContentEditableWarning spellCheck={false} tabIndex={editable ? 0 : undefined} data-placeholder={placeholder}
-    onFocus={() => { if (root.current) caret.current = cursor(root.current) ?? caret.current }} onMouseUp={() => { if (root.current) caret.current = cursor(root.current) ?? caret.current }}
-    onKeyUp={(e) => { if (root.current) caret.current = cursor(root.current) ?? caret.current; if (!['ArrowDown', 'ArrowUp', 'Escape', 'Enter'].includes(e.key) && !composing.current && editable) detect() }} onKeyDown={key}
+    onClick={replaceMention} onFocus={() => { if (root.current) caret.current = cursor(root.current) ?? caret.current }} onMouseUp={() => { if (root.current) caret.current = cursor(root.current) ?? caret.current }}
+    onKeyUp={(e) => { if (root.current) caret.current = cursor(root.current) ?? caret.current; if (!picker?.replacementFormId && !['ArrowDown', 'ArrowUp', 'Escape', 'Enter'].includes(e.key) && !composing.current && editable) detect() }} onKeyDown={key}
     onInput={changed} onCompositionStart={() => { composing.current = true; setPicker(null) }} onCompositionEnd={() => { composing.current = false; changed() }}
 
     onBlur={(e) => { if (!(e.relatedTarget instanceof Element && e.relatedTarget.closest('.drama-mention-picker'))) setPicker(null) }}
@@ -207,7 +232,7 @@ export function DramaStoryboardTextEditor({ value, forms, episodeFormIds, editab
       insert(doc)
     }} onDrop={(e) => { e.preventDefault(); if (editable) insert({ text: e.dataTransfer.getData('text/plain'), mentions: [] }) }} />
     {picker && editable && createPortal(<div ref={pickerElement} className="drama-mention-picker" style={{ left: picker.left, top: picker.top }} onKeyDown={key}>
-      <div className="drama-mention-scope">{(['episode', 'project'] as const).map((v) => <button type="button" key={v} aria-pressed={scope === v} onMouseDown={(e) => e.preventDefault()} onClick={() => { setScope(v); setActive(0) }}>{v === 'episode' ? '本集资产' : '全剧资产'}</button>)}<span>↑↓ 选择 · Enter 插入</span></div>
+      <div className="drama-mention-scope">{(['episode', 'project'] as const).map((v) => <button type="button" key={v} aria-pressed={scope === v} onMouseDown={(e) => e.preventDefault()} onClick={() => { setScope(v); setActive(0) }}>{v === 'episode' ? '本集资产' : '全剧资产'}</button>)}<span>↑↓ 选择 · Enter {picker.replacementFormId ? '替换' : '插入'}</span></div>
       <div className="drama-mention-kinds">{(Object.keys(kindNames) as DramaAssetKind[]).map((v) => <button type="button" key={v} aria-pressed={kind === v} onMouseDown={(e) => e.preventDefault()} onClick={() => { setKind(v); setActive(0) }}>{kindNames[v]}</button>)}</div>
       <Input aria-label="搜索引用资产" prefix={<SearchOutlined />} value={search} placeholder="搜索资产或形象" onChange={(e) => { setSearch(e.target.value); setActive(0) }} />
       <div id={listId} role="listbox" aria-label="可引用的资产形象" className="drama-mention-options">{eligible.length ? eligible.map((form, i) => <button type="button" role="option" aria-label={`${form.assetName} · ${form.name}`} aria-selected={i === active} key={form.id} title={`${form.assetName} · ${form.name}`} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(form)}>

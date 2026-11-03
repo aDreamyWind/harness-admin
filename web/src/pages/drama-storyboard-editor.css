@@ -4,6 +4,8 @@
 .drama-inline-editor.editable:focus { outline:1px solid #a7bce9; background:#fff; }
 .drama-inline-editor.editable[data-empty=true]::before { content:attr(data-placeholder); color:#a1adbf; pointer-events:none; }
 .drama-inline-asset { display:inline-flex; vertical-align:baseline; align-items:center; gap:4px; max-width:100%; margin:0 3px; padding:0 5px; border:1px solid #d7cdf4; border-radius:4px; background:#f2eefc; color:#7352bb; font-size:12px; line-height:21px; white-space:nowrap; user-select:all; }
+.drama-inline-editor.editable .drama-inline-asset { cursor:pointer; }
+.drama-inline-editor.editable .drama-inline-asset:hover { filter:brightness(.96); }
 .drama-inline-asset.scene { border-color:#b6e0dc; background:#eaf8f5; color:#268e86; }
 .drama-inline-asset.prop { border-color:#d1dbef; background:#edf3fb; color:#4e70aa; }
 .drama-inline-asset img { width:18px; height:18px; border-radius:3px; object-fit:cover; }
