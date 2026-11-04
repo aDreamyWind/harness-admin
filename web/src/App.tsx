@@ -1,6 +1,7 @@
 import {
   ApiOutlined,
   AppstoreOutlined,
+  BookOutlined,
   ApartmentOutlined,
   AuditOutlined,
   DashboardOutlined,
@@ -44,6 +45,7 @@ import { SkillsPage } from './pages/SkillsPage'
 import { SkillDetailPage } from './pages/SkillDetailPage'
 import { DramaHomePage } from './pages/DramaHomePage'
 import { DramaProjectPage } from './pages/DramaPage'
+import { NovelPage, NovelProjectPage } from './pages/NovelPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -61,6 +63,7 @@ const menuRoutes: Record<string, string> = {
   audit: '/audit',
   settings: '/settings/organization',
   drama: '/ai-apps/drama',
+  novel: '/ai-apps/novel',
 }
 function Navigation({ items, selectedKey, onNavigate, collapsed = false }: {
   items: MenuProps['items']
@@ -96,6 +99,7 @@ export function App() {
   const selectedMenuKey = location.pathname.startsWith('/identity/users')
     ? 'users'
     : location.pathname.startsWith('/ai-apps/drama') ? 'drama'
+    : location.pathname.startsWith('/ai-apps/novel') ? 'novel'
     : location.pathname.startsWith('/identity/departments')
       ? 'departments'
       : location.pathname.startsWith('/identity/roles')
@@ -252,6 +256,8 @@ export function App() {
               <Route path="/settings/organization" element={<PermissionPage permission="iam.organization.read"><OrganizationSettingsPage /></PermissionPage>} />
               <Route path="/account/security" element={<AccountSecurityPage />} />
               <Route path="/ai-apps/drama" element={<DramaHomePage />} />
+              <Route path="/ai-apps/novel" element={<NovelPage />} />
+              <Route path="/ai-apps/novel/:id" element={<NovelProjectPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Content>
@@ -294,6 +300,7 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
     { key: 'policy', icon: <SafetyCertificateOutlined />, label: '策略与审批', disabled: true },
     { key: 'ai-apps', icon: <VideoCameraOutlined />, label: 'AI 应用管理', children: [
       { key: 'drama', icon: <VideoCameraOutlined />, label: 'AI 漫剧' },
+      { key: 'novel', icon: <BookOutlined />, label: 'AI 小说' },
     ] },
     hasPermission('audit.event.read') ? { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' } : null,
     hasPermission('iam.organization.read') ? { key: 'settings', icon: <SettingOutlined />, label: '企业设置' } : null,

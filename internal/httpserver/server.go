@@ -37,6 +37,7 @@ type Dependencies struct {
 	MCPConnections        MCPConnectionService
 	MCPToolCaller         MCPToolCaller
 	Skills                SkillService
+	Novel                 NovelService
 	Drama                 DramaService
 	DramaVisual           DramaVisualService
 	DramaStoryboards      DramaStoryboardService
@@ -121,6 +122,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.Access != nil && deps.Skills != nil && deps.OIDCProvider != nil {
 		registerSkillRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.Novel != nil {
+		registerNovelRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.Drama != nil {
 		registerDramaRoutes(router, deps)

@@ -1,0 +1,48 @@
+.novel-cover-preview-item {
+  min-width: 0;
+  margin: 0;
+}
+
+.novel-cover-editor.novel-cover-editor--comparison {
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+}
+
+.novel-cover-editor--comparison .novel-cover-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.novel-cover-editor--comparison .novel-cover-preview {
+  position: relative;
+  width: 100%;
+}
+
+.novel-cover-preview-item--candidate .novel-cover-preview > .ant-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.novel-cover-preview-item figcaption {
+  margin-top: 6px;
+  color: #617086;
+  text-align: center;
+  font-size: 13px;
+}
+
+.novel-cover-preview-item--candidate figcaption {
+  color: #334d66;
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .novel-cover-editor.novel-cover-editor--comparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .novel-cover-editor--comparison .novel-cover-previews {
+    width: min(100%, 300px);
+  }
+}

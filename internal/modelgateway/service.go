@@ -385,7 +385,7 @@ func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
 	if input.Operation == "" {
 		input.Operation = input.ModelType
 	}
-	if input.Source != "model_gateway" && input.Source != "ai_drama" {
+	if input.Source != "model_gateway" && input.Source != "ai_drama" && input.Source != "ai_novel" {
 		return ErrInvalidInput
 	}
 	if input.PromptTokens < 0 || input.CompletionTokens < 0 || input.TotalTokens < 0 {

@@ -6,15 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"harness-admin/internal/drama"
-	"harness-admin/internal/modelgateway"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+
+	"harness-admin/internal/drama"
+	"harness-admin/internal/modelgateway"
 )
 
 type dramaImageGateway interface {
@@ -26,13 +28,15 @@ type dramaImageForwarder interface {
 	DownloadImage(context.Context, string) ([]byte, error)
 }
 type dramaImageEngine struct {
-	gateway   dramaImageGateway
-	forwarder dramaImageForwarder
+	gateway         dramaImageGateway
+	forwarder       dramaImageForwarder
+	source          string
+	omitCallContent bool
 }
 
 func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) (data []byte, mime string, callErr error) {
 	// 保持目标比例；供应商不支持尺寸时明确返回错误，不静默生成错误比例。
-	size := map[string]string{"9:16": "864x1536", "16:9": "1536x864", "1:1": "1024x1024"}[in.AspectRatio]
+	size := map[string]string{"9:16": "864x1536", "16:9": "1536x864", "1:1": "1024x1024", "2:3": "1024x1536"}[in.AspectRatio]
 	payload := map[string]any{"model": in.ModelCode, "prompt": in.Prompt, "n": 1, "size": size}
 	if in.ReferenceDataURI != "" {
 		payload["image"] = in.ReferenceDataURI
@@ -103,31 +107,51 @@ func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) 
 	if callErr != nil {
 		result, errorMessage = "failed", callErr.Error()
 	}
+	source := w.source
+	if source == "" {
+		source = "ai_drama"
+	}
+	requestBody, responseBody := prepared.Body, raw
+	if w.omitCallContent {
+		requestBody, responseBody, truncated = nil, nil, false
+		if callErr != nil {
+			errorMessage = imageFailureMessage(status, callErr)
+		}
+	}
 	recordCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err = w.gateway.RecordCall(recordCtx, modelgateway.RecordCallInput{OrganizationID: in.OrganizationID, UserID: in.UserID, DepartmentID: prepared.Caller.DepartmentID, AuthType: "user", ModelID: route.ModelID, ProviderID: route.ProviderID, RequestID: uuid.NewString(), ModelCode: route.ModelCode, ModelType: "image", UpstreamModelID: route.UpstreamModelID, Result: result, HTTPStatus: status, LatencyMS: time.Since(started).Milliseconds(), Source: "ai_drama", Operation: "image", RequestBody: prepared.Body, ResponseBody: raw, ResponseTruncated: truncated, ErrorMessage: errorMessage}); err != nil {
+	if err = w.gateway.RecordCall(recordCtx, modelgateway.RecordCallInput{OrganizationID: in.OrganizationID, UserID: in.UserID, DepartmentID: prepared.Caller.DepartmentID, AuthType: "user", ModelID: route.ModelID, ProviderID: route.ProviderID, RequestID: uuid.NewString(), ModelCode: route.ModelCode, ModelType: "image", UpstreamModelID: route.UpstreamModelID, Result: result, HTTPStatus: status, LatencyMS: time.Since(started).Milliseconds(), Source: source, Operation: "image", RequestBody: requestBody, ResponseBody: responseBody, ResponseTruncated: truncated, ErrorMessage: errorMessage}); err != nil {
 		return nil, "", &drama.ImageFailure{Message: "记录图片调用日志失败，请联系管理员检查服务。", Cause: fmt.Errorf("记录图片模型调用失败: %w", err)}
 	}
 	if callErr != nil {
-		message := "图片生成失败，请查看调用记录。"
-		switch {
-		case errors.Is(callErr, context.DeadlineExceeded):
-			message = "图片模型响应超时，请重试。"
-		case status == 400:
-			message = "图片模型拒绝了请求（HTTP 400），请确认模型支持所选比例和参考图。"
-		case status == 401 || status == 403:
-			message = fmt.Sprintf("图片模型鉴权失败（HTTP %d），请检查供应商配置。", status)
-		case status == 429:
-			message = "图片模型调用过于频繁，请稍后重试。"
-		case status >= 500:
-			message = "图片供应商暂时不可用，请稍后重试。"
-		case status >= 200 && status < 300:
-			message = "图片模型返回的图片无法读取，请查看调用记录。"
+		failure := &drama.ImageFailure{Message: imageFailureMessage(status, callErr)}
+		if !w.omitCallContent {
+			failure.Cause = callErr
 		}
-		return data, mime, &drama.ImageFailure{Message: message, Cause: callErr}
+		return data, mime, failure
 	}
 	return data, mime, nil
 }
+
+func imageFailureMessage(status int, err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "图片模型响应超时，请重试。"
+	case status == 400:
+		return "图片模型拒绝了请求（HTTP 400），请确认模型支持所选比例和参考图。"
+	case status == 401 || status == 403:
+		return fmt.Sprintf("图片模型鉴权失败（HTTP %d），请检查供应商配置。", status)
+	case status == 429:
+		return "图片模型调用过于频繁，请稍后重试。"
+	case status >= 500:
+		return "图片供应商暂时不可用，请稍后重试。"
+	case status >= 200 && status < 300:
+		return "图片模型返回的图片无法读取，请查看调用记录。"
+	default:
+		return "图片生成失败，请查看调用记录。"
+	}
+}
+
 func dramaImageMIME(data []byte) (string, error) {
 	if len(data) == 0 || len(data) > 20*1024*1024 {
 		return "", errors.New("图片为空或超过 20 MB")

@@ -1,10 +1,14 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"net/url"
 	"os"
 	"reflect"
@@ -17,9 +21,12 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"harness-admin/internal/identity"
+	"harness-admin/internal/novel"
 	"harness-admin/internal/platformadmin"
 	"harness-admin/internal/store/postgres"
 )
+
+const expectedMigrationVersion = 62
 
 // 需要具备 CREATE DATABASE 权限的专用测试实例；绝不能指向生产数据库。
 func TestMigrateBaselineMatchesLegacy(t *testing.T) {
@@ -70,8 +77,8 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 	if err := freshPool.QueryRow(ctx, `SELECT COUNT(*) FROM goose_db_version WHERE is_applied AND version_id > 0`).Scan(&appliedCount); err != nil {
 		t.Fatalf("读取基线执行次数失败: %v", err)
 	}
-	if appliedCount != 39 {
-		t.Fatalf("全新数据库执行了 %d 个迁移，预期执行基线及 21～58 号增量迁移", appliedCount)
+	if expected := expectedMigrationVersion - baselineVersion + 1; appliedCount != expected {
+		t.Fatalf("全新数据库执行了 %d 个迁移，预期 %d 个", appliedCount, expected)
 	}
 
 	legacyConfig, err := pgx.ParseConfig(legacyURL)
@@ -113,6 +120,84 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 		t.Fatalf("基线数据库初始化企业管理员失败: %v", err)
 	}
 	migrationTestAdminPermissions(t, ctx, freshPool, bootstrap.OrganizationID)
+	t.Run("小说作品保存与隔离", func(t *testing.T) {
+		repo := postgres.NewNovelRepository(freshPool)
+		service := novel.NewService(repo, nil, nil, nil)
+		owner := novel.Owner{OrganizationID: bootstrap.OrganizationID, UserID: bootstrap.UserID}
+		project, err := service.Create(ctx, owner, novel.CreateInput{Title: "潮汐档案", Brief: "守塔人听到呼救", ChapterCount: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated, err := service.Apply(ctx, owner, project.ID, novel.Action{
+			Kind: "confirm_outline", Version: project.Version,
+			Outline: &novel.Outline{Synopsis: "追查声源", World: "孤岛", Characters: "守塔人",
+				Beats: []novel.Beat{{Title: "雾笛", Goal: "发现异常信号"}}},
+		})
+		if err != nil || updated.Version != 2 {
+			t.Fatalf("保存作品版本失败: %+v %v", updated, err)
+		}
+		stored, err := service.Get(ctx, owner, project.ID)
+		if err != nil || !stored.Confirmed || stored.Outline == nil || stored.Outline.Beats[0].Title != "雾笛" {
+			t.Fatalf("读取持久化大纲失败: %+v %v", stored, err)
+		}
+		stored.Title = "逆潮灯语"
+		if renamed, err := repo.Save(ctx, owner, stored); err != nil || renamed.Version != 3 {
+			t.Fatalf("更新作品名失败: %+v %v", renamed, err)
+		}
+		if _, err := repo.Save(ctx, owner, project); !errors.Is(err, novel.ErrConflict) {
+			t.Fatalf("过期版本未被拒绝: %v", err)
+		}
+		other := novel.Owner{OrganizationID: owner.OrganizationID, UserID: "00000000-0000-0000-0000-000000000000"}
+		if _, err := service.Get(ctx, other, project.ID); !errors.Is(err, novel.ErrNotFound) {
+			t.Fatalf("他人的作品未隔离: %v", err)
+		}
+		if books, err := service.List(ctx, owner); err != nil || len(books) != 1 || books[0].ID != project.ID || books[0].Title != stored.Title {
+			t.Fatalf("读取作品列表失败: %+v %v", books, err)
+		}
+		beats := make([]novel.Beat, 30)
+		for i := range beats {
+			beats[i] = novel.Beat{Title: fmt.Sprintf("续写 %d", i+1), Goal: "继续调查"}
+		}
+		updated, err = service.Apply(ctx, owner, project.ID, novel.Action{Kind: "append_chapters", Version: 3, Beats: beats})
+		if err != nil || updated.ChapterCount != 31 || len(updated.Chapters) != 31 || updated.Outline.Beats[0].Title != "雾笛" {
+			t.Fatalf("追加到 30 章以上失败: 章节数 %d, 工作区章节数 %d, 错误 %v", updated.ChapterCount, len(updated.Chapters), err)
+		}
+		if books, err := service.List(ctx, owner); err != nil || len(books) != 1 || books[0].ChapterCount != 31 {
+			t.Fatalf("章节总数未持久化: %+v %v", books, err)
+		}
+		var coverImage bytes.Buffer
+		if err := png.Encode(&coverImage, image.NewNRGBA(image.Rect(0, 0, 6, 9))); err != nil {
+			t.Fatal(err)
+		}
+		firstCover, err := service.UploadCover(ctx, owner, project.ID, coverImage.Bytes())
+		if err != nil || firstCover.Revision == "" || firstCover.Source != "upload" {
+			t.Fatalf("初次上传封面失败: %+v %v", firstCover, err)
+		}
+		secondCover, err := service.UploadCover(ctx, owner, project.ID, coverImage.Bytes())
+		if err != nil || secondCover.Revision == firstCover.Revision {
+			t.Fatalf("替换封面未生成新地址: %+v %v", secondCover, err)
+		}
+		imageData, err := service.CoverContent(ctx, owner, project.ID, secondCover.Revision)
+		if err != nil || imageData.MIME != "image/png" || !bytes.Equal(imageData.Data, coverImage.Bytes()) {
+			t.Fatalf("读取封面失败: %q %v", imageData.MIME, err)
+		}
+		if _, err := service.CoverContent(ctx, other, project.ID, secondCover.Revision); !errors.Is(err, novel.ErrNotFound) {
+			t.Fatalf("他人的封面未隔离: %v", err)
+		}
+		if _, err := service.CoverContent(ctx, owner, project.ID, firstCover.Revision); !errors.Is(err, novel.ErrNotFound) {
+			t.Fatalf("已替换的封面版本仍可读取: %v", err)
+		}
+		if _, err := repo.SaveCover(ctx, owner, project.ID, firstCover.Revision, firstCover, imageData); !errors.Is(err, novel.ErrConflict) {
+			t.Fatalf("过期封面版本未被拒绝: %v", err)
+		}
+		if books, err := service.List(ctx, owner); err != nil || len(books) != 1 || books[0].Cover == nil || books[0].Cover.Revision != secondCover.Revision {
+			t.Fatalf("作品列表未包含当前封面: %+v %v", books, err)
+		}
+		final, err := service.Get(ctx, owner, project.ID)
+		if err != nil || final.Version != 4 || final.Cover == nil || final.Cover.Revision != secondCover.Revision {
+			t.Fatalf("保存封面改变了作品版本或详情未返回封面: %+v %v", final, err)
+		}
+	})
 	created, err := postgres.NewPlatformAdminRepository(freshPool).CreateOrganization(ctx, platformadmin.OrganizationCreation{
 		Code: "migration-platform", Name: "平台创建的测试企业",
 		AdminUsername: "admin", AdminDisplayName: "管理员", AdminPasswordHash: "test-hash",
@@ -210,8 +295,8 @@ func migrationTestSnapshot(t *testing.T, ctx context.Context, databaseURL string
 	if err := conn.QueryRow(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil {
 		t.Fatalf("读取迁移版本失败: %v", err)
 	}
-	if version != 58 {
-		t.Fatalf("迁移版本为 %d，预期 58", version)
+	if version != expectedMigrationVersion {
+		t.Fatalf("迁移版本为 %d，预期 %d", version, expectedMigrationVersion)
 	}
 	return append(snapshot, fmt.Sprintf("version|%d", version))
 }

@@ -6,6 +6,373 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /ai-novel/cover-models:
+    get:
+      summary: 查询当前作者可调用的封面图片模型
+      operationId: listNovelCoverModels
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 图片模型列表。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [code, name]
+                      properties:
+                        code: { type: string }
+                        name: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /ai-novel/models:
+    get:
+      summary: 查询当前作者可调用的文本模型
+      operationId: listNovelModels
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 文本模型列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [code, name]
+                      properties:
+                        code: { type: string }
+                        name: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /ai-novel/ideas/refine:
+    post:
+      summary: 优化故事灵感
+      description: 使用当前作者可调用的文本模型，根据原始灵感和可选优化要求生成预览。作者可选择将结果用于创作。
+      operationId: refineNovelIdea
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [brief, modelCode]
+              properties:
+                brief: { type: string, minLength: 1, maxLength: 4000 }
+                instruction: { type: string, maxLength: 1200, description: 作者希望如何优化灵感。 }
+                modelCode: { type: string, minLength: 1, maxLength: 160 }
+      responses:
+        '200':
+          description: 优化后的故事灵感。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [brief]
+                    properties:
+                      brief: { type: string, minLength: 1, maxLength: 4000 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502':
+          description: 文本模型调用失败或输出不符合结构要求。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /ai-novel/projects:
+    get:
+      summary: 查询当前组织内作者本人的作品
+      operationId: listNovelProjects
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 按更新时间倒序排列的作品列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/NovelBook' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: 创建空白小说作品
+      operationId: createNovelProject
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [brief, chapterCount]
+              properties:
+                title: { type: string, maxLength: 120 }
+                brief: { type: string, minLength: 1, maxLength: 4000 }
+                chapterCount: { type: integer, minimum: 1, maximum: 30 }
+                suggestTitle: { type: boolean, default: false, description: 开启时可省略书名，作品将以「未命名小说」创建。 }
+              if:
+                not:
+                  required: [suggestTitle]
+                  properties:
+                    suggestTitle: { const: true }
+              then:
+                required: [title]
+                properties:
+                  title: { minLength: 1 }
+      responses:
+        '201': { $ref: '#/components/responses/NovelProjectResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /ai-novel/projects/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 读取小说大纲、章节与最新版本
+      operationId: getNovelProject
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/NovelProjectResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-novel/projects/{id}/cover:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 读取本人小说的封面图片
+      operationId: getNovelCover
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: v, in: query, required: false, schema: { type: string, format: uuid }, description: 封面版本。省略时返回当前封面。 }
+      responses:
+        '200':
+          description: 当前封面的图片内容，仅本人可读取。
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: 上传并替换本人小说的封面
+      operationId: uploadNovelCover
+      description: 接受 JPEG、PNG、WebP，图片最多 10 MiB、每条边最多 4096 像素。只更新封面。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+            encoding:
+              file:
+                contentType: image/jpeg, image/png, image/webp
+      responses:
+        '200': { $ref: '#/components/responses/NovelCoverResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NovelCoverConflict' }
+  /ai-novel/projects/{id}/cover/generate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 根据故事内容生成本人小说的封面预览
+      operationId: generateNovelCover
+      description: 图片模型依据书名、故事灵感、可用的大纲资料和可选封面要求绘制竖版插画。每部作品保留最新成功的预览 30 分钟，作者可在预览期间确认设为正式封面。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [modelCode]
+              properties:
+                modelCode: { type: string, minLength: 1, maxLength: 160 }
+                instruction: { type: string, maxLength: 1200, description: 可选的构图、题材或风格要求。 }
+      responses:
+        '200':
+          description: 封面预览及其确认令牌。
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [token, previewUrl]
+                    properties:
+                      token: { type: string, format: uuid }
+                      previewUrl: { type: string, format: uri-reference }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502':
+          description: 图片模型调用失败或返回了无效图片，之前成功的预览仍在有效期内可用。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /ai-novel/projects/{id}/cover/previews/{token}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: token, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 读取本人小说最新的候选封面图片
+      operationId: getNovelCoverPreview
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 当前候选封面，仅本人可读取。
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NovelCoverPreviewNotFound' }
+  /ai-novel/projects/{id}/cover/apply:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 将预览图片设为本人小说的正式封面
+      operationId: applyNovelCoverPreview
+      description: 以生成预览时的正式封面版本为准校验并保存，正式封面在此期间被其他操作更新时返回冲突。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/NovelCoverResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NovelCoverPreviewNotFound' }
+        '409': { $ref: '#/components/responses/NovelCoverConflict' }
+  /ai-novel/projects/{id}/chapter-plan:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 为已确认大纲的小说生成待追加的章节蓝图
+      description: 仅返回新增章节蓝图，现有章节和作品版本保持原样。确认后通过追加章节操作保存。
+      operationId: planNovelChapters
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, count, modelCode]
+              properties:
+                version: { type: integer, minimum: 1 }
+                count: { type: integer, minimum: 1, maximum: 30 }
+                modelCode: { type: string, minLength: 1, maxLength: 160 }
+                instruction: { type: string, maxLength: 1200, description: 可选的续写方向。 }
+      responses:
+        '200':
+          description: 待确认的新增章节蓝图。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [beats]
+                    properties:
+                      beats:
+                        type: array
+                        minItems: 1
+                        maxItems: 30
+                        items: { $ref: '#/components/schemas/NovelBeat' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 作品版本冲突或作品大纲尚未确认。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '502':
+          description: 文本模型调用失败或输出不符合结构要求。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /ai-novel/projects/{id}/actions:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 管理大纲、追加章节、写稿、审稿和定稿
+      description: 模型操作在本次请求中完成。成功后返回完整作品及新版本。大纲确认后可分批追加新章，每次最多 30 章，作品最多 500 章。定稿会保存作者确认的正文与连续性摘要，并开放下一章。生成大纲时填写修改意见，模型会依据原始灵感、当前大纲和修改意见定向修订。省略修改意见时，模型从作品资料重新生成。
+      operationId: applyNovelAction
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NovelAction' }
+      responses:
+        '200': { $ref: '#/components/responses/NovelProjectResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 作品版本冲突，或当前创作阶段不允许操作。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '502':
+          description: 文本模型调用失败或输出不符合结构要求。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   /ai-drama/styles:
     get:
       summary: 查询可选择的漫剧视觉风格，仅返回公开展示字段
@@ -3646,6 +4013,34 @@ components:
       scheme: bearer
       bearerFormat: JWT
   responses:
+    NovelCoverResponse:
+      description: 当前封面及本次更新后的图片地址。
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { $ref: '#/components/schemas/NovelCover' }
+    NovelCoverConflict:
+      description: 封面已被其他操作更新。应用预览时可重新生成预览后确认。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NovelCoverPreviewNotFound:
+      description: 作品不存在，或者预览已过期或被新的候选封面替代。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NovelProjectResponse:
+      description: 小说作品及当前创作状态。
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { $ref: '#/components/schemas/NovelProject' }
     BadRequest:
       description: 请求参数不正确。
       content:
@@ -3667,6 +4062,121 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
+    NovelCover:
+      type: object
+      required: [url, source, updatedAt]
+      properties:
+        url: { type: string, format: uri-reference, description: 需要本人会话的同源图片地址，每次更换封面后更新。 }
+        source: { type: string, enum: [upload, ai] }
+        updatedAt: { type: string, format: date-time }
+    NovelBook:
+      type: object
+      required: [id, title, chapterCount, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        chapterCount: { type: integer, minimum: 1, maximum: 500 }
+        updatedAt: { type: string, format: date-time }
+        cover: { $ref: '#/components/schemas/NovelCover' }
+    NovelBeat:
+      type: object
+      required: [title, goal]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        goal: { type: string, minLength: 1, maxLength: 1200 }
+    NovelOutline:
+      type: object
+      required: [synopsis, world, characters, beats]
+      properties:
+        synopsis: { type: string, minLength: 1, maxLength: 4000 }
+        world: { type: string, minLength: 1, maxLength: 4000 }
+        characters: { type: string, minLength: 1, maxLength: 4000 }
+        beats:
+          type: array
+          description: 按章节顺序排列，数量必须等于作品计划章数。
+          minItems: 1
+          maxItems: 500
+          items: { $ref: '#/components/schemas/NovelBeat' }
+    NovelProject:
+      allOf:
+        - $ref: '#/components/schemas/NovelBook'
+        - type: object
+          required: [brief, version, modelCode, outline, confirmed, chapters]
+          properties:
+            brief: { type: string }
+            version: { type: integer, minimum: 1 }
+            modelCode: { type: string, description: 上次成功使用的文本模型编码。 }
+            needsTitle: { type: boolean, description: 尚未获得有效的 AI 书名。生成大纲时会再次尝试命名。 }
+            outline:
+              oneOf:
+                - $ref: '#/components/schemas/NovelOutline'
+                - type: 'null'
+            confirmed: { type: boolean }
+            chapters:
+              type: array
+              items:
+                type: object
+                required: [body, summary, review, final]
+                properties:
+                  body: { type: string }
+                  summary: { type: string }
+                  review: { type: string, description: 统一保存为文本的审稿意见，数组形式的模型输出按条目合并。 }
+                  final: { type: boolean }
+    NovelAction:
+      type: object
+      required: [kind, version]
+      properties:
+        kind:
+          type: string
+          enum: [generate_outline, save_outline, confirm_outline, append_chapters, write, save_draft, review, finalize]
+        version: { type: integer, minimum: 1, description: 客户端读取到的作品版本。 }
+        chapter: { type: integer, minimum: 1, maximum: 500 }
+        modelCode: { type: string, minLength: 1, maxLength: 160 }
+        outline:
+          $ref: '#/components/schemas/NovelOutline'
+          description: 定向修订时可提交未保存的完整当前大纲。省略时使用作品中已保存的大纲。
+        beats:
+          type: array
+          minItems: 1
+          maxItems: 30
+          description: 按顺序追加到现有大纲末尾的新章节蓝图。
+          items: { $ref: '#/components/schemas/NovelBeat' }
+        body: { type: string, minLength: 1, maxLength: 8000 }
+        summary: { type: string, maxLength: 500 }
+        instruction: { type: string, maxLength: 1200, description: 作者的写作要求或大纲修改意见。生成大纲时提供非空意见即按当前大纲定向修订。 }
+      allOf:
+        - if:
+            properties:
+              kind: { enum: [generate_outline, write, review] }
+          then:
+            required: [modelCode]
+        - if:
+            properties:
+              kind: { enum: [save_outline, confirm_outline] }
+          then:
+            required: [outline]
+        - if:
+            properties:
+              kind: { const: append_chapters }
+          then:
+            required: [beats]
+        - if:
+            properties:
+              kind: { enum: [write, save_draft, review, finalize] }
+          then:
+            required: [chapter]
+        - if:
+            properties:
+              kind: { enum: [save_draft, finalize] }
+          then:
+            required: [body]
+        - if:
+            properties:
+              kind: { const: finalize }
+          then:
+            required: [summary]
+            properties:
+              summary: { minLength: 1 }
     DramaStyleOption:
       type: object
       additionalProperties: false

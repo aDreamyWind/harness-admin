@@ -16,13 +16,17 @@ import (
 const visualPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7x8AAAAASUVORK5CYII="
 
 type visualGatewayStub struct {
-	record    modelgateway.RecordCallInput
-	recordErr error
+	record     modelgateway.RecordCallInput
+	recordErr  error
+	prepareErr error
 }
 
 func (g *visualGatewayStub) PrepareForUserOperation(_ context.Context, org, user string, body []byte, op string) (modelgateway.PreparedRequest, error) {
 	if op != "image" {
 		panic("unexpected operation")
+	}
+	if g.prepareErr != nil {
+		return modelgateway.PreparedRequest{}, g.prepareErr
 	}
 	return modelgateway.PreparedRequest{Caller: modelgateway.Caller{OrganizationID: org, UserID: user}, Route: modelgateway.Route{ModelID: "model", ProviderID: "provider", ModelType: "image", ModelCode: "painter"}, Body: body}, nil
 }
