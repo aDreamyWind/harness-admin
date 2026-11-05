@@ -1,6 +1,6 @@
 import { AimOutlined, CloudUploadOutlined, ScanOutlined } from '@ant-design/icons'
 import { Alert, Button, Input, Modal, Segmented, Select, Space } from 'antd'
-import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type PointerEvent } from 'react'
 import {
   detectTryOnGarments, generateTryOnPerson, saveTryOnAsset,
   type TryOnAsset, type TryOnBox, type TryOnCandidate, type TryOnKind, type TryOnModels,
@@ -83,16 +83,19 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
     return () => URL.revokeObjectURL(url)
   }, [file])
 
-  async function pick(source?: File) {
+  async function pick(source?: File, pasted = false) {
     if (!source || busy) return
     setError('')
     setWorking('upload')
     try {
       setFile(await normalizePhoto(source))
-      if (!name.trim()) setName(source.name.replace(/\.[^.]+$/, '').slice(0, 80))
+      setName((current) => current.trim() ? current :
+        pasted ? '粘贴图片' : source.name.replace(/\.[^.]+$/, '').slice(0, 80))
       setCandidates([])
       setActive(undefined)
       setCrop(undefined)
+      setDraft(undefined)
+      pointerStart.current = undefined
       setHint('')
     } catch (error) {
       setError(errorText(error))
@@ -100,6 +103,23 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
       setWorking(undefined)
     }
   }
+
+  const pasteImage = useEffectEvent((event: ClipboardEvent) => {
+    const clipboard = event.clipboardData
+    if (!clipboard || event.defaultPrevented || busy) return
+    const item = Array.from(clipboard.items).find((entry) => entry.kind === 'file' && entry.type.startsWith('image/'))
+    const image = item?.getAsFile() ?? Array.from(clipboard.files).find((file) => file.type.startsWith('image/'))
+    if (!image) return
+    event.preventDefault()
+    void pick(image, true)
+  })
+
+  useEffect(() => {
+    if (mode !== 'upload') return
+    const onPaste = (event: ClipboardEvent) => pasteImage(event)
+    document.addEventListener('paste', onPaste)
+    return () => document.removeEventListener('paste', onPaste)
+  }, [mode])
 
   function choose(candidate: TryOnCandidate, index: number) {
     setActive(index)
@@ -214,10 +234,11 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
               {selection && <span className="tryon-crop-box" style={boxStyle(selection)} />}
             </div>
             <Button size="small" disabled={busy} onClick={() => input.current?.click()}>更换图片</Button>
+            <small>也可直接粘贴图片来更换</small>
           </div> :
             <button className="tryon-drop" type="button" disabled={busy} onClick={() => input.current?.click()}
               onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); void pick(e.dataTransfer.files[0]) }}>
-              <CloudUploadOutlined /><strong>{working === 'upload' ? '正在读取图片' : '点击或拖入图片'}</strong>
+              <CloudUploadOutlined /><strong>{working === 'upload' ? '正在读取图片' : '点击、拖入或粘贴图片'}</strong>
               <span>{person || kind === 'pose' ? '推荐单人、全身清晰、遮挡少的照片或插画' : '支持 JPG、PNG 和 WebP'}</span>
             </button>}
           {kind === 'garment' && file && <>

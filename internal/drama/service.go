@@ -130,6 +130,7 @@ type Service struct {
 	visual         VisualRepository
 	images         ImageGenerator
 	files          ImageFiles
+	canvasMedia    CanvasMediaFiles
 	styles         StyleRepository
 	storyboards    StoryboardRepository
 	repairs        RepairRepository

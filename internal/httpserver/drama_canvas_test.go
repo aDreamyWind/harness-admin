@@ -15,15 +15,43 @@ type visualServiceStub struct {
 	scope     []string
 	err       error
 	generated chan string
+	extras    *drama.CanvasExtras
 }
 
 func (s *visualServiceStub) Canvas(_ context.Context, o, u, p string) (drama.Canvas, error) {
 	s.scope = []string{o, u, p}
-	return drama.Canvas{Forms: []drama.AssetForm{}, Revision: 1, Zoom: 0.6}, s.err
+	return drama.Canvas{Forms: []drama.AssetForm{}, Revision: 1, Zoom: 0.6, Extras: s.extras}, s.err
 }
-func (s *visualServiceStub) SaveCanvas(_ context.Context, o, u, p string, _ drama.CanvasLayout) (int, error) {
+func (s *visualServiceStub) SaveCanvas(_ context.Context, o, u, p string, layout drama.CanvasLayout) (int, error) {
 	s.scope = []string{o, u, p}
+	if s.err == nil && layout.Extras != nil {
+		s.extras = layout.Extras
+	}
 	return 2, s.err
+}
+
+func TestDramaCanvasExtrasWire(t *testing.T) {
+	service := &visualServiceStub{}
+	router := New(Dependencies{AppName: "test", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}}, DramaVisual: service, SessionCookie: "session"})
+	call := func(method, suffix, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, "/api/v1/ai-drama/projects/project/canvas"+suffix, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: "session", Value: "token"})
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", "csrf-token")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		return res
+	}
+	if res := call(http.MethodGet, "", ""); res.Code != 200 || strings.Contains(res.Body.String(), `"extras"`) {
+		t.Fatalf("未保存过的素材应省略: %s", res.Body)
+	}
+	if res := call(http.MethodPut, "/layout", `{"revision":1,"zoom":1,"extras":{"hidden":[],"cards":[{"id":"素材编号","kind":"text","title":"记录","content":"画布内容","position":{"x":8,"y":9}}],"links":[]}}`); res.Code != 200 || service.extras == nil || len(service.extras.Cards) != 1 || service.extras.Cards[0].Position.X != 8 {
+		t.Fatalf("素材请求未绑定: %d %s", res.Code, res.Body)
+	}
+	if res := call(http.MethodGet, "", ""); res.Code != 200 || !strings.Contains(res.Body.String(), `"extras"`) || !strings.Contains(res.Body.String(), `"content":"画布内容"`) {
+		t.Fatalf("读取画布素材未返回: %d %s", res.Code, res.Body)
+	}
 }
 func (s *visualServiceStub) EditForm(_ context.Context, o, u, p, f string, _ drama.FormEdit) error {
 	s.scope = []string{o, u, p, f}

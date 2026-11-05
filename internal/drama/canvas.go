@@ -38,11 +38,12 @@ type AssetForm struct {
 	CurrentImageID string  `json:"-"`
 }
 type Canvas struct {
-	Forms    []AssetForm `json:"forms"`
-	X        float64     `json:"x"`
-	Y        float64     `json:"y"`
-	Zoom     float64     `json:"zoom"`
-	Revision int         `json:"revision"`
+	Forms    []AssetForm   `json:"forms"`
+	X        float64       `json:"x"`
+	Y        float64       `json:"y"`
+	Zoom     float64       `json:"zoom"`
+	Revision int           `json:"revision"`
+	Extras   *CanvasExtras `json:"extras,omitempty"`
 }
 type CanvasPosition struct {
 	ID string  `json:"id"`
@@ -55,6 +56,7 @@ type CanvasLayout struct {
 	Y         float64          `json:"y"`
 	Zoom      float64          `json:"zoom"`
 	Positions []CanvasPosition `json:"positions"`
+	Extras    *CanvasExtras    `json:"extras,omitempty"`
 }
 type FormEdit struct {
 	Revision    int    `json:"revision"`
@@ -151,6 +153,13 @@ func (s *Service) SaveCanvas(ctx context.Context, org, user, project string, in 
 			return 0, ErrInvalidInput
 		}
 		seen[p.ID] = true
+	}
+	if in.Extras != nil {
+		extras, err := normalizeCanvasExtras(project, *in.Extras)
+		if err != nil {
+			return 0, err
+		}
+		in.Extras = &extras
 	}
 	return s.visual.SaveCanvasLayout(ctx, org, user, project, in)
 }

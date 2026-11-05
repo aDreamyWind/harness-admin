@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"log/slog"
@@ -15,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"harness-admin/internal/tryon"
 )
@@ -191,10 +194,21 @@ func TestTryOnHTTPFlow(t *testing.T) {
 	upload("/assets", map[string]string{"kind": "garment", "name": "无效框", "category": "上衣", "box": "[0,0,1,1,1]"}, 400)
 	garment := tryOnResponse[tryon.Asset](t, upload("/assets", map[string]string{"kind": "garment", "name": "蓝色衬衫", "category": "上衣", "box": "[0.1,0.2,0.9,0.8]"}, 201))
 	pose := tryOnResponse[tryon.Asset](t, upload("/assets", map[string]string{"kind": "pose", "name": "站姿"}, 201))
+	legacyKey := "harness-admin/tryon/preset/" + owner.OrganizationID + "/" + owner.UserID + "/garment-blazer.png"
+	legacyID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(legacyKey)).String()
+	repo.assets[legacyID] = tryon.AssetImage{
+		Asset: tryon.Asset{ID: legacyID, Kind: tryon.Garment, Name: "焦糖色翻领外套", Category: "外套"},
+		Image: tryon.Image{Data: photo.Bytes(), MIME: "image/png"},
+	}
 	assets := tryOnResponse[[]tryon.Asset](t, send("GET", "/assets", "", nil, true, false, 200))
 	privateCount := 0
+	legacyRetired := false
 	builtin := make(map[string][]tryon.Asset)
 	for _, asset := range assets {
+		if asset.ID == legacyID {
+			legacyRetired = asset.Builtin && asset.Retired
+			continue
+		}
 		if asset.Builtin {
 			builtin[asset.Kind] = append(builtin[asset.Kind], asset)
 		} else {
@@ -204,8 +218,18 @@ func TestTryOnHTTPFlow(t *testing.T) {
 	if privateCount != 3 || pose.Kind != tryon.Pose {
 		t.Fatalf("未找到已保存的三种素材: %#v", assets)
 	}
-	if len(builtin[tryon.Person2D]) == 0 || len(builtin[tryon.PersonReal]) == 0 || len(builtin[tryon.Garment]) < 2 || len(builtin[tryon.Pose]) < 2 {
+	if len(builtin[tryon.Person2D]) == 0 || len(builtin[tryon.PersonReal]) == 0 || len(builtin[tryon.Garment]) != 3 || len(builtin[tryon.Pose]) < 2 {
 		t.Fatalf("试衣样例素材未覆盖人物、衣物和姿态库: %#v", builtin)
+	}
+	oldImage := send("GET", "/assets/"+legacyID+"/content", "", nil, true, false, 200)
+	if !legacyRetired || !bytes.Equal(oldImage.Body.Bytes(), photo.Bytes()) {
+		t.Fatal("旧样例应标记为已下架，并保留试穿引用的图片")
+	}
+	for _, asset := range builtin[tryon.Garment] {
+		res := send("GET", "/assets/"+asset.ID+"/content", "", nil, true, false, 200)
+		if _, err := jpeg.Decode(res.Body); err != nil || res.Header().Get("Content-Type") != "image/jpeg" {
+			t.Fatalf("无法读取内置衣物 %s 的商品图: %v", asset.Name, err)
+		}
 	}
 	cropped := send("GET", "/assets/"+garment.ID+"/content", "", nil, true, false, 200)
 	info, err := png.DecodeConfig(cropped.Body)

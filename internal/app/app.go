@@ -110,7 +110,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	novelService := novel.NewService(pgstore.NewNovelRepository(db), novelModel, novelModel, novelCoverStore).
 		WithCoverStyles(novelModel).WithCoverGeneration(novelCoverStore)
 	dramaMedia := &dramaMediaFiles{directory: cfg.DramaMediaDirectory}
-	dramaService := drama.NewService(dramaRepository, &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder}).WithVisuals(dramaRepository, &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}, dramaMedia).WithStyles(dramaRepository).WithStoryboards(dramaRepository).WithRepairCoordinator(dramaRepository).WithSegmentVideos(dramaRepository, &dramaVideoEngine{gateway: modelGatewayService, forwarder: modelForwarder}, dramaMedia)
+	dramaService := drama.NewService(dramaRepository, &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder}).
+		WithVisuals(dramaRepository, &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}, dramaMedia).
+		WithCanvasMedia(dramaMedia).
+		WithStyles(dramaRepository).
+		WithStoryboards(dramaRepository).
+		WithRepairCoordinator(dramaRepository).
+		WithSegmentVideos(dramaRepository, &dramaVideoEngine{gateway: modelGatewayService, forwarder: modelForwarder}, dramaMedia)
 	if err := dramaService.Recover(startupCtx); err != nil {
 		redisClient.Close()
 		db.Close()
@@ -172,6 +178,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		TryOn:                 tryOnService,
 		Drama:                 dramaService,
 		DramaVisual:           dramaService,
+		DramaCanvasMedia:      dramaService,
 		DramaStoryboards:      dramaService,
 		DramaSegmentVideos:    dramaService,
 		DramaStyles:           dramaService,

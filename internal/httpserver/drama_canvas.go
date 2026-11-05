@@ -11,6 +11,7 @@ import (
 type DramaVisualService interface {
 	Canvas(context.Context, string, string, string) (drama.Canvas, error)
 	SaveCanvas(context.Context, string, string, string, drama.CanvasLayout) (int, error)
+	CreateCanvasAsset(context.Context, string, string, string, drama.CanvasAssetInput) (drama.CanvasAssetResult, error)
 	EditForm(context.Context, string, string, string, string, drama.FormEdit) error
 	DeriveForm(context.Context, string, string, string, string) (string, error)
 	StartImage(context.Context, string, string, string, string, drama.ImageInput) (drama.ImageJob, error)
@@ -20,6 +21,7 @@ type DramaVisualService interface {
 
 func registerDramaCanvasRoutes(router *gin.Engine, deps Dependencies) {
 	group := router.Group("/api/v1/ai-drama/projects/:id", requireSession(deps))
+	group.POST("/canvas/assets", requireCSRF(deps), createDramaCanvasAsset(deps))
 	group.GET("/canvas", func(c *gin.Context) {
 		u := currentSession(c).User
 		out, err := deps.DramaVisual.Canvas(c.Request.Context(), u.OrganizationID, u.ID, c.Param("id"))
@@ -31,6 +33,7 @@ func registerDramaCanvasRoutes(router *gin.Engine, deps Dependencies) {
 		httpx.OK(c, 200, out)
 	})
 	group.PUT("/canvas/layout", requireCSRF(deps), func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 		var in drama.CanvasLayout
 		if err := c.ShouldBindJSON(&in); err != nil {
 			handleDramaError(c, deps, drama.ErrInvalidInput)

@@ -52,28 +52,27 @@ export function TryOnPage() {
   })
 
   useEffect(() => {
-    if (!jobs.data || restored.current) return
+    if (!jobs.data || !assets.data || restored.current) return
+    const items = assets.data
+    const firstBuiltin = (kind: TryOnKind) => items.find((asset) => asset.builtin && !asset.retired && asset.kind === kind)?.id ?? ''
     const job = jobs.data[0]
     if (job) {
-      setJobId(job.id)
-      setSelection({ personId: job.personId, garmentId: job.garmentId, poseId: job.poseId ?? '' })
+      const replaceGarment = job.status !== 'running' && items.some((asset) => asset.id === job.garmentId && asset.retired)
+      setJobId(replaceGarment ? '' : job.id)
+      setSelection({ personId: job.personId, garmentId: replaceGarment ? firstBuiltin('garment') : job.garmentId, poseId: job.poseId ?? '' })
       setChosenModel(job.modelCode)
-    } else if (assets.data) {
-      const items = assets.data
-      const firstBuiltin = (kind: TryOnKind) => items.find((asset) => asset.builtin && asset.kind === kind)?.id ?? ''
-      setSelection({ personId: firstBuiltin('person_2d') || firstBuiltin('person_real'), garmentId: firstBuiltin('garment'), poseId: firstBuiltin('pose') })
     } else {
-      return
+      setSelection({ personId: firstBuiltin('person_2d') || firstBuiltin('person_real'), garmentId: firstBuiltin('garment'), poseId: firstBuiltin('pose') })
     }
     restored.current = true
   }, [assets.data, jobs.data])
 
   const allAssets = assets.data ?? []
   const people = allAssets.filter((a) => a.kind === 'person_2d' || a.kind === 'person_real')
-  const garments = allAssets.filter((a) => a.kind === 'garment')
+  const garments = allAssets.filter((a) => a.kind === 'garment' && !a.retired)
   const poses = allAssets.filter((a) => a.kind === 'pose')
   const person = people.find((a) => a.id === selection.personId)
-  const garment = garments.find((a) => a.id === selection.garmentId)
+  const garment = allAssets.find((a) => a.kind === 'garment' && a.id === selection.garmentId)
   const pose = poses.find((a) => a.id === selection.poseId)
   const current = jobs.data?.find((item) => item.id === jobId)
   const running = jobs.data?.find((item) => item.status === 'running')
@@ -97,6 +96,7 @@ export function TryOnPage() {
   }
 
   function useJob(job: TryOnJob) {
+    restored.current = true
     setSelection({ personId: job.personId, garmentId: job.garmentId, poseId: job.poseId ?? '' })
     setJobId(job.id)
     setChosenModel(job.modelCode)
@@ -210,6 +210,7 @@ function Reference({ title, detail, asset, options, onSelect, onAdd, onBrowse }:
         <div className="tryon-picker">
           <Select aria-label={`选择${title}`} showSearch optionFilterProp="label" allowClear value={asset?.id}
             onChange={onSelect} placeholder={options.length ? '从素材库选择' : '暂无素材'}
+            labelRender={({ label }) => label ?? asset?.name}
             options={options.map((a) => ({ label: `${a.name} · ${a.category || tryOnLabels[a.kind]}`, value: a.id }))} />
           <Button icon={<PlusOutlined />} aria-label={`添加${title}`} onClick={onAdd} />
         </div>

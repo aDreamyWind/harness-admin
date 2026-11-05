@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
@@ -41,8 +42,14 @@ func (r *DramaRepository) ReadCanvas(ctx context.Context, org, user, project str
 		return drama.Canvas{}, err
 	}
 	out := drama.Canvas{Forms: []drama.AssetForm{}}
-	if err = tx.QueryRow(ctx, `SELECT viewport_x,viewport_y,viewport_zoom,revision FROM drama_canvas_boards WHERE project_id=$1`, project).Scan(&out.X, &out.Y, &out.Zoom, &out.Revision); err != nil {
+	var extras []byte
+	if err = tx.QueryRow(ctx, `SELECT viewport_x,viewport_y,viewport_zoom,revision,extras FROM drama_canvas_boards WHERE project_id=$1`, project).Scan(&out.X, &out.Y, &out.Zoom, &out.Revision, &extras); err != nil {
 		return out, err
+	}
+	if len(extras) > 0 {
+		if err = json.Unmarshal(extras, &out.Extras); err != nil {
+			return out, fmt.Errorf("读取漫剧画布素材失败: %w", err)
+		}
 	}
 	rows, err := tx.Query(ctx, `SELECT f.id,f.asset_id,a.name,a.kind,COALESCE(f.parent_id::text,''),f.name,f.description,f.gender,f.style,f.aspect_ratio,f.position_x,f.position_y,f.revision,COALESCE(f.current_image_id::text,''),COALESCE(j.status,'idle'),COALESCE(j.error_message,''),COALESCE(f.style_id,'')
  FROM drama_asset_forms f JOIN drama_assets a ON a.id=f.asset_id
@@ -78,13 +85,27 @@ func (r *DramaRepository) SaveCanvasLayout(ctx context.Context, org, user, proje
 	if err = r.visualProject(ctx, tx, org, user, project); err != nil {
 		return 0, err
 	}
+	var extras []byte
+	if in.Extras != nil {
+		extras, err = json.Marshal(in.Extras)
+		if err != nil {
+			return 0, fmt.Errorf("编码漫剧画布素材失败: %w", err)
+		}
+	}
 	var revision int
-	err = tx.QueryRow(ctx, `UPDATE drama_canvas_boards SET viewport_x=$2,viewport_y=$3,viewport_zoom=$4,revision=revision+1,updated_at=now() WHERE project_id=$1 AND revision=$5 RETURNING revision`, project, in.X, in.Y, in.Zoom, in.Revision).Scan(&revision)
+	err = tx.QueryRow(ctx, `UPDATE drama_canvas_boards SET viewport_x=$2,viewport_y=$3,viewport_zoom=$4,
+	 extras=COALESCE($6::jsonb,extras),revision=revision+1,updated_at=now()
+	 WHERE project_id=$1 AND revision=$5 RETURNING revision`, project, in.X, in.Y, in.Zoom, in.Revision, extras).Scan(&revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, drama.ErrCanvasConflict
 	}
 	if err != nil {
 		return 0, err
+	}
+	if in.Extras != nil && len(in.Extras.Hidden)+len(in.Extras.Cards)+len(in.Extras.Links) > 0 {
+		if err = validateCanvasNodeReferences(ctx, tx, project, *in.Extras); err != nil {
+			return 0, err
+		}
 	}
 	for _, p := range in.Positions {
 		tag, e := tx.Exec(ctx, `UPDATE drama_asset_forms f SET position_x=$2,position_y=$3 FROM drama_assets a WHERE f.id=$1 AND a.id=f.asset_id AND a.project_id=$4`, p.ID, p.X, p.Y, project)
@@ -96,6 +117,42 @@ func (r *DramaRepository) SaveCanvasLayout(ctx context.Context, org, user, proje
 		}
 	}
 	return revision, tx.Commit(ctx)
+}
+
+func validateCanvasNodeReferences(ctx context.Context, tx pgx.Tx, project string, extras drama.CanvasExtras) error {
+	rows, err := tx.Query(ctx, `SELECT f.id::text FROM drama_asset_forms f JOIN drama_assets a ON a.id=f.asset_id WHERE a.project_id=$1`, project)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	nodes := make(map[string]bool, len(extras.Cards))
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return err
+		}
+		nodes[id] = true
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range extras.Hidden {
+		if !nodes[id] {
+			return fmt.Errorf("%w：隐藏的形象不属于当前画布", drama.ErrInvalidInput)
+		}
+	}
+	for _, card := range extras.Cards {
+		if nodes[card.ID] {
+			return fmt.Errorf("%w：素材节点编号与画布形象重复", drama.ErrInvalidInput)
+		}
+		nodes[card.ID] = true
+	}
+	for _, link := range extras.Links {
+		if !nodes[link.Source] || !nodes[link.Target] {
+			return fmt.Errorf("%w：连线端点不属于当前画布", drama.ErrInvalidInput)
+		}
+	}
+	return nil
 }
 func lockVisualForm(ctx context.Context, tx pgx.Tx, org, user, project, form string) (drama.AssetForm, error) {
 	var f drama.AssetForm

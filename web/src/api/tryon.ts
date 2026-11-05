@@ -9,6 +9,7 @@ export interface TryOnAsset {
   name: string
   category?: string
   builtin?: boolean
+  retired?: boolean
   createdAt: string
 }
 export interface TryOnCandidate {

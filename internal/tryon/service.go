@@ -40,6 +40,7 @@ type Asset struct {
 	Name      string    `json:"name"`
 	Category  string    `json:"category,omitempty"`
 	Builtin   bool      `json:"builtin,omitempty"`
+	Retired   bool      `json:"retired,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -130,6 +131,12 @@ func (s *Service) ListAssets(ctx context.Context, owner Owner) ([]Asset, error) 
 	byID := make(map[string]int, len(items))
 	for i, asset := range items {
 		byID[asset.ID] = i
+	}
+	for _, file := range retiredPresetFiles {
+		if i, exists := byID[presetID(owner, file)]; exists {
+			items[i].Builtin = true
+			items[i].Retired = true
+		}
 	}
 	for _, p := range presets {
 		asset := p.asset(owner)

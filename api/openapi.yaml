@@ -650,12 +650,12 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     get:
-      summary: 读取项目自由画布与形象生成状态
+      summary: 读取项目自由画布、素材连线与形象生成状态
       operationId: getDramaCanvas
       security: [{ sessionCookie: [] }]
       responses:
         '200':
-          description: 操作成功。图片任务在后台执行，状态由画布接口轮询，失败保留已有图片。
+          description: 返回画布布局、已保存的素材和形象生成状态。历史画布尚未保存过素材时，省略 extras。
           content:
             application/json:
               schema:
@@ -672,7 +672,8 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     put:
-      summary: 保存画布位置及视口（使用版本防止覆盖）
+      summary: 保存画布位置、视口和素材（使用版本防止覆盖）
+      description: 素材节点、手工连线和隐藏形象随布局一起保存。省略 extras 时保留已保存的素材，提交三个空数组可清空。
       operationId: saveDramaCanvasLayout
       security: [{ sessionCookie: [] }]
       parameters:
@@ -684,7 +685,7 @@ paths:
             schema: { $ref: '#/components/schemas/DramaCanvasLayout' }
       responses:
         '200':
-          description: 操作成功。图片任务在后台执行，状态由画布接口轮询，失败保留已有图片。
+          description: 返回保存成功后的画布版本。
           content:
             application/json:
               schema:
@@ -697,6 +698,96 @@ paths:
         '403': { description: CSRF 校验失败。 }
         '404': { description: 项目或形象不存在，或不属于当前用户。 }
         '409': { description: 内容版本冲突、正在生成、未配置图片模型或来源图片尚未生成。 }
+  /ai-drama/projects/{id}/canvas/assets:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 在项目资产目录和画布中创建角色、场景或道具
+      description: 创建项目资产及其默认形象，并在同一事务中更新画布版本。资产可在资产列表中选用，默认形象使用项目风格和资产类型的默认比例。
+      operationId: createDramaCanvasAsset
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaCanvasAssetInput' }
+      responses:
+        '201':
+          description: 返回资产及默认形象的共用编号和新画布版本。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaCanvasAssetResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 画布版本已改变，或项目内已有同名的同类资产。 }
+  /ai-drama/projects/{id}/canvas/media:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 上传项目画布素材
+      description: 上传一个文件。图片支持 PNG、JPG、WebP、GIF，最大 20 MiB。视频支持 MP4、WebM，最大 100 MiB。音频支持 MP3、WAV、Ogg，最大 30 MiB。
+      operationId: uploadDramaCanvasMedia
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              additionalProperties: false
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: 素材已上传。返回的地址可保存在画布节点中。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [id, kind, mime, url]
+                    properties:
+                      id: { type: string, format: uuid }
+                      kind: { type: string, enum: [image, video, audio] }
+                      mime: { type: string }
+                      url: { type: string, format: uri-reference }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { description: 文件超过对应类型的大小限制。 }
+        '415': { description: 不支持的文件格式。 }
+  /ai-drama/projects/{id}/canvas/media/{mediaId}/content:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: mediaId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 读取本人项目中的画布素材
+      operationId: getDramaCanvasMediaContent
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: Range, in: header, schema: { type: string }, description: 播放音频或视频时可指定字节范围。 }
+      responses:
+        '200':
+          description: 素材内容，使用文件实际格式对应的媒体类型。
+          content:
+            'image/*': { schema: { type: string, format: binary } }
+            'video/*': { schema: { type: string, format: binary } }
+            'audio/*': { schema: { type: string, format: binary } }
+        '206': { description: 请求的字节范围。 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '416': { description: 请求的范围超出文件边界。 }
   /ai-drama/projects/{id}/forms/{formId}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4403,6 +4494,7 @@ components:
         name: { type: string }
         category: { type: string }
         builtin: { type: boolean, description: 内置样例时为 true。 }
+        retired: { type: boolean, description: 已下架的内置样例时为 true，仅用于保留历史参考。 }
         createdAt: { type: string, format: date-time }
     TryOnInput:
       type: object
@@ -4652,6 +4744,7 @@ components:
         y: { type: number }
         zoom: { type: number }
         revision: { type: integer }
+        extras: { $ref: '#/components/schemas/DramaCanvasExtras' }
     DramaCanvasLayout:
       type: object
       required: [revision, x, y, zoom, positions]
@@ -4660,6 +4753,7 @@ components:
         x: { type: number, minimum: -1000000, maximum: 1000000 }
         y: { type: number, minimum: -1000000, maximum: 1000000 }
         zoom: { type: number, minimum: 0.05, maximum: 2 }
+        extras: { $ref: '#/components/schemas/DramaCanvasExtras' }
         positions:
           type: array
           maxItems: 10000
@@ -4670,6 +4764,60 @@ components:
               id: { type: string, format: uuid }
               x: { type: number, minimum: -1000000, maximum: 1000000 }
               y: { type: number, minimum: -1000000, maximum: 1000000 }
+    DramaCanvasAssetInput:
+      type: object
+      required: [kind, name, description, x, y, revision]
+      properties:
+        kind: { type: string, enum: [character, scene, prop] }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, minLength: 1, maxLength: 10000 }
+        x: { type: number, minimum: -1000000, maximum: 1000000 }
+        y: { type: number, minimum: -1000000, maximum: 1000000 }
+        revision: { type: integer, minimum: 1 }
+    DramaCanvasAssetResult:
+      type: object
+      required: [id, revision]
+      properties:
+        id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+    DramaCanvasExtras:
+      type: object
+      required: [hidden, cards, links]
+      properties:
+        hidden:
+          type: array
+          maxItems: 10000
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        cards:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            required: [id, kind, title, content, position]
+            properties:
+              id: { type: string, format: uuid }
+              kind: { type: string, enum: [text, image, video, audio] }
+              title: { type: string, minLength: 1, maxLength: 80 }
+              content: { type: string, minLength: 1, maxLength: 10000, description: 文本正文、HTTP(S) 媒体地址，或当前项目的同源画布素材地址。所有素材内容合计不超过 1 MiB。 }
+              position:
+                type: object
+                required: [x, y]
+                properties:
+                  x: { type: number, minimum: -1000000, maximum: 1000000 }
+                  y: { type: number, minimum: -1000000, maximum: 1000000 }
+        links:
+          type: array
+          maxItems: 2000
+          items:
+            type: object
+            required: [id, source, target]
+            properties:
+              id: { type: string, minLength: 1, maxLength: 240 }
+              source: { type: string, format: uuid }
+              target: { type: string, format: uuid }
+              sourceHandle: { type: [string, 'null'], maxLength: 80 }
+              targetHandle: { type: [string, 'null'], maxLength: 80 }
     DramaCanvasRevision:
       type: object
       required: [revision]

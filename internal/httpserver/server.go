@@ -42,6 +42,7 @@ type Dependencies struct {
 	TryOn                 TryOnService
 	Drama                 DramaService
 	DramaVisual           DramaVisualService
+	DramaCanvasMedia      DramaCanvasMediaService
 	DramaStoryboards      DramaStoryboardService
 	DramaSegmentVideos    DramaSegmentVideoService
 	DramaStyles           DramaStyleService
@@ -142,6 +143,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.DramaVisual != nil {
 		registerDramaCanvasRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.DramaCanvasMedia != nil {
+		registerDramaCanvasMediaRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.DramaStyles != nil {
 		registerDramaStyleRoutes(router, deps)

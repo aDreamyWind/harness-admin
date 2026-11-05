@@ -69,14 +69,23 @@
 .drama-canvas-preview:focus-visible { opacity:1; }
 .drama-canvas-node.video video { display:block; width:calc(100% - 12px); margin:6px; border-radius:9px; aspect-ratio:16 / 9; background:#1b2332; }
 .drama-canvas-node.video .drama-canvas-node-caption .anticon { color:#a66328; }
-.drama-canvas-selection-tools { position:absolute; top:76px; right:22px; z-index:8; }
+.drama-canvas-selection-tools { position:absolute; top:76px; right:22px; z-index:8; display:flex; align-items:center; flex-wrap:wrap; gap:6px; max-width:calc(100% - 44px); padding:6px; border:1px solid #e4e8f4; border-radius:10px; background:#fff; }
+.drama-canvas-selection-tools>span { color:#68758b; padding-inline:6px; font-size:12px; }
+.drama-canvas-gesture-hint { position:absolute; left:20px; bottom:151px; pointer-events:none; color:#68758b; font-size:12px; }
+.drama-canvas-drop { position:absolute; inset:76px 18px 18px; z-index:16; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; border:2px dashed #8067d8; border-radius:16px; background:#f5f2fff0; color:#524281; pointer-events:none; }
+.drama-canvas-drop>.anticon { font-size:30px; }
+.drama-canvas-reference .react-flow__edge-path { stroke:#6552b4; }
+.drama-canvas-media-error { padding:20px 14px; color:#875750; font-size:12px; }
+.drama-canvas-preview-audio { width:100%; }
 @media(max-width:650px) {
   .drama-canvas-header>div:last-child>.ant-btn:has(.anticon-plus) { display:inline-flex; }
   .drama-canvas-header>div:last-child>.ant-select { display:none; }
+  .drama-canvas-gesture-hint { display:none; }
 }
 
 .drama-canvas-menu-layer { position:fixed; inset:0; z-index:24; }
-.drama-canvas-menu { position:fixed; width:172px; display:grid; padding:5px; border:1px solid #e4e8f1; border-radius:8px; background:#fff; box-shadow:0 8px 24px #27355020; }
+.drama-canvas-menu { position:fixed; width:172px; max-height:calc(100dvh - 8px); overflow:auto; display:grid; padding:5px; border:1px solid #e4e8f1; border-radius:8px; background:#fff; box-shadow:0 8px 24px #27355020; }
 .drama-canvas-menu .ant-btn { justify-content:flex-start; }
+.drama-canvas-menu>small { padding:5px 10px; color:#68758b; }
 .drama-canvas-text { max-height:200px; overflow:auto; padding:14px; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; }
 .drama-canvas-node.media audio { display:block; width:calc(100% - 12px); margin:6px; }

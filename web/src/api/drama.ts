@@ -216,14 +216,35 @@ export interface DramaAssetForm {
   styleId?: string; style: string; aspectRatio: '9:16' | '16:9' | '1:1'; x: number; y: number; revision: number
   imageUrl?: string; imageStatus: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed'; imageError?: string
 }
-export interface DramaCanvas { forms: DramaAssetForm[]; x: number; y: number; zoom: number; revision: number }
-export interface DramaCanvasLayout { x: number; y: number; zoom: number; revision: number; positions: { id: string; x: number; y: number }[] }
+export type DramaCanvasCardKind = 'text' | 'image' | 'video' | 'audio'
+export type DramaCanvasCard = {
+  id: string
+  kind: DramaCanvasCardKind
+  title: string
+  content: string
+  position: { x: number; y: number }
+}
+export interface DramaCanvasLink { id: string; source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }
+export interface DramaCanvasExtras { hidden: string[]; cards: DramaCanvasCard[]; links: DramaCanvasLink[] }
+export interface DramaCanvas { forms: DramaAssetForm[]; x: number; y: number; zoom: number; revision: number; extras?: DramaCanvasExtras | null }
+export interface DramaCanvasLayout { x: number; y: number; zoom: number; revision: number; positions: { id: string; x: number; y: number }[]; extras?: DramaCanvasExtras }
 export interface DramaImageJob { id: string; formId: string; projectId: string; status: string; modelCode: string }
 const visualBase = (id: string) => `/api/v1/ai-drama/projects/${id}`
 export const getDramaCanvas = (id: string) => request<DramaCanvas>(`${visualBase(id)}/canvas`)
 export const saveDramaCanvasLayout = (id: string, input: DramaCanvasLayout) => request<{ revision: number }>(`${visualBase(id)}/canvas/layout`, {
   method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })
+export function uploadDramaCanvasMedia(projectId: string, file: File) {
+  const body = new FormData()
+  body.append('file', file)
+  return request<{ id: string; kind: Exclude<DramaCanvasCardKind, 'text'>; url: string; mime: string }>(`${visualBase(projectId)}/canvas/media`, {
+    method: 'POST', headers: csrfHeaders(), body,
+  })
+}
+export const createDramaCanvasAsset = (projectId: string, input: { kind: DramaAssetKind; name: string; description: string; x: number; y: number; revision: number }) =>
+  request<{ id: string; revision: number }>(`${visualBase(projectId)}/canvas/assets`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
+  })
 export const editDramaForm = (id: string, form: DramaAssetForm) => request<{ saved: boolean }>(`${visualBase(id)}/forms/${form.id}`, {
   method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision: form.revision, name: form.name, description: form.description, gender: form.gender, ...(form.styleId ? { styleId: form.styleId } : { style: form.style }), aspectRatio: form.aspectRatio }),
 })

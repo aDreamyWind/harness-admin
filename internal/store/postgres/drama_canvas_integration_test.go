@@ -87,13 +87,18 @@ func TestDramaCanvasFormsIsolationAndImageLifecycle(t *testing.T) {
 	}
 	assertAssetPreview("")
 	board, err := repo.ReadCanvas(ctx, org, user, project)
-	if err != nil || len(board.Forms) != 2 || board.Revision != 1 {
+	if err != nil || len(board.Forms) != 2 || board.Revision != 1 || board.Extras != nil {
 		t.Fatalf("初始画布异常: %+v %v", board, err)
 	}
 	if _, err = repo.ReadCanvas(ctx, org, uuid.NewString(), project); !errors.Is(err, drama.ErrNotFound) {
 		t.Fatal("画布未按用户隔离")
 	}
-	layout := drama.CanvasLayout{Revision: 1, X: 100, Y: 200, Zoom: 0.8, Positions: []drama.CanvasPosition{{ID: root, X: 123, Y: 456}}}
+	cardID := uuid.NewString()
+	layout := drama.CanvasLayout{Revision: 1, X: 100, Y: 200, Zoom: 0.8, Positions: []drama.CanvasPosition{{ID: root, X: 123, Y: 456}}, Extras: &drama.CanvasExtras{
+		Hidden: []string{scene},
+		Cards:  []drama.CanvasCard{{ID: cardID, Kind: "text", Title: "记录", Content: "灯火点亮", Position: drama.CanvasPoint{X: 200, Y: 300}}},
+		Links:  []drama.CanvasLink{{ID: "manual-edge", Source: cardID, Target: scene}},
+	}}
 	revision, err := repo.SaveCanvasLayout(ctx, org, user, project, layout)
 	if err != nil || revision != 2 {
 		t.Fatal(err)
@@ -101,9 +106,16 @@ func TestDramaCanvasFormsIsolationAndImageLifecycle(t *testing.T) {
 	if _, err = repo.SaveCanvasLayout(ctx, org, user, project, layout); !errors.Is(err, drama.ErrCanvasConflict) {
 		t.Fatal("未拒绝旧布局版本")
 	}
+	badExtras := layout
+	badExtras.Revision = revision
+	badExtras.Extras = &drama.CanvasExtras{Links: []drama.CanvasLink{{ID: "outside", Source: root, Target: uuid.NewString()}}}
+	if _, err = repo.SaveCanvasLayout(ctx, org, user, project, badExtras); !errors.Is(err, drama.ErrInvalidInput) {
+		t.Fatal("未拒绝其他画布的连线端点", err)
+	}
 	badLayout := layout
 	badLayout.Revision = 2
 	badLayout.Positions = []drama.CanvasPosition{{ID: uuid.NewString()}}
+	badLayout.Extras = nil
 	if _, err = repo.SaveCanvasLayout(ctx, org, user, project, badLayout); !errors.Is(err, drama.ErrNotFound) {
 		t.Fatal("未拒绝其他项目节点")
 	}
@@ -114,6 +126,17 @@ func TestDramaCanvasFormsIsolationAndImageLifecycle(t *testing.T) {
 	board, err = repo.ReadCanvas(ctx, org, user, project)
 	if err != nil || len(board.Forms) != 3 || board.Revision != 3 {
 		t.Fatal("派生未持久化或布局版本错误", err)
+	}
+	if board.Extras == nil || len(board.Extras.Cards) != 1 || board.Extras.Cards[0].Position.X != 200 ||
+		len(board.Extras.Links) != 1 || board.Extras.Links[0].Target != scene || len(board.Extras.Hidden) != 1 || board.Extras.Hidden[0] != scene {
+		t.Fatalf("画布素材未正确保存: %+v", board.Extras)
+	}
+	if _, err = repo.SaveCanvasLayout(ctx, org, user, project, drama.CanvasLayout{Revision: board.Revision, Zoom: 1}); err != nil {
+		t.Fatal("旧客户端保存布局失败", err)
+	}
+	board, err = repo.ReadCanvas(ctx, org, user, project)
+	if err != nil || board.Extras == nil || len(board.Extras.Cards) != 1 {
+		t.Fatal("省略 extras 时覆盖了已保存素材", err)
 	}
 	var childForm drama.AssetForm
 	for _, f := range board.Forms {
