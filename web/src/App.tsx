@@ -17,6 +17,7 @@ import {
   NodeIndexOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
+  SkinOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons'
@@ -46,6 +47,7 @@ import { SkillDetailPage } from './pages/SkillDetailPage'
 import { DramaHomePage } from './pages/DramaHomePage'
 import { DramaProjectPage } from './pages/DramaPage'
 import { NovelPage, NovelProjectPage } from './pages/NovelPage'
+import { TryOnPage } from './pages/TryOnPage'
 
 const { Header, Sider, Content } = Layout
 
@@ -64,6 +66,7 @@ const menuRoutes: Record<string, string> = {
   settings: '/settings/organization',
   drama: '/ai-apps/drama',
   novel: '/ai-apps/novel',
+  tryon: '/ai-apps/tryon',
 }
 function Navigation({ items, selectedKey, onNavigate, collapsed = false }: {
   items: MenuProps['items']
@@ -100,6 +103,7 @@ export function App() {
     ? 'users'
     : location.pathname.startsWith('/ai-apps/drama') ? 'drama'
     : location.pathname.startsWith('/ai-apps/novel') ? 'novel'
+    : location.pathname.startsWith('/ai-apps/tryon') ? 'tryon'
     : location.pathname.startsWith('/identity/departments')
       ? 'departments'
       : location.pathname.startsWith('/identity/roles')
@@ -258,6 +262,7 @@ export function App() {
               <Route path="/ai-apps/drama" element={<DramaHomePage />} />
               <Route path="/ai-apps/novel" element={<NovelPage />} />
               <Route path="/ai-apps/novel/:id" element={<NovelProjectPage />} />
+              <Route path="/ai-apps/tryon" element={<TryOnPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Content>
@@ -301,6 +306,7 @@ function buildMenuItems(hasPermission: (permissionCode: string) => boolean): Men
     { key: 'ai-apps', icon: <VideoCameraOutlined />, label: 'AI 应用管理', children: [
       { key: 'drama', icon: <VideoCameraOutlined />, label: 'AI 漫剧' },
       { key: 'novel', icon: <BookOutlined />, label: 'AI 小说' },
+      { key: 'tryon', icon: <SkinOutlined />, label: 'AI 试衣' },
     ] },
     hasPermission('audit.event.read') ? { key: 'audit', icon: <AuditOutlined />, label: '审计追踪' } : null,
     hasPermission('iam.organization.read') ? { key: 'settings', icon: <SettingOutlined />, label: '企业设置' } : null,

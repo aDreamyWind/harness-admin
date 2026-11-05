@@ -6,6 +6,204 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /ai-tryon/models:
+    get:
+      summary: 查询当前用户可用于试穿和识别的模型
+      operationId: listTryOnModels
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 按识别和图片能力分组的模型列表。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [detection, image, person]
+                    properties:
+                      detection: { type: array, items: { $ref: '#/components/schemas/TryOnModel' } }
+                      image: { type: array, items: { $ref: '#/components/schemas/TryOnModel' } }
+                      person: { type: array, items: { $ref: '#/components/schemas/TryOnModel' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /ai-tryon/assets:
+    get:
+      summary: 列出当前用户的人物、衣物和姿势素材
+      operationId: listTryOnAssets
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 素材列表，按创建时间倒序。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/TryOnAsset' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: 上传人物、衣物或姿势，可指定衣物裁剪框
+      operationId: createTryOnAsset
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, kind, name]
+              properties:
+                file: { type: string, format: binary, description: '不超过 6 MB 的 JPG、PNG 或 WebP 图片。' }
+                kind: { $ref: '#/components/schemas/TryOnAssetKind' }
+                name: { type: string, minLength: 1, maxLength: 80 }
+                category: { type: string, description: 衣物分类。衣物必填，其他类型留空。 }
+                box: { type: string, description: '可选衣物裁剪框，以 JSON 字符串表示 [左, 上, 右, 下]，值在 0 到 1 之间。' }
+      responses:
+        '201': { $ref: '#/components/responses/TryOnAssetResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /ai-tryon/assets/{id}/content:
+    get:
+      summary: 查看当前用户拥有的试衣素材图片
+      operationId: getTryOnAssetContent
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/TryOnImageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-tryon/garments/detect:
+    post:
+      summary: 识别照片中可见的衣物候选
+      operationId: detectTryOnGarments
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, modelCode]
+              properties:
+                file: { type: string, format: binary, description: '不超过 6 MB 的 JPG、PNG 或 WebP 图片。' }
+                modelCode: { type: string, maxLength: 120 }
+      responses:
+        '200':
+          description: 最多八个衣物候选。候选需要确认后才能入库。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    maxItems: 8
+                    items:
+                      type: object
+                      required: [name, category, box]
+                      properties:
+                        name: { type: string }
+                        category: { type: string }
+                        box:
+                          description: 左、上、右、下四个归一化坐标。
+                          type: array
+                          minItems: 4
+                          maxItems: 4
+                          items: { type: number, minimum: 0, maximum: 1 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502': { $ref: '#/components/responses/TryOnInferenceFailure' }
+  /ai-tryon/people/generate:
+    post:
+      summary: 生成人物全身参考图并保存到人物库
+      operationId: generateTryOnPerson
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, kind, description, modelCode]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                kind: { type: string, enum: [person_2d, person_real] }
+                description: { type: string, minLength: 1, maxLength: 1000 }
+                modelCode: { type: string, maxLength: 120 }
+      responses:
+        '201': { $ref: '#/components/responses/TryOnAssetResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502': { $ref: '#/components/responses/TryOnInferenceFailure' }
+  /ai-tryon/jobs:
+    get:
+      summary: 列出当前用户的试穿状态和历史
+      operationId: listTryOnJobs
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 最近五十条试穿记录，按创建时间倒序。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/TryOnJob' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: 提交一次异步试穿生成
+      operationId: startTryOnJob
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TryOnInput' }
+      responses:
+        '202':
+          description: 任务已建立，可通过试穿记录接口查询状态。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/TryOnJob' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 当前用户已有试穿正在生成。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /ai-tryon/jobs/{id}/result:
+    get:
+      summary: 查看当前用户已生成的试穿图片
+      operationId: getTryOnResult
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/TryOnImageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-novel/cover-models:
     get:
       summary: 查询当前作者可调用的封面图片模型
@@ -4085,6 +4283,29 @@ components:
       scheme: bearer
       bearerFormat: JWT
   responses:
+    TryOnAssetResponse:
+      description: 新保存的试衣素材。
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { $ref: '#/components/schemas/TryOnAsset' }
+    TryOnImageResponse:
+      description: 图片原始字节，仅素材或结果的所有者可访问。
+      content:
+        image/png:
+          schema: { type: string, format: binary }
+        image/jpeg:
+          schema: { type: string, format: binary }
+        image/webp:
+          schema: { type: string, format: binary }
+    TryOnInferenceFailure:
+      description: 模型未能完成调用或返回可读取的结果。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     NovelCoverResponse:
       description: 当前封面及本次更新后的图片地址。
       content:
@@ -4134,6 +4355,42 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
+    TryOnAssetKind:
+      type: string
+      enum: [person_2d, person_real, garment, pose]
+    TryOnModel:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string }
+        name: { type: string }
+    TryOnAsset:
+      type: object
+      required: [id, kind, name, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/TryOnAssetKind' }
+        name: { type: string }
+        category: { type: string }
+        createdAt: { type: string, format: date-time }
+    TryOnInput:
+      type: object
+      required: [personId, garmentId, modelCode]
+      properties:
+        personId: { type: string, format: uuid }
+        garmentId: { type: string, format: uuid }
+        poseId: { type: string, format: uuid, description: 留空时保留人物当前姿势。 }
+        modelCode: { type: string, maxLength: 120 }
+    TryOnJob:
+      allOf:
+        - $ref: '#/components/schemas/TryOnInput'
+        - type: object
+          required: [id, status, createdAt]
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [running, succeeded, failed] }
+            error: { type: string }
+            createdAt: { type: string, format: date-time }
     NovelCover:
       type: object
       required: [url, source, updatedAt]

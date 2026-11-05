@@ -69,11 +69,13 @@ type SaveDepartmentPoliciesInput struct {
 }
 
 type AvailableModel struct {
-	Code         string
-	Name         string
-	ModelType    string
-	Capabilities []string
-	CreatedAt    time.Time
+	Code            string
+	Name            string
+	ModelType       string
+	Capabilities    []string
+	CreatedAt       time.Time
+	UpstreamModelID string `json:"-"`
+	ProviderKind    string `json:"-"`
 }
 
 type PolicyRepository interface {

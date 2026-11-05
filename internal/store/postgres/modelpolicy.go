@@ -261,7 +261,7 @@ func (r *ModelPolicyRepository) FindUserPolicy(ctx context.Context, organization
 }
 
 func (r *ModelPolicyRepository) ListAvailableModels(ctx context.Context, organizationID string) ([]modelgateway.AvailableModel, error) {
-	rows, err := r.pool.Query(ctx, `SELECT m.code, m.name, m.model_type, m.capabilities, m.created_at FROM model_catalog_entries m
+	rows, err := r.pool.Query(ctx, `SELECT m.code, m.name, m.model_type, m.capabilities, m.created_at, m.upstream_model_id, p.provider_kind FROM model_catalog_entries m
 		JOIN model_provider_connections p ON p.organization_id = m.organization_id AND p.id = m.provider_connection_id
 		WHERE m.organization_id = $1 AND m.status = 'active' AND p.status = 'active'
 		  AND ((m.model_type = 'chat' AND p.provider_kind NOT IN ('claude', 'gemini'))
@@ -275,7 +275,7 @@ func (r *ModelPolicyRepository) ListAvailableModels(ctx context.Context, organiz
 	items := make([]modelgateway.AvailableModel, 0)
 	for rows.Next() {
 		var item modelgateway.AvailableModel
-		if err := rows.Scan(&item.Code, &item.Name, &item.ModelType, &item.Capabilities, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.Code, &item.Name, &item.ModelType, &item.Capabilities, &item.CreatedAt, &item.UpstreamModelID, &item.ProviderKind); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

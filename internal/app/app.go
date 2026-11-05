@@ -36,6 +36,7 @@ import (
 	"harness-admin/internal/secret"
 	"harness-admin/internal/skilladmin"
 	pgstore "harness-admin/internal/store/postgres"
+	"harness-admin/internal/tryon"
 	"harness-admin/internal/useradmin"
 )
 
@@ -92,6 +93,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient), modelPolicyRepository)
 	modelPolicyService := modelgateway.NewPolicyService(modelPolicyRepository)
 	modelForwarder := modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts)
+	tryOnService := tryon.NewService(pgstore.NewTryOnRepository(db), &tryOnEngine{
+		gateway: modelGatewayService, forwarder: modelForwarder,
+		image: &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder, source: "ai_tryon"},
+	}, logger)
 	novelModel := &novelWriter{
 		completion: dramaWriter{
 			gateway: modelGatewayService, forwarder: modelForwarder, source: "ai_novel",
@@ -161,6 +166,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		MCPConnections:        mcpConnectionService,
 		Skills:                skillService,
 		Novel:                 novelService,
+		TryOn:                 tryOnService,
 		Drama:                 dramaService,
 		DramaVisual:           dramaService,
 		DramaStoryboards:      dramaService,

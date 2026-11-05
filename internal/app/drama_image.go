@@ -39,11 +39,15 @@ func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) 
 	if in.ReferenceDataURI != "" {
 		payload["image"] = in.ReferenceDataURI
 	}
+	return w.generate(ctx, in.OrganizationID, in.UserID, "image", payload)
+}
+
+func (w *dramaImageEngine) generate(ctx context.Context, organizationID, userID, operation string, payload map[string]any) (data []byte, mime string, callErr error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, "", err
 	}
-	prepared, err := w.gateway.PrepareForUserOperation(ctx, in.OrganizationID, in.UserID, body, "image")
+	prepared, err := w.gateway.PrepareForUserOperation(ctx, organizationID, userID, body, "image")
 	if err != nil {
 		return nil, "", &drama.ImageFailure{Message: "图片模型调用未通过，请检查模型可用性、权限或调用限制。", Cause: err}
 	}
@@ -55,7 +59,7 @@ func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) 
 	}
 	status := http.StatusBadGateway
 	logErr := modelgateway.ExecuteRecordedCall(ctx, w.gateway, prepared, modelgateway.CallLogOptions{
-		Source: source, Operation: "image",
+		Source: source, Operation: operation,
 	}, func() modelgateway.CallOutcome {
 		response, err := w.forwarder.Forward(ctx, route, prepared.Body, false)
 		callErr = err

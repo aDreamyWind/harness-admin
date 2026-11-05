@@ -25,9 +25,10 @@ import (
 	"harness-admin/internal/novel"
 	"harness-admin/internal/platformadmin"
 	"harness-admin/internal/store/postgres"
+	"harness-admin/internal/tryon"
 )
 
-const expectedMigrationVersion = 64
+const expectedMigrationVersion = 65
 
 // 需要具备 CREATE DATABASE 权限的专用测试实例；绝不能指向生产数据库。
 func TestMigrateBaselineMatchesLegacy(t *testing.T) {
@@ -327,6 +328,59 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 		t.Fatalf("基线数据库通过平台创建企业失败: %v", err)
 	}
 	migrationTestAdminPermissions(t, ctx, freshPool, created.ID)
+	t.Run("试衣素材和任务按组织及用户隔离", func(t *testing.T) {
+		testTryOnPersistence(t, ctx, freshPool, created.ID)
+	})
+}
+
+func testTryOnPersistence(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID string) {
+	t.Helper()
+	owner := tryon.Owner{OrganizationID: orgID}
+	if err := pool.QueryRow(ctx, `SELECT id FROM users WHERE organization_id = $1 AND username = 'admin'`, orgID).Scan(&owner.UserID); err != nil {
+		t.Fatal(err)
+	}
+	const otherID = "390dfafe-432c-4703-b01e-2b385cf9df8a"
+	otherUser := tryon.Owner{OrganizationID: orgID, UserID: otherID}
+	otherOrg := tryon.Owner{OrganizationID: otherID, UserID: owner.UserID}
+	repo := postgres.NewTryOnRepository(pool)
+	var data bytes.Buffer
+	if err := png.Encode(&data, image.NewNRGBA(image.Rect(0, 0, 12, 12))); err != nil {
+		t.Fatal(err)
+	}
+	photo := tryon.Image{Data: data.Bytes(), MIME: "image/png"}
+	person, err := repo.SaveAsset(ctx, owner, tryon.AssetImage{Asset: tryon.Asset{ID: "441a76f0-4ab1-4e87-9f1f-2a0b728e2017", Kind: tryon.PersonReal, Name: "正面模特"}, Image: photo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	garment, err := repo.SaveAsset(ctx, owner, tryon.AssetImage{Asset: tryon.Asset{ID: "86701934-a51d-45d0-95ab-c0b5e45f2f6c", Kind: tryon.Garment, Name: "蓝色衬衫", Category: "上衣"}, Image: photo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := tryon.Job{ID: "bb4ed136-72cd-4589-8ebd-6b8841edb776", PersonID: person.ID, GarmentID: garment.ID, ModelCode: "editor"}
+	stored, err := repo.CreateJob(ctx, owner, job, time.Now().Add(time.Minute))
+	if err != nil || stored.Status != "running" {
+		t.Fatalf("试穿任务未创建: %#v %v", stored, err)
+	}
+	second := job
+	second.ID = "073ffdae-3350-4a08-9651-248d5ec5db43"
+	if _, err := repo.CreateJob(ctx, owner, second, time.Now().Add(time.Minute)); !errors.Is(err, tryon.ErrBusy) {
+		t.Fatalf("未限制同一用户的并发试穿: %v", err)
+	}
+	if err := repo.FinishJob(ctx, owner, job.ID, photo, ""); err != nil {
+		t.Fatal(err)
+	}
+	result, err := repo.Result(ctx, owner, job.ID)
+	if err != nil || !bytes.Equal(result.Data, photo.Data) {
+		t.Fatalf("试穿结果未保存: %v", err)
+	}
+	for _, stranger := range []tryon.Owner{otherUser, otherOrg} {
+		if _, err := repo.Asset(ctx, stranger, person.ID); !errors.Is(err, tryon.ErrNotFound) {
+			t.Fatalf("其他用户可读取素材: %v", err)
+		}
+		if _, err := repo.Result(ctx, stranger, job.ID); !errors.Is(err, tryon.ErrNotFound) {
+			t.Fatalf("其他用户可读取试穿结果: %v", err)
+		}
+	}
 }
 
 type serialOpeningWriter struct{}
