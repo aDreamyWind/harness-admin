@@ -20,6 +20,7 @@ import (
 const gatewayKeyPrefix = "harness_sk_"
 
 var gatewayModelCodePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,79}$`)
+var callSourcePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 var usageMonthPattern = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])$`)
 
 type Service struct {
@@ -385,7 +386,7 @@ func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
 	if input.Operation == "" {
 		input.Operation = input.ModelType
 	}
-	if input.Source != "model_gateway" && input.Source != "ai_drama" && input.Source != "ai_novel" {
+	if !callSourcePattern.MatchString(input.Source) {
 		return ErrInvalidInput
 	}
 	if input.PromptTokens < 0 || input.CompletionTokens < 0 || input.TotalTokens < 0 {
@@ -394,6 +395,12 @@ func (s *Service) RecordCall(ctx context.Context, input RecordCallInput) error {
 	if input.PromptTokens > 0 || input.CompletionTokens > 0 || input.TotalTokens > 0 {
 		input.UsageReported = true
 	}
+	input.RequestBody, _ = sanitizeCallPayload(input.RequestBody)
+	var responseTruncated bool
+	input.ResponseBody, responseTruncated = sanitizeCallPayload(input.ResponseBody)
+	input.ResponseTruncated = input.ResponseTruncated || responseTruncated
+	errorBody, _ := sanitizeCallPayload([]byte(input.ErrorMessage))
+	input.ErrorMessage = string(errorBody)
 	if err := s.repository.RecordCall(ctx, input); err != nil {
 		return fmt.Errorf("记录模型网关调用失败: %w", err)
 	}

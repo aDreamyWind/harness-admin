@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"harness-admin/internal/httpx"
+	"harness-admin/internal/modelgateway"
 )
 
 type HealthChecker interface {
@@ -205,10 +206,11 @@ func bootstrapHandler(deps Dependencies) gin.HandlerFunc {
 func requestID() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		id := ctx.GetHeader("X-Request-ID")
-		if id == "" {
+		if id == "" || len(id) > 120 {
 			id = uuid.NewString()
 		}
 		ctx.Set("request_id", id)
+		ctx.Request = ctx.Request.WithContext(modelgateway.WithCallRequestID(ctx.Request.Context(), id))
 		ctx.Header("X-Request-ID", id)
 		ctx.Next()
 	}

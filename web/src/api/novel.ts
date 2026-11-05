@@ -33,6 +33,12 @@ export interface NovelOutline {
   beats: NovelBeat[]
 }
 
+export interface NovelOutlineCheck {
+  status: 'passed' | 'needs_review' | 'unavailable'
+  repaired: boolean
+  issues: { chapter: number; message: string; quote?: string }[]
+}
+
 export interface NovelChapter {
   body: string
   summary: string
@@ -51,6 +57,7 @@ export interface NovelProject extends NovelBook {
   version: number
   modelCode: string
   outline: NovelOutline | null
+  outlineCheck?: NovelOutlineCheck
   confirmed: boolean
   chapters: NovelChapter[]
 }
@@ -65,6 +72,7 @@ export interface NovelCreate {
 
 export type NovelAction =
   | { kind: 'generate_outline'; modelCode: string; instruction?: string; outline?: NovelOutline }
+  | { kind: 'check_outline'; modelCode: string; outline?: NovelOutline }
   | { kind: 'rename'; title: string }
   | { kind: 'suggest_title'; modelCode: string }
   | { kind: 'save_author_guidance'; authorGuidance: string }

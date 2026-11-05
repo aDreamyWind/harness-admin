@@ -120,7 +120,7 @@ func writeNovelResponse(c *gin.Context, deps Dependencies, success int, data any
 	case errors.Is(err, novel.ErrState):
 		httpx.Fail(c, http.StatusConflict, "novel_state_conflict", err.Error())
 	case errors.Is(err, novel.ErrGeneration):
-		deps.Logger.Warn("AI 小说模型调用失败", "error", err)
+		deps.Logger.Warn("AI 小说模型调用失败", "request_id", contextString(c, "request_id"), "error", err)
 		message := novel.ErrGeneration.Error()
 		var countError *novel.SerialOpeningCountError
 		var draftError *novel.DraftOutputError

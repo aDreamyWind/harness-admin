@@ -12,7 +12,7 @@ import (
 	"harness-admin/internal/novel"
 )
 
-func TestNovelWriterAssemblesStreamWithoutLoggingManuscript(t *testing.T) {
+func TestNovelWriterAssemblesStreamAndRecordsCall(t *testing.T) {
 	gateway := &dramaGatewayStub{}
 	forwarder := &dramaStreamForwarderStub{payload: `data: {"choices":[{"delta":{"content":"{\"review\":"}}]}
 
@@ -22,26 +22,26 @@ data: [DONE]
 
 `}
 	writer := &novelWriter{completion: dramaWriter{
-		gateway: gateway, forwarder: forwarder, source: "ai_novel", systemPrompt: "小说审稿", omitCallContent: true,
+		gateway: gateway, forwarder: forwarder, source: "ai_novel", systemPrompt: "小说审稿",
 	}}
 	result, err := writer.Complete(context.Background(), novel.Owner{OrganizationID: "org", UserID: "user"}, "writer", "待审正文")
 	if err != nil || result != `{"review":["核对线索"]}` {
 		t.Fatalf("流式小说输出未完整组装: %q，%v", result, err)
 	}
 	if !forwarder.streaming || gateway.record.Source != "ai_novel" || gateway.record.TotalTokens != 20 ||
-		len(gateway.record.RequestBody) != 0 || len(gateway.record.ResponseBody) != 0 {
-		t.Fatalf("调用未正确记录或泄露正文: %+v", gateway.record)
+		!strings.Contains(string(gateway.record.RequestBody), "待审正文") || string(gateway.record.ResponseBody) != forwarder.payload {
+		t.Fatalf("未记录小说调用参数、流式响应或用量: %+v", gateway.record)
 	}
 }
 
-func TestNovelCoverUsesPortraitImageAndPrivateModelLogs(t *testing.T) {
+func TestNovelCoverUsesPortraitImageAndRecordsCall(t *testing.T) {
 	const story = "用户故事内容"
 	ctx := context.Background()
 	owner := novel.Owner{OrganizationID: "org", UserID: "user"}
 	gateway := &visualGatewayStub{}
 	forwarder := &visualForwarderStub{body: `{"data":[{"b64_json":"` + visualPNG + `"}]}`}
 	writer := &novelWriter{image: &dramaImageEngine{
-		gateway: gateway, forwarder: forwarder, source: "ai_novel", omitCallContent: true,
+		gateway: gateway, forwarder: forwarder, source: "ai_novel",
 	}}
 	data, err := writer.GenerateCover(ctx, owner, "painter", story)
 	if err != nil || len(data) == 0 {
@@ -52,14 +52,15 @@ func TestNovelCoverUsesPortraitImageAndPrivateModelLogs(t *testing.T) {
 		t.Fatalf("封面请求参数错误: %s，%v", forwarder.payload, err)
 	}
 	if gateway.record.Source != "ai_novel" || gateway.record.Operation != "image" || gateway.record.UserID != "user" ||
-		len(gateway.record.RequestBody) != 0 || len(gateway.record.ResponseBody) != 0 {
-		t.Fatalf("封面调用未正确记录或泄露内容: %+v", gateway.record)
+		string(gateway.record.RequestBody) != string(forwarder.payload) || string(gateway.record.ResponseBody) != forwarder.body {
+		t.Fatalf("封面调用未记录请求和响应: %+v", gateway.record)
 	}
 
 	forwarder.status, forwarder.body = http.StatusBadRequest, `{"error":{"message":"`+story+`"}}`
 	_, err = writer.GenerateCover(ctx, owner, "painter", story)
 	if err == nil || strings.Contains(err.Error(), story) || gateway.record.Result != "failed" ||
-		len(gateway.record.RequestBody) != 0 || len(gateway.record.ResponseBody) != 0 || strings.Contains(gateway.record.ErrorMessage, story) {
+		!strings.Contains(string(gateway.record.RequestBody), story) || string(gateway.record.ResponseBody) != forwarder.body ||
+		!strings.Contains(gateway.record.ErrorMessage, story) {
 		t.Fatalf("封面调用失败未正确记录或泄露内容: %v，%+v", err, gateway.record)
 	}
 

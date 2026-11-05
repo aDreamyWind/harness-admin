@@ -250,6 +250,32 @@ func TestRecordCallDistinguishesReportedUsage(t *testing.T) {
 	}
 }
 
+func TestRecordCallAcceptsStableBusinessSourceCodes(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository, nil, nil)
+	input := RecordCallInput{OrganizationID: "org-1", APIKeyID: "key-1", AuthType: "api_key",
+		ModelID: "model-1", ProviderID: "provider-1", RequestID: "request-1", Result: "success", HTTPStatus: 200}
+	for _, source := range []string{"", "ai_drama", "ai_novel", "ai_new_module2", "a", "abcdefghijklmnopqrstuvwxyz123456"} {
+		input.Source = source
+		if err := service.RecordCall(context.Background(), input); err != nil {
+			t.Fatalf("合法来源 %q 未保存: %v", source, err)
+		}
+		want := source
+		if want == "" {
+			want = "model_gateway"
+		}
+		if repository.recorded.Source != want {
+			t.Fatalf("保存的来源为 %q，预期 %q", repository.recorded.Source, want)
+		}
+	}
+	for _, source := range []string{"AI_new_module", "ai-new-module", "ai_中文", "1module", "module\n", "abcdefghijklmnopqrstuvwxyz1234567"} {
+		input.Source = source
+		if err := service.RecordCall(context.Background(), input); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("非法来源 %q 应被拒绝: %v", source, err)
+		}
+	}
+}
+
 func TestCreateAPIKeyPersistsHashAndEncryptedSecretInput(t *testing.T) {
 	repository := &repositoryStub{}
 	service := NewService(repository, nil, &policyRepositoryStub{})

@@ -386,7 +386,12 @@ paths:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
       summary: 修改书名、管理大纲、追加章节、写稿、审稿和定稿
-      description: 模型操作在本次请求中完成。成功后返回完整作品及新版本。长篇连载首次生成大纲时，模型规划全书主线及 3 到 8 章的开篇，作品计划章数随之更新。大纲确认后可分批追加新章，每次最多 30 章，作品最多 500 章。定稿会保存作者确认的正文与连续性摘要，并开放下一章。生成大纲时填写修改意见，模型会依据原始灵感、当前大纲和修改意见定向修订。省略修改意见时，模型从作品资料重新生成。
+      description: |
+        模型操作在本次请求中完成。成功后返回完整作品及新版本。
+        生成大纲时填写修改意见，模型会依据原始灵感、当前大纲和修改意见定向修订。省略修改意见时，模型从作品资料重新生成。
+        AI 生成大纲后会独立检查关键行动的前提和跨章因果。尚未确认的大纲也可发起检查并保存提交的大纲。检查最多尝试一次自动修正，只采用复核通过的修改。初次检查失败时保留大纲并返回未完成状态。是否确认大纲由作者决定。
+        长篇连载首次生成大纲时，模型规划全书主线及 3 到 8 章的开篇，作品计划章数随之更新。大纲确认后可分批追加新章，每次最多 30 章，作品最多 500 章。
+        定稿会保存作者确认的正文与连续性摘要，并开放下一章。
       operationId: applyNovelAction
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -4166,6 +4171,25 @@ components:
           minItems: 1
           maxItems: 500
           items: { $ref: '#/components/schemas/NovelBeat' }
+    NovelOutlineCheck:
+      type: object
+      required: [status, repaired, issues]
+      properties:
+        status:
+          type: string
+          enum: [passed, needs_review, unavailable]
+          description: 分别表示本轮未发现明确问题、发现需要作者核对的问题、未完成检查。
+        repaired: { type: boolean, description: 当前大纲经过自动修正时为 true。 }
+        issues:
+          type: array
+          description: 当前大纲中需要作者核对的问题，无待核对问题时为空数组。
+          items:
+            type: object
+            required: [chapter, message]
+            properties:
+              chapter: { type: integer, minimum: 1, maximum: 500, description: 问题涉及的章节序号。 }
+              message: { type: string, description: 发现的问题及建议修法。 }
+              quote: { type: string, description: 当前大纲中支持该问题的原文。 }
     NovelProject:
       allOf:
         - $ref: '#/components/schemas/NovelBook'
@@ -4182,6 +4206,9 @@ components:
               oneOf:
                 - $ref: '#/components/schemas/NovelOutline'
                 - type: 'null'
+            outlineCheck:
+              $ref: '#/components/schemas/NovelOutlineCheck'
+              description: 当前大纲的检查结果。历史大纲、尚未检查或手动修改后可能省略。
             confirmed: { type: boolean }
             chapters:
               type: array
@@ -4202,8 +4229,8 @@ components:
       properties:
         kind:
           type: string
-          enum: [rename, suggest_title, generate_outline, save_outline, confirm_outline, save_author_guidance, append_chapters, write, revise_review, save_draft, review, finalize]
-          description: rename 保存手填书名；suggest_title 用所选模型根据灵感及已有大纲拟定并保存新书名。两种改名操作也适用于已确认大纲的作品。
+          enum: [rename, suggest_title, generate_outline, check_outline, save_outline, confirm_outline, save_author_guidance, append_chapters, write, revise_review, save_draft, review, finalize]
+          description: rename 保存手填书名。suggest_title 用所选模型根据灵感及已有大纲拟定并保存新书名。两种改名操作也适用于已确认大纲的作品。check_outline 检查尚未确认的大纲。
         version: { type: integer, minimum: 1, description: 客户端读取到的作品版本。 }
         title: { type: string, minLength: 1, maxLength: 120, description: 手动改名时提交并保存的新书名。 }
         authorGuidance: { type: string, maxLength: 2000, description: 保存全书写作约定时提交。空字符串清除约定。 }
@@ -4211,7 +4238,7 @@ components:
         modelCode: { type: string, minLength: 1, maxLength: 160 }
         outline:
           $ref: '#/components/schemas/NovelOutline'
-          description: 定向修订时可提交未保存的完整当前大纲。省略时使用作品中已保存的大纲。
+          description: 定向修订和大纲检查时可提交未保存的完整当前大纲。省略时使用作品中已保存的大纲。检查后保存大纲和检查结果。
         beats:
           type: array
           minItems: 1
@@ -4224,7 +4251,7 @@ components:
       allOf:
         - if:
             properties:
-              kind: { enum: [suggest_title, generate_outline, write, revise_review, review] }
+              kind: { enum: [suggest_title, generate_outline, check_outline, write, revise_review, review] }
           then:
             required: [modelCode]
         - if:

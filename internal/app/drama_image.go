@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -21,17 +20,16 @@ import (
 
 type dramaImageGateway interface {
 	PrepareForUserOperation(context.Context, string, string, []byte, string) (modelgateway.PreparedRequest, error)
-	RecordCall(context.Context, modelgateway.RecordCallInput) error
+	modelgateway.CallRecorder
 }
 type dramaImageForwarder interface {
 	dramaForwarder
 	DownloadImage(context.Context, string) ([]byte, error)
 }
 type dramaImageEngine struct {
-	gateway         dramaImageGateway
-	forwarder       dramaImageForwarder
-	source          string
-	omitCallContent bool
+	gateway   dramaImageGateway
+	forwarder dramaImageForwarder
+	source    string
 }
 
 func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) (data []byte, mime string, callErr error) {
@@ -49,83 +47,81 @@ func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) 
 	if err != nil {
 		return nil, "", &drama.ImageFailure{Message: "图片模型调用未通过，请检查模型可用性、权限或调用限制。", Cause: err}
 	}
-	started := time.Now()
 	route := prepared.Route
 	route.ProviderTimeoutMS = 10 * 60 * 1000
-	response, err := w.forwarder.Forward(ctx, route, prepared.Body, false)
-	callErr = err
-	status := 502
-	var raw []byte
-	truncated := false
-	if response != nil {
-		defer response.Body.Close()
-		status = response.StatusCode
-		raw, err = io.ReadAll(io.LimitReader(response.Body, 32*1024*1024+1))
-		if err != nil {
-			callErr = err
-		}
-		if len(raw) > 32*1024*1024 {
-			raw = raw[:32*1024*1024]
-			truncated = true
-			callErr = errors.New("图片响应超过 32 MB")
-		}
-	}
-	if callErr == nil && (status < 200 || status >= 300) {
-		var failure struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.Unmarshal(raw, &failure)
-		if failure.Error.Message != "" {
-			callErr = fmt.Errorf("图片模型返回状态 %d: %s", status, failure.Error.Message)
-		} else {
-			callErr = fmt.Errorf("图片模型返回状态 %d，请查看调用记录", status)
-		}
-	}
-	if callErr == nil {
-		var result struct {
-			Data []struct {
-				URL    string `json:"url"`
-				Base64 string `json:"b64_json"`
-			} `json:"data"`
-		}
-		if err = json.Unmarshal(raw, &result); err != nil || len(result.Data) == 0 {
-			callErr = errors.New("图片模型未返回可读取的图片，请查看调用记录")
-		} else if result.Data[0].Base64 != "" {
-			data, callErr = base64.StdEncoding.DecodeString(result.Data[0].Base64)
-		} else if result.Data[0].URL != "" {
-			data, callErr = w.forwarder.DownloadImage(ctx, result.Data[0].URL)
-		} else {
-			callErr = errors.New("图片模型返回了空图片")
-		}
-		if callErr == nil {
-			mime, callErr = dramaImageMIME(data)
-		}
-	}
-	result, errorMessage := "success", ""
-	if callErr != nil {
-		result, errorMessage = "failed", callErr.Error()
-	}
 	source := w.source
 	if source == "" {
 		source = "ai_drama"
 	}
-	requestBody, responseBody := prepared.Body, raw
-	if w.omitCallContent {
-		requestBody, responseBody, truncated = nil, nil, false
-		if callErr != nil {
-			errorMessage = imageFailureMessage(status, callErr)
+	status := http.StatusBadGateway
+	logErr := modelgateway.ExecuteRecordedCall(ctx, w.gateway, prepared, modelgateway.CallLogOptions{
+		Source: source, Operation: "image",
+	}, func() modelgateway.CallOutcome {
+		response, err := w.forwarder.Forward(ctx, route, prepared.Body, false)
+		callErr = err
+		var raw []byte
+		truncated := false
+		if response != nil {
+			defer response.Body.Close()
+			status = response.StatusCode
+			raw, err = io.ReadAll(io.LimitReader(response.Body, 32*1024*1024+1))
+			if err != nil {
+				callErr = err
+			}
+			if len(raw) > 32*1024*1024 {
+				raw = raw[:32*1024*1024]
+				truncated = true
+				callErr = errors.New("图片响应超过 32 MB")
+			}
 		}
-	}
-	recordCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err = w.gateway.RecordCall(recordCtx, modelgateway.RecordCallInput{OrganizationID: in.OrganizationID, UserID: in.UserID, DepartmentID: prepared.Caller.DepartmentID, AuthType: "user", ModelID: route.ModelID, ProviderID: route.ProviderID, RequestID: uuid.NewString(), ModelCode: route.ModelCode, ModelType: "image", UpstreamModelID: route.UpstreamModelID, Result: result, HTTPStatus: status, LatencyMS: time.Since(started).Milliseconds(), Source: source, Operation: "image", RequestBody: requestBody, ResponseBody: responseBody, ResponseTruncated: truncated, ErrorMessage: errorMessage}); err != nil {
-		return nil, "", &drama.ImageFailure{Message: "记录图片调用日志失败，请联系管理员检查服务。", Cause: fmt.Errorf("记录图片模型调用失败: %w", err)}
+		if callErr == nil && (status < 200 || status >= 300) {
+			var failure struct {
+				Error struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			_ = json.Unmarshal(raw, &failure)
+			if failure.Error.Message != "" {
+				callErr = fmt.Errorf("图片模型返回状态 %d: %s", status, failure.Error.Message)
+			} else {
+				callErr = fmt.Errorf("图片模型返回状态 %d，请查看调用记录", status)
+			}
+		}
+		if callErr == nil {
+			var result struct {
+				Data []struct {
+					URL    string `json:"url"`
+					Base64 string `json:"b64_json"`
+				} `json:"data"`
+			}
+			if err = json.Unmarshal(raw, &result); err != nil || len(result.Data) == 0 {
+				callErr = errors.New("图片模型未返回可读取的图片，请查看调用记录")
+			} else if result.Data[0].Base64 != "" {
+				data, callErr = base64.StdEncoding.DecodeString(result.Data[0].Base64)
+			} else if result.Data[0].URL != "" {
+				data, callErr = w.forwarder.DownloadImage(ctx, result.Data[0].URL)
+			} else {
+				callErr = errors.New("图片模型返回了空图片")
+			}
+			if callErr == nil {
+				mime, callErr = dramaImageMIME(data)
+			}
+		}
+		result, errorMessage := "success", ""
+		if callErr != nil {
+			result, errorMessage = "failed", callErr.Error()
+		}
+		return modelgateway.CallOutcome{
+			Result: result, HTTPStatus: status, ErrorMessage: errorMessage,
+			ResponseBody: raw, ResponseTruncated: truncated,
+		}
+	})
+	if logErr != nil {
+		return nil, "", &drama.ImageFailure{Message: "记录图片调用日志失败，请联系管理员检查服务。", Cause: fmt.Errorf("记录图片模型调用失败: %w", logErr)}
 	}
 	if callErr != nil {
 		failure := &drama.ImageFailure{Message: imageFailureMessage(status, callErr)}
-		if !w.omitCallContent {
+		if source == "ai_drama" {
 			failure.Cause = callErr
 		}
 		return data, mime, failure

@@ -58,7 +58,7 @@ func (s *Service) generateChapterFields(ctx context.Context, owner Owner, p *Pro
 	return Chapter{Body: body, Summary: summary}, nil
 }
 
-const draftSummaryPrompt = `只根据已生成的本章正文整理连续性摘要，目标 250 至 350 字，最多 500 字。按【时间】【人物】【线索】记录会影响后续章节的事实，包括时间范围、人物位置和所知信息、道具持有人及未解决的线索。保留明确的时间、名称和数字，不补造事实，不改写正文。只输出 {"summary":"连续性摘要"}。
+const draftSummaryPrompt = `只根据已生成的本章正文整理连续性摘要，目标 250 至 350 字，最多 500 字。按【时间】【人物】【线索】记录会影响后续章节的事实，包括时间范围、人物位置和所知信息、道具持有人及未解决的线索。说明关键资源的用途、是否已经到位和措施是否实际起效。保留明确的时间、名称和数字，不补造事实，不改写正文。只输出 {"summary":"连续性摘要"}。
 本章正文：
 `
 

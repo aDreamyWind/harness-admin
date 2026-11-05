@@ -17,6 +17,7 @@ func applyAuthorGuidance(p *Project, guidance *string) error {
 	}
 	if p.AuthorGuidance != text {
 		p.AuthorGuidance = text
+		p.OutlineCheck = nil
 		for i := range p.Chapters {
 			if !p.Chapters[i].Final {
 				p.Chapters[i].ReviewPassed = false

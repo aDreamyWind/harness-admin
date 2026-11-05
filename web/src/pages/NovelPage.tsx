@@ -23,7 +23,8 @@ type NovelMutation = {
   automatic?: boolean
 }
 const messages: Record<NovelAction['kind'], string> = {
-  generate_outline: '正在生成大纲',
+  generate_outline: '正在生成并检查大纲',
+  check_outline: '正在检查大纲因果',
   rename: '正在保存书名',
   suggest_title: '正在拟定新书名',
   save_author_guidance: '正在保存写作约定',
@@ -289,9 +290,11 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
           if (appendProject.chapters.every((chapter) => chapter.final)) switchSection(appendProject.chapterCount)
         }} />}
       {!models.length && <Alert type="info" title={modelsNotice} />}
-      {pending && <Alert type="info" showIcon icon={<Spin size="small" />} title={revisingOutline ? '正在按意见修改大纲'
-        : awaitingOpening && pending === 'generate_outline' ? '正在规划长篇开篇' : messages[pending]}
-        description={pending === 'write' || pending === 'review' || pending === 'revise_review' ? '可以先在站内切换页面，稍后回来查看结果。' : undefined} />}
+      {pending && <Alert type="info" showIcon icon={<Spin size="small" />} title={revisingOutline ? '正在按意见修改并检查大纲'
+        : awaitingOpening && pending === 'generate_outline' ? '正在规划并检查长篇开篇' : messages[pending]}
+        description={pending === 'generate_outline' || pending === 'check_outline'
+          ? 'AI 会核对章节之间的前因后果，并尝试修正明确的矛盾。'
+          : pending === 'write' || pending === 'review' || pending === 'revise_review' ? '可以先在站内切换页面，稍后回来查看结果。' : undefined} />}
       {failure && <Alert type="error" showIcon title={errorMessage(failure)}
         description={awaitingOpening ? '灵感已保存，可以重试规划。'
           : initialModel && !project.outline ? '灵感已保存，可以重试生成大纲，也可以自己填写。' : undefined}
@@ -383,6 +386,9 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
   const visibleBeats = paginateBeats ? outline.beats.slice(beatOffset, beatOffset + chapterPageSize) : outline.beats
   const complete = !!(outline.synopsis.trim() && outline.world.trim() && outline.characters.trim()
     && outline.beats.every((beat) => beat.title.trim() && beat.goal.trim()))
+  const outlineCheck = dirty ? undefined : project.outlineCheck
+  const confirmTitle = outlineCheck?.status === 'needs_review' ? '部分因果待确认，仍要锁定当前大纲？'
+    : outlineCheck?.status === 'unavailable' ? '因果检查未完成，仍要锁定当前大纲？' : '确认后将锁定大纲，开始逐章写作？'
   const generate = () => run({ kind: 'generate_outline', modelCode })
   const generateButton = <Button icon={<RobotOutlined />} disabled={busy || !modelCode} onClick={project.outline || dirty ? undefined : generate}>
     {project.outline ? '重新生成大纲' : serial ? '规划长篇开篇' : '生成大纲'}
@@ -406,6 +412,33 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
       {!project.confirmed && <p className="novel-hint">{project.outline
         ? '重新生成会从最初的故事灵感出发。要在当前大纲上纠正或补充细节，可以按意见修改。'
         : '可先生成大纲，也可手动填写。确认后开放第一章，并锁定大纲。'}</p>}
+      {complete && (!project.confirmed || outlineCheck) && (
+        <section className="novel-outline-check" aria-label="大纲因果检查">
+          <div className="novel-outline-check-header">
+            {outlineCheck?.status === 'passed'
+              ? <Tag color="success">{outlineCheck.repaired ? '已自动修正，因果检查通过' : '因果检查通过'}</Tag>
+              : outlineCheck?.status === 'needs_review' ? <Tag color="warning">部分因果需要确认</Tag>
+              : outlineCheck?.status === 'unavailable' ? <Tag color="warning">因果检查未完成</Tag>
+              : <Tag>{dirty ? '修改后待检查' : '尚未检查因果'}</Tag>}
+            {!project.confirmed && outlineCheck?.status !== 'passed' && (
+              <Button size="small" disabled={busy || !modelCode}
+                onClick={() => run({ kind: 'check_outline', modelCode, outline: dirty ? outline : undefined })}>
+                {dirty ? '检查并保存' : outlineCheck ? '重新检查' : 'AI 检查因果'}
+              </Button>
+            )}
+            {dirty && <small className="novel-hint">AI 会检查当前修改，并尝试修正明确的矛盾。</small>}
+          </div>
+          {outlineCheck?.status === 'needs_review' && outlineCheck.issues.length > 0 && (
+            <ul className="novel-outline-issues">
+              {outlineCheck.issues.map((issue, index) => (
+                <li key={index}><strong>第 {issue.chapter} 章</strong>{issue.message}
+                  {issue.quote && <q>{issue.quote}</q>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       {!project.confirmed && complete && (
         <div className="novel-outline-feedback">
           <Button icon={<RobotOutlined />} disabled={busy} aria-expanded={showOutlineFeedback}
@@ -462,7 +495,7 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
               onConfirm={generate}>{generateButton}</Popconfirm>
             : generateButton}
           <Button disabled={busy || !complete || !dirty} onClick={() => run({ kind: 'save_outline', outline })}>保存大纲</Button>
-          <Popconfirm title="确认后将锁定大纲，开始逐章写作？" onConfirm={() => run({ kind: 'confirm_outline', outline })}>
+          <Popconfirm title={confirmTitle} onConfirm={() => run({ kind: 'confirm_outline', outline })}>
             <Button type="primary" disabled={busy || !complete}>确认大纲</Button>
           </Popconfirm>
         </Space>}

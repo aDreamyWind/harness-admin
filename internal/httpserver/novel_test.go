@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,14 +17,16 @@ import (
 )
 
 type novelHTTPStub struct {
-	owner       novel.Owner
-	createInput novel.CreateInput
-	refineInput novel.RefineIdeaInput
-	planInput   novel.ChapterPlanInput
-	actionError error
-	coverInput  novel.GenerateCoverInput
-	cover       novel.Cover
-	coverData   []byte
+	owner        novel.Owner
+	createInput  novel.CreateInput
+	refineInput  novel.RefineIdeaInput
+	planInput    novel.ChapterPlanInput
+	actionInput  novel.Action
+	actionResult *novel.Project
+	actionError  error
+	coverInput   novel.GenerateCoverInput
+	cover        novel.Cover
+	coverData    []byte
 }
 
 func (s *novelHTTPStub) List(_ context.Context, owner novel.Owner) ([]novel.Book, error) {
@@ -94,12 +97,78 @@ func (s *novelHTTPStub) PlanChapters(_ context.Context, owner novel.Owner, _ str
 	s.owner, s.planInput = owner, input
 	return novel.ChapterPlan{Beats: []novel.Beat{{Title: "余波", Goal: "追踪新证人"}}}, nil
 }
-func (s *novelHTTPStub) Apply(_ context.Context, owner novel.Owner, _ string, _ novel.Action) (novel.Project, error) {
-	s.owner = owner
+func (s *novelHTTPStub) Apply(_ context.Context, owner novel.Owner, _ string, input novel.Action) (novel.Project, error) {
+	s.owner, s.actionInput = owner, input
 	if s.actionError != nil {
 		return novel.Project{}, s.actionError
 	}
+	if s.actionResult != nil {
+		return *s.actionResult, nil
+	}
 	return novel.Project{}, novel.ErrConflict
+}
+
+func TestNovelOutlineCheckAction(t *testing.T) {
+	outline := &novel.Outline{
+		Synopsis: "村庄寻找新的水源", World: "旱灾仍在持续", Characters: "阿宁负责救灾",
+		Beats: []novel.Beat{{Title: "初见旱情", Goal: "阿宁当日种树解除旱情"}},
+	}
+	issue := novel.OutlineCheckIssue{Chapter: 1, Message: "树苗无法解除当日旱情", Quote: outline.Beats[0].Goal}
+	stub := &novelHTTPStub{actionResult: &novel.Project{Workspace: novel.Workspace{
+		Outline:      outline,
+		OutlineCheck: &novel.OutlineCheck{Status: novel.OutlineCheckNeedsReview, Issues: []novel.OutlineCheckIssue{issue}},
+	}}}
+	router := New(Dependencies{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth:   &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}},
+		Novel:  stub, SessionCookie: "test_session",
+	})
+	for _, test := range []struct {
+		name      string
+		body      string
+		withEdits bool
+	}{
+		{
+			name: "检查保存的大纲",
+			body: `{"kind":"check_outline","version":2,"modelCode":"writer"}`,
+		},
+		{
+			name:      "检查未保存的修改",
+			body:      `{"kind":"check_outline","version":2,"modelCode":"writer","outline":{"synopsis":"村庄寻找新的水源","world":"旱灾仍在持续","characters":"阿宁负责救灾","beats":[{"title":"初见旱情","goal":"阿宁当日种树解除旱情"}]}}`,
+			withEdits: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/ai-novel/projects/book/actions", strings.NewReader(test.body))
+			request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+			request.Header.Set("X-CSRF-Token", "csrf-token")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("检查大纲响应有误: %d %s", response.Code, response.Body)
+			}
+			action := stub.actionInput
+			if action.Kind != "check_outline" || action.ModelCode != "writer" || action.Version != 2 ||
+				(action.Outline != nil) != test.withEdits {
+				t.Fatalf("检查操作未正确传入: %+v", action)
+			}
+			if test.withEdits && (len(action.Outline.Beats) != 1 || action.Outline.Beats[0] != outline.Beats[0]) {
+				t.Fatalf("未传入修改后的章纲: %+v", action.Outline)
+			}
+			var output struct {
+				Data struct {
+					OutlineCheck *novel.OutlineCheck `json:"outlineCheck"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &output); err != nil {
+				t.Fatal(err)
+			}
+			check := output.Data.OutlineCheck
+			if check == nil || check.Status != novel.OutlineCheckNeedsReview || check.Repaired || len(check.Issues) != 1 || check.Issues[0] != issue {
+				t.Fatalf("检查结果有误: %s", response.Body)
+			}
+		})
+	}
 }
 
 func TestNovelOutlineGenerationReportsChapterCountWithoutExposingProviderErrors(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -26,7 +27,7 @@ import (
 	"harness-admin/internal/store/postgres"
 )
 
-const expectedMigrationVersion = 63
+const expectedMigrationVersion = 64
 
 // 需要具备 CREATE DATABASE 权限的专用测试实例；绝不能指向生产数据库。
 func TestMigrateBaselineMatchesLegacy(t *testing.T) {
@@ -80,6 +81,37 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 	if expected := expectedMigrationVersion - baselineVersion + 1; appliedCount != expected {
 		t.Fatalf("全新数据库执行了 %d 个迁移，预期 %d 个", appliedCount, expected)
 	}
+	t.Run("通用模型日志来源约束", func(t *testing.T) {
+		tx, err := freshPool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+				t.Errorf("清理日志约束测试失败: %v", err)
+			}
+		}()
+		// 复制日志表的真实检查约束，避免构建与来源校验无关的模型及调用外键数据。
+		if _, err := tx.Exec(ctx, `CREATE TEMP TABLE migration_model_call_logs
+			(LIKE model_call_logs INCLUDING CONSTRAINTS INCLUDING DEFAULTS) ON COMMIT DROP`); err != nil {
+			t.Fatal(err)
+		}
+		const insertLog = `INSERT INTO migration_model_call_logs (call_id, organization_id, source, operation)
+			VALUES ('10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', $1, 'chat')`
+		for _, source := range []string{"model_gateway", "ai_drama", "ai_novel", "ai_new_module2"} {
+			if _, err := tx.Exec(ctx, insertLog, source); err != nil {
+				t.Fatalf("合法来源 %q 未写入: %v", source, err)
+			}
+		}
+		if _, err := tx.Exec(ctx, insertLog, "AI-new-module"); err == nil {
+			t.Fatal("非法来源通过了数据库检查")
+		} else {
+			var constraintError *pgconn.PgError
+			if !errors.As(err, &constraintError) || constraintError.Code != "23514" || constraintError.ConstraintName != "model_call_logs_source_check" {
+				t.Fatalf("非法来源未命中预期约束: %v", err)
+			}
+		}
+	})
 	t.Run("二维风格目录与历史风格兼容", func(t *testing.T) {
 		repo := postgres.NewDramaRepository(freshPool)
 		options, err := repo.ListStyles(ctx)

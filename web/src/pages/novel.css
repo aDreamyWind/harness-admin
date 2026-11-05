@@ -425,6 +425,13 @@
 .novel-generating-outline p { color: var(--novel-muted); }
 
 .novel-idea-refinement, .novel-outline-feedback { margin-bottom: 16px; }
+.novel-outline-check { margin-bottom: 16px; }
+.novel-outline-check-header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.novel-outline-check-header .ant-tag { margin-inline-end: 0; }
+.novel-outline-issues { margin: 8px 0 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
+.novel-outline-issues li + li { margin-top: 6px; }
+.novel-outline-issues strong { margin-inline-end: 8px; }
+.novel-outline-issues q { display: block; color: var(--novel-muted); }
 .novel-ai-panel {
   display: grid;
   justify-items: start;

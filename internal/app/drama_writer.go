@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"harness-admin/internal/drama"
 	"harness-admin/internal/modelgateway"
 )
@@ -22,7 +20,7 @@ import (
 type dramaModelGateway interface {
 	PrepareForUser(context.Context, string, string, []byte) (modelgateway.PreparedRequest, error)
 	ListModelsForUser(context.Context, string, string) ([]modelgateway.AvailableModel, error)
-	RecordCall(context.Context, modelgateway.RecordCallInput) error
+	modelgateway.CallRecorder
 }
 
 type dramaForwarder interface {
@@ -32,11 +30,10 @@ type dramaForwarder interface {
 const dramaRequestTimeoutMS = 10 * 60 * 1000
 
 type dramaWriter struct {
-	gateway         dramaModelGateway
-	forwarder       dramaForwarder
-	source          string
-	systemPrompt    string
-	omitCallContent bool
+	gateway      dramaModelGateway
+	forwarder    dramaForwarder
+	source       string
+	systemPrompt string
 }
 
 func (w *dramaWriter) AvailableModels(ctx context.Context, organizationID, userID string) ([]drama.Model, error) {
@@ -117,110 +114,113 @@ func (w *dramaWriter) complete(ctx context.Context, organizationID, userID, mode
 	if err = notify("sent"); err != nil {
 		return "", err
 	}
-	response, callErr := w.forwarder.Forward(ctx, route, prepared.Body, stream)
 	status := http.StatusBadGateway
-	if response != nil {
-		defer response.Body.Close()
-		status = response.StatusCode
-		now := time.Now()
-		timing.HeadersAt = &now
-		if callErr == nil {
-			callErr = notify("headers")
-		}
-	}
-	if callErr == nil && response == nil {
-		callErr = errors.New("模型供应商未返回响应")
-	}
-	var raw bytes.Buffer
-	var completion dramaCompletion
-	text := ""
-	if callErr == nil {
-		reader := bufio.NewReader(io.TeeReader(io.LimitReader(response.Body, 4*1024*1024+1), &raw))
-		if status >= 200 && status < 300 {
-			first, readErr := reader.ReadString('\n')
-			source := io.MultiReader(strings.NewReader(first), reader)
-			isSSE := stream && (strings.Contains(response.Header.Get("Content-Type"), "text/event-stream") || strings.HasPrefix(strings.TrimSpace(first), "data:") || strings.HasPrefix(strings.TrimSpace(first), "event:"))
-			if isSSE {
-				lastProgress := time.Now()
-				text, callErr = readDramaSSEObserved(source, &completion, onText, func(phase string) error {
-					now := time.Now()
-					first := false
-					if phase == "thinking" && timing.FirstReasoningAt == nil {
-						timing.FirstReasoningAt = &now
-						first = true
-					}
-					if phase == "content" && timing.FirstContentAt == nil {
-						timing.FirstContentAt = &now
-						first = true
-					}
-					if first || time.Since(lastProgress) >= 5*time.Second {
-						lastProgress = now
-						return notify(phase)
-					}
-					return nil
-				})
-			} else {
-				content, err := io.ReadAll(source)
-				callErr = err
-				if callErr == nil && readErr != nil && !errors.Is(readErr, io.EOF) {
-					callErr = readErr
-				}
-				if callErr == nil {
-					callErr = json.Unmarshal(content, &completion)
-				}
-				if callErr == nil && len(completion.Choices) > 0 {
-					text = completion.Choices[0].Message.Content
-					if text != "" {
-						now := time.Now()
-						timing.FirstContentAt = &now
-					}
-					if onText != nil && text != "" {
-						callErr = onText(text)
-					}
-				}
+	var text string
+	var callErr error
+	prepared.Streaming = stream
+	logErr := modelgateway.ExecuteRecordedCall(ctx, w.gateway, prepared, modelgateway.CallLogOptions{
+		Source: source, Operation: "chat", Timing: timing,
+	}, func() modelgateway.CallOutcome {
+		var response *http.Response
+		response, callErr = w.forwarder.Forward(ctx, route, prepared.Body, stream)
+		if response != nil {
+			defer response.Body.Close()
+			status = response.StatusCode
+			now := time.Now()
+			timing.HeadersAt = &now
+			if callErr == nil {
+				callErr = notify("headers")
 			}
-		} else {
-			_, callErr = io.Copy(io.Discard, reader)
 		}
-	}
-	truncated := raw.Len() > 4*1024*1024
-	rawBytes := raw.Bytes()
-	if truncated {
-		rawBytes = rawBytes[:4*1024*1024]
-		callErr = errors.New("模型响应超过记录上限")
-	}
-	if callErr == nil && status >= 200 && status < 300 && strings.TrimSpace(text) == "" {
-		callErr = drama.ErrEmptyModelContent
-	}
-	if callErr == nil && len(completion.Choices) > 0 && completion.Choices[0].FinishReason == "length" {
-		callErr = errors.New("模型输出达到上限，正文未完整生成")
-	}
-	timing.FinishedAt = time.Now()
-	timing.ReasoningTokens = completion.Usage.Details.ReasoningTokens
-	if options.OnProgress != nil {
-		e := options.OnProgress(drama.ModelProgress{Phase: "finished", ElapsedMS: time.Since(started).Milliseconds(), ReasoningTokens: timing.ReasoningTokens, Policy: policy})
-		callErr = errors.Join(callErr, e)
-	}
-	result := "success"
-	errorMessage := ""
-	if callErr != nil {
-		result = "failed"
-		errorMessage = callErr.Error()
-	} else if status < 200 || status >= 300 {
-		result = "failed"
-		errorMessage = fmt.Sprintf("模型供应商返回状态 %d", status)
-	}
-	requestBody, responseBody := prepared.Body, rawBytes
-	if w.omitCallContent {
-		requestBody, responseBody = nil, nil
-		truncated = false
-	}
-	recordCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := w.gateway.RecordCall(recordCtx, modelgateway.RecordCallInput{
-		Timing: timing, OrganizationID: organizationID, UserID: userID, DepartmentID: prepared.Caller.DepartmentID, AuthType: "user", ModelID: route.ModelID, ProviderID: route.ProviderID, RequestID: uuid.NewString(), ModelCode: route.ModelCode, ModelType: route.ModelType, UpstreamModelID: route.UpstreamModelID, Streaming: stream, Result: result, HTTPStatus: status, LatencyMS: timing.FinishedAt.Sub(started).Milliseconds(), PromptTokens: completion.Usage.PromptTokens, CompletionTokens: completion.Usage.CompletionTokens, TotalTokens: completion.Usage.TotalTokens, Source: source, Operation: "chat", RequestBody: requestBody, ResponseBody: responseBody, ResponseTruncated: truncated, ErrorMessage: errorMessage,
-	}); err != nil {
-		return "", fmt.Errorf("记录模型调用失败: %w", err)
+		if callErr == nil && response == nil {
+			callErr = errors.New("模型供应商未返回响应")
+		}
+		var raw bytes.Buffer
+		var completion dramaCompletion
+		if callErr == nil {
+			reader := bufio.NewReader(io.TeeReader(io.LimitReader(response.Body, 4*1024*1024+1), &raw))
+			if status >= 200 && status < 300 {
+				first, readErr := reader.ReadString('\n')
+				source := io.MultiReader(strings.NewReader(first), reader)
+				isSSE := stream && (strings.Contains(response.Header.Get("Content-Type"), "text/event-stream") || strings.HasPrefix(strings.TrimSpace(first), "data:") || strings.HasPrefix(strings.TrimSpace(first), "event:"))
+				if isSSE {
+					lastProgress := time.Now()
+					text, callErr = readDramaSSEObserved(source, &completion, onText, func(phase string) error {
+						now := time.Now()
+						first := false
+						if phase == "thinking" && timing.FirstReasoningAt == nil {
+							timing.FirstReasoningAt = &now
+							first = true
+						}
+						if phase == "content" && timing.FirstContentAt == nil {
+							timing.FirstContentAt = &now
+							first = true
+						}
+						if first || time.Since(lastProgress) >= 5*time.Second {
+							lastProgress = now
+							return notify(phase)
+						}
+						return nil
+					})
+				} else {
+					content, err := io.ReadAll(source)
+					callErr = err
+					if callErr == nil && readErr != nil && !errors.Is(readErr, io.EOF) {
+						callErr = readErr
+					}
+					if callErr == nil {
+						callErr = json.Unmarshal(content, &completion)
+					}
+					if callErr == nil && len(completion.Choices) > 0 {
+						text = completion.Choices[0].Message.Content
+						if text != "" {
+							now := time.Now()
+							timing.FirstContentAt = &now
+						}
+						if onText != nil && text != "" {
+							callErr = onText(text)
+						}
+					}
+				}
+			} else {
+				_, callErr = io.Copy(io.Discard, reader)
+			}
+		}
+		truncated := raw.Len() > 4*1024*1024
+		rawBytes := raw.Bytes()
+		if truncated {
+			rawBytes = rawBytes[:4*1024*1024]
+			callErr = errors.New("模型响应超过记录上限")
+		}
+		if callErr == nil && status >= 200 && status < 300 && strings.TrimSpace(text) == "" {
+			callErr = drama.ErrEmptyModelContent
+		}
+		if callErr == nil && len(completion.Choices) > 0 && completion.Choices[0].FinishReason == "length" {
+			callErr = errors.New("模型输出达到上限，正文未完整生成")
+		}
+		timing.FinishedAt = time.Now()
+		timing.ReasoningTokens = completion.Usage.Details.ReasoningTokens
+		if options.OnProgress != nil {
+			e := options.OnProgress(drama.ModelProgress{Phase: "finished", ElapsedMS: time.Since(started).Milliseconds(), ReasoningTokens: timing.ReasoningTokens, Policy: policy})
+			callErr = errors.Join(callErr, e)
+		}
+		result := "success"
+		errorMessage := ""
+		if callErr != nil {
+			result = "failed"
+			errorMessage = callErr.Error()
+		} else if status < 200 || status >= 300 {
+			result = "failed"
+			errorMessage = fmt.Sprintf("模型供应商返回状态 %d", status)
+		}
+		return modelgateway.CallOutcome{
+			Result: result, HTTPStatus: status, ErrorMessage: errorMessage,
+			ResponseBody: rawBytes, ResponseTruncated: truncated,
+			PromptTokens: completion.Usage.PromptTokens, CompletionTokens: completion.Usage.CompletionTokens, TotalTokens: completion.Usage.TotalTokens,
+		}
+	})
+	if logErr != nil {
+		return "", fmt.Errorf("记录模型调用失败: %w", logErr)
 	}
 	if err = notify("recorded"); err != nil {
 		return "", err

@@ -441,7 +441,6 @@ func chatCompletionsGatewayHandler(deps Dependencies) gin.HandlerFunc {
 
 func mediaGenerationGatewayHandler(deps Dependencies, operation string) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		startedAt := time.Now()
 		limit := maxGatewayRequestBody
 		if operation != "chat" {
 			limit = maxMediaGatewayRequestBody
@@ -478,106 +477,104 @@ func mediaGenerationGatewayHandler(deps Dependencies, operation string) gin.Hand
 			handleGatewayRequestError(ctx, deps.Logger, err)
 			return
 		}
-		upstream, err := deps.GatewayForwarder.Forward(ctx.Request.Context(), prepared.Route, prepared.Body, prepared.Streaming)
-		if err != nil {
-			status := http.StatusBadGateway
-			code, message := "provider_unreachable", "无法连接模型供应商"
-			switch {
-			case errors.Is(err, modelprovider.ErrInvalidImageRequest):
-				status, code, message = http.StatusBadRequest, "invalid_request", "图片请求参数无效"
-			case errors.Is(err, modelprovider.ErrInvalidProviderRoute):
-				code, message = "invalid_provider_route", "模型供应商路由配置无效"
-			case errors.Is(err, modelprovider.ErrInvalidImageResponse):
-				code, message = "invalid_provider_response", "模型供应商图片响应无效"
+		executeGatewayCall(deps, ctx, prepared, modelgateway.CallLogOptions{Operation: operation}, func() modelgateway.CallOutcome {
+			upstream, err := deps.GatewayForwarder.Forward(ctx.Request.Context(), prepared.Route, prepared.Body, prepared.Streaming)
+			if upstream == nil && err == nil {
+				err = errors.New("模型供应商未返回响应")
 			}
-			deps.Logger.Error("模型供应商调用失败", "error", err, "request_id", contextString(ctx, "request_id"),
-				"provider_id", prepared.Route.ProviderID, "model_id", prepared.Route.ModelID)
-			writeGatewayError(ctx, status, code, message)
-			recordGatewayCall(deps, ctx, prepared, status, time.Since(startedAt), tokenUsage{}, code,
-				gatewayPayload{Operation: operation, RequestBody: prepared.Body, ErrorMessage: err.Error()})
-			return
-		}
-		defer upstream.Body.Close()
-		copyGatewayHeaders(ctx.Writer.Header(), upstream.Header)
-		ctx.Header("X-Request-ID", contextString(ctx, "request_id"))
-
-		if prepared.Streaming {
-			ctx.Status(upstream.StatusCode)
-			capture := &gatewayResponseCapture{}
-			usage, copyErr := streamGatewayResponse(ctx, io.TeeReader(upstream.Body, capture))
-			errorCode := upstreamErrorCode(upstream.StatusCode, capture.body.Bytes())
-			errorMessage := ""
-			if upstream.StatusCode >= 400 {
-				errorMessage = "供应商返回 HTTP " + strconv.Itoa(upstream.StatusCode)
-			}
-			if copyErr != nil {
-				errorCode = "stream_interrupted"
-				errorMessage = copyErr.Error()
-			}
-			recordGatewayCall(deps, ctx, prepared, upstream.StatusCode, time.Since(startedAt), usage, errorCode,
-				gatewayPayload{Operation: operation, RequestBody: prepared.Body, ResponseBody: capture.body.Bytes(),
-					ResponseTruncated: capture.truncated, ErrorMessage: errorMessage})
-			return
-		}
-
-		responseBody, readErr := io.ReadAll(io.LimitReader(upstream.Body, maxGatewayResponseBody+1))
-		responseTruncated := len(responseBody) > maxGatewayResponseBody
-		if responseTruncated {
-			responseBody = responseBody[:maxGatewayResponseBody]
-		}
-		payload := gatewayPayload{Operation: operation, RequestBody: prepared.Body, ResponseBody: responseBody,
-			ResponseTruncated: responseTruncated}
-		if upstream.StatusCode >= 400 {
-			payload.ErrorMessage = "供应商返回 HTTP " + strconv.Itoa(upstream.StatusCode)
-		}
-		if readErr != nil || responseTruncated {
-			if readErr != nil {
-				payload.ErrorMessage = readErr.Error()
-			} else {
-				payload.ErrorMessage = "模型供应商响应超过 32 MiB"
-			}
-			writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "模型供应商响应无效或过大")
-			recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "invalid_provider_response", payload)
-			return
-		}
-		rawResponseBody := responseBody
-		contentType := upstream.Header.Get("Content-Type")
-		if operation != "chat" && upstream.StatusCode >= 400 {
-			if providerError, ok := dashScopeEventError(responseBody); ok {
-				responseBody = providerError
-				contentType = "application/json"
-			}
-		}
-		if operation == "video" && upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
-			upstreamTaskID := videoTaskID(responseBody)
-			if upstreamTaskID == "" {
-				payload.ErrorMessage = "视频供应商未返回任务标识"
-				writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商未返回任务标识")
-				recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "invalid_provider_response", payload)
-				return
-			}
-			task, saveErr := deps.ModelGateway.SaveVideoTask(ctx.Request.Context(), modelgateway.SaveVideoTaskInput{
-				Caller: prepared.Caller, Route: prepared.Route, UpstreamTaskID: upstreamTaskID,
-				RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
-			})
-			if saveErr != nil {
-				payload.ErrorMessage = saveErr.Error()
-				deps.Logger.Error("保存视频任务失败", "error", saveErr, "request_id", contextString(ctx, "request_id"))
-				writeGatewayError(ctx, http.StatusBadGateway, "video_task_unavailable", "视频任务已提交，但无法保存查询标识")
-				recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "video_task_unavailable", payload)
-				return
-			}
-			responseBody, err = replaceVideoTaskID(responseBody, task.ID)
 			if err != nil {
-				payload.ErrorMessage = err.Error()
-				writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效")
-				recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "invalid_provider_response", payload)
-				return
+				status := http.StatusBadGateway
+				code, message := "provider_unreachable", "无法连接模型供应商"
+				switch {
+				case errors.Is(err, modelprovider.ErrInvalidImageRequest):
+					status, code, message = http.StatusBadRequest, "invalid_request", "图片请求参数无效"
+				case errors.Is(err, modelprovider.ErrInvalidProviderRoute):
+					code, message = "invalid_provider_route", "模型供应商路由配置无效"
+				case errors.Is(err, modelprovider.ErrInvalidImageResponse):
+					code, message = "invalid_provider_response", "模型供应商图片响应无效"
+				}
+				deps.Logger.Error("模型供应商调用失败", "error", err, "request_id", contextString(ctx, "request_id"),
+					"provider_id", prepared.Route.ProviderID, "model_id", prepared.Route.ModelID)
+				writeGatewayError(ctx, status, code, message)
+				return modelgateway.CallOutcome{HTTPStatus: status, ErrorCode: code, ErrorMessage: err.Error()}
 			}
-		}
-		ctx.Header("Content-Type", contentType)
-		ctx.Data(upstream.StatusCode, contentType, responseBody)
-		recordGatewayCall(deps, ctx, prepared, upstream.StatusCode, time.Since(startedAt), parseTokenUsage(rawResponseBody), upstreamErrorCode(upstream.StatusCode, responseBody), payload)
+			defer upstream.Body.Close()
+			copyGatewayHeaders(ctx.Writer.Header(), upstream.Header)
+			ctx.Header("X-Request-ID", contextString(ctx, "request_id"))
+
+			if prepared.Streaming {
+				ctx.Status(upstream.StatusCode)
+				capture := &gatewayResponseCapture{}
+				usage, copyErr := streamGatewayResponse(ctx, io.TeeReader(upstream.Body, capture))
+				errorCode := upstreamErrorCode(upstream.StatusCode, capture.body.Bytes())
+				errorMessage := ""
+				if upstream.StatusCode >= 400 {
+					errorMessage = "供应商返回 HTTP " + strconv.Itoa(upstream.StatusCode)
+				}
+				if copyErr != nil {
+					errorCode = "stream_interrupted"
+					errorMessage = copyErr.Error()
+				}
+				return gatewayCallOutcome(upstream.StatusCode, usage, errorCode,
+					modelgateway.CallOutcome{ResponseBody: capture.body.Bytes(),
+						ResponseTruncated: capture.truncated, ErrorMessage: errorMessage})
+			}
+
+			responseBody, readErr := io.ReadAll(io.LimitReader(upstream.Body, maxGatewayResponseBody+1))
+			responseTruncated := len(responseBody) > maxGatewayResponseBody
+			if responseTruncated {
+				responseBody = responseBody[:maxGatewayResponseBody]
+			}
+			payload := modelgateway.CallOutcome{ResponseBody: responseBody,
+				ResponseTruncated: responseTruncated}
+			if upstream.StatusCode >= 400 {
+				payload.ErrorMessage = "供应商返回 HTTP " + strconv.Itoa(upstream.StatusCode)
+			}
+			if readErr != nil || responseTruncated {
+				if readErr != nil {
+					payload.ErrorMessage = readErr.Error()
+				} else {
+					payload.ErrorMessage = "模型供应商响应超过 32 MiB"
+				}
+				writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "模型供应商响应无效或过大")
+				return gatewayCallOutcome(http.StatusBadGateway, tokenUsage{}, "invalid_provider_response", payload)
+			}
+			rawResponseBody := responseBody
+			contentType := upstream.Header.Get("Content-Type")
+			if operation != "chat" && upstream.StatusCode >= 400 {
+				if providerError, ok := dashScopeEventError(responseBody); ok {
+					responseBody = providerError
+					contentType = "application/json"
+				}
+			}
+			if operation == "video" && upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+				upstreamTaskID := videoTaskID(responseBody)
+				if upstreamTaskID == "" {
+					payload.ErrorMessage = "视频供应商未返回任务标识"
+					writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商未返回任务标识")
+					return gatewayCallOutcome(http.StatusBadGateway, tokenUsage{}, "invalid_provider_response", payload)
+				}
+				task, saveErr := deps.ModelGateway.SaveVideoTask(ctx.Request.Context(), modelgateway.SaveVideoTaskInput{
+					Caller: prepared.Caller, Route: prepared.Route, UpstreamTaskID: upstreamTaskID,
+					RequestID: contextString(ctx, "request_id"), SourceIP: ctx.ClientIP(),
+				})
+				if saveErr != nil {
+					payload.ErrorMessage = saveErr.Error()
+					deps.Logger.Error("保存视频任务失败", "error", saveErr, "request_id", contextString(ctx, "request_id"))
+					writeGatewayError(ctx, http.StatusBadGateway, "video_task_unavailable", "视频任务已提交，但无法保存查询标识")
+					return gatewayCallOutcome(http.StatusBadGateway, tokenUsage{}, "video_task_unavailable", payload)
+				}
+				responseBody, err = replaceVideoTaskID(responseBody, task.ID)
+				if err != nil {
+					payload.ErrorMessage = err.Error()
+					writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效")
+					return gatewayCallOutcome(http.StatusBadGateway, tokenUsage{}, "invalid_provider_response", payload)
+				}
+			}
+			ctx.Header("Content-Type", contentType)
+			ctx.Data(upstream.StatusCode, contentType, responseBody)
+			return gatewayCallOutcome(upstream.StatusCode, parseTokenUsage(rawResponseBody), upstreamErrorCode(upstream.StatusCode, responseBody), payload)
+		})
 	}
 }
 
@@ -603,58 +600,60 @@ func videoTaskGatewayHandler(deps Dependencies) gin.HandlerFunc {
 			handleGatewayRequestError(ctx, deps.Logger, err)
 			return
 		}
-		startedAt := time.Now()
 		prepared := modelgateway.PreparedRequest{Caller: task.Caller, Route: task.Route}
 		requestBody, _ := json.Marshal(map[string]string{"method": "GET", "path": "/api/v1/tasks/" + task.UpstreamTaskID})
-		payload := gatewayPayload{Operation: "video_task_query", RequestBody: requestBody}
-		upstream, err := deps.GatewayForwarder.QueryVideoTask(ctx.Request.Context(), task.Route, task.UpstreamTaskID)
-		if err != nil {
-			payload.ErrorMessage = err.Error()
-			writeGatewayError(ctx, http.StatusBadGateway, "provider_unreachable", "无法查询视频供应商任务")
-			recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "provider_unreachable", payload)
-			return
-		}
-		defer upstream.Body.Close()
-		responseBody, readErr := io.ReadAll(io.LimitReader(upstream.Body, maxGatewayResponseBody+1))
-		payload.ResponseTruncated = len(responseBody) > maxGatewayResponseBody
-		if payload.ResponseTruncated {
-			responseBody = responseBody[:maxGatewayResponseBody]
-		}
-		payload.ResponseBody = responseBody
-		if upstream.StatusCode >= 400 {
-			payload.ErrorMessage = "供应商返回 HTTP " + strconv.Itoa(upstream.StatusCode)
-		}
-		if readErr != nil || payload.ResponseTruncated {
-			if readErr != nil {
-				payload.ErrorMessage = readErr.Error()
-			} else {
-				payload.ErrorMessage = "视频供应商响应超过 32 MiB"
+		options := modelgateway.CallLogOptions{Operation: "video_task_query", RequestBody: requestBody}
+		executeGatewayCall(deps, ctx, prepared, options, func() modelgateway.CallOutcome {
+			var payload modelgateway.CallOutcome
+			upstream, err := deps.GatewayForwarder.QueryVideoTask(ctx.Request.Context(), task.Route, task.UpstreamTaskID)
+			if upstream == nil && err == nil {
+				err = errors.New("视频供应商未返回响应")
 			}
-			writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效或过大")
-			recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "invalid_provider_response", payload)
-			return
-		}
-		contentType := upstream.Header.Get("Content-Type")
-		if upstream.StatusCode >= 400 {
-			if providerError, ok := dashScopeEventError(responseBody); ok {
-				responseBody = providerError
-				contentType = "application/json"
-			}
-		}
-		if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
-			responseBody, err = replaceVideoTaskID(responseBody, task.ID)
 			if err != nil {
 				payload.ErrorMessage = err.Error()
-				writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效")
-				recordGatewayCall(deps, ctx, prepared, http.StatusBadGateway, time.Since(startedAt), tokenUsage{}, "invalid_provider_response", payload)
-				return
+				writeGatewayError(ctx, http.StatusBadGateway, "provider_unreachable", "无法查询视频供应商任务")
+				return gatewayCallOutcome(http.StatusBadGateway, tokenUsage{}, "provider_unreachable", payload)
 			}
-		}
-		copyGatewayHeaders(ctx.Writer.Header(), upstream.Header)
-		ctx.Header("X-Request-ID", contextString(ctx, "request_id"))
-		ctx.Header("Content-Type", contentType)
-		ctx.Data(upstream.StatusCode, contentType, responseBody)
-		recordGatewayCall(deps, ctx, prepared, upstream.StatusCode, time.Since(startedAt), tokenUsage{}, upstreamErrorCode(upstream.StatusCode, responseBody), payload)
+			defer upstream.Body.Close()
+			responseBody, readErr := io.ReadAll(io.LimitReader(upstream.Body, maxGatewayResponseBody+1))
+			payload.ResponseTruncated = len(responseBody) > maxGatewayResponseBody
+			if payload.ResponseTruncated {
+				responseBody = responseBody[:maxGatewayResponseBody]
+			}
+			payload.ResponseBody = responseBody
+			if upstream.StatusCode >= 400 {
+				payload.ErrorMessage = "供应商返回 HTTP " + strconv.Itoa(upstream.StatusCode)
+			}
+			if readErr != nil || payload.ResponseTruncated {
+				if readErr != nil {
+					payload.ErrorMessage = readErr.Error()
+				} else {
+					payload.ErrorMessage = "视频供应商响应超过 32 MiB"
+				}
+				writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效或过大")
+				return gatewayCallOutcome(http.StatusBadGateway, tokenUsage{}, "invalid_provider_response", payload)
+			}
+			contentType := upstream.Header.Get("Content-Type")
+			if upstream.StatusCode >= 400 {
+				if providerError, ok := dashScopeEventError(responseBody); ok {
+					responseBody = providerError
+					contentType = "application/json"
+				}
+			}
+			if upstream.StatusCode >= 200 && upstream.StatusCode < 300 {
+				responseBody, err = replaceVideoTaskID(responseBody, task.ID)
+				if err != nil {
+					payload.ErrorMessage = err.Error()
+					writeGatewayError(ctx, http.StatusBadGateway, "invalid_provider_response", "视频供应商响应无效")
+					return gatewayCallOutcome(http.StatusBadGateway, tokenUsage{}, "invalid_provider_response", payload)
+				}
+			}
+			copyGatewayHeaders(ctx.Writer.Header(), upstream.Header)
+			ctx.Header("X-Request-ID", contextString(ctx, "request_id"))
+			ctx.Header("Content-Type", contentType)
+			ctx.Data(upstream.StatusCode, contentType, responseBody)
+			return gatewayCallOutcome(upstream.StatusCode, tokenUsage{}, upstreamErrorCode(upstream.StatusCode, responseBody), payload)
+		})
 	}
 }
 
@@ -806,14 +805,6 @@ func dashScopeEventError(body []byte) ([]byte, bool) {
 	return nil, false
 }
 
-type gatewayPayload struct {
-	Operation         string
-	RequestBody       []byte
-	ResponseBody      []byte
-	ResponseTruncated bool
-	ErrorMessage      string
-}
-
 type gatewayResponseCapture struct {
 	body      bytes.Buffer
 	truncated bool
@@ -830,28 +821,17 @@ func (c *gatewayResponseCapture) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func recordGatewayCall(deps Dependencies, ctx *gin.Context, prepared modelgateway.PreparedRequest, status int, latency time.Duration, usage tokenUsage, errorCode string, payload gatewayPayload) {
-	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), 15*time.Second)
-	defer cancel()
-	result := "success"
-	if status < 200 || status >= 400 || errorCode != "" {
-		result = "failed"
-	}
-	err := deps.ModelGateway.RecordCall(recordCtx, modelgateway.RecordCallInput{
-		OrganizationID: prepared.Caller.OrganizationID, APIKeyID: prepared.Caller.APIKeyID,
-		UserID: prepared.Caller.UserID, AuthType: prepared.Caller.AuthType,
-		DepartmentID: prepared.Caller.DepartmentID,
-		ModelID:      prepared.Route.ModelID, ProviderID: prepared.Route.ProviderID,
-		RequestID: contextString(ctx, "request_id"), ModelCode: prepared.Route.ModelCode, ModelType: prepared.Route.ModelType,
-		UpstreamModelID: prepared.Route.UpstreamModelID, Streaming: prepared.Streaming,
-		Result: result, HTTPStatus: status, LatencyMS: latency.Milliseconds(),
-		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
-		TotalTokens: usage.TotalTokens, UsageReported: usage.Reported,
-		ErrorCode: errorCode, SourceIP: ctx.ClientIP(),
-		Source: "model_gateway", Operation: payload.Operation, RequestBody: payload.RequestBody,
-		ResponseBody: payload.ResponseBody, ResponseTruncated: payload.ResponseTruncated,
-		ErrorMessage: payload.ErrorMessage,
-	})
+func gatewayCallOutcome(status int, usage tokenUsage, errorCode string, outcome modelgateway.CallOutcome) modelgateway.CallOutcome {
+	outcome.HTTPStatus, outcome.ErrorCode = status, errorCode
+	outcome.PromptTokens, outcome.CompletionTokens = usage.PromptTokens, usage.CompletionTokens
+	outcome.TotalTokens, outcome.UsageReported = usage.TotalTokens, usage.Reported
+	return outcome
+}
+
+func executeGatewayCall(deps Dependencies, ctx *gin.Context, prepared modelgateway.PreparedRequest, options modelgateway.CallLogOptions, execute func() modelgateway.CallOutcome) {
+	options.Source = "model_gateway"
+	options.SourceIP = ctx.ClientIP()
+	err := modelgateway.ExecuteRecordedCall(ctx.Request.Context(), deps.ModelGateway, prepared, options, execute)
 	if err != nil {
 		deps.Logger.Error("记录模型网关调用失败", "error", err, "request_id", contextString(ctx, "request_id"))
 	}

@@ -140,52 +140,52 @@ func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.Se
 }
 
 func (w *dramaVideoEngine) videoCall(ctx context.Context, prepared modelgateway.PreparedRequest, videoID, operation string, body []byte, call func() (*http.Response, error)) (dramaVideoOutput, error) {
-	start := time.Now()
-	response, err := call()
-	status, result, message := http.StatusBadGateway, "success", ""
-	var raw []byte
-	truncated := false
 	var task dramaVideoOutput
-	if response != nil {
-		defer response.Body.Close()
-		status = response.StatusCode
-		const limit = 1024 * 1024
-		var readErr error
-		raw, readErr = io.ReadAll(io.LimitReader(response.Body, limit+1))
-		err = errors.Join(err, readErr)
-		if len(raw) > limit {
-			raw, truncated, err = raw[:limit], true, errors.New("视频模型响应超过限制")
-		}
-	}
-	if err == nil {
-		if status < 200 || status >= 300 {
-			err = fmt.Errorf("视频供应商返回 HTTP %d", status)
-			// HTTP 错误也可能带有可识别的供应商错误码。
-			if json.Unmarshal(raw, &task) == nil {
-				err = videoProviderFailure(task, err)
+	var callErr error
+	logErr := modelgateway.ExecuteRecordedCall(ctx, w.gateway, prepared, modelgateway.CallLogOptions{
+		Source: "ai_drama", Operation: operation, SegmentVideoID: videoID, RequestBody: body,
+	}, func() modelgateway.CallOutcome {
+		response, err := call()
+		status, result, message := http.StatusBadGateway, "success", ""
+		var raw []byte
+		truncated := false
+		if response != nil {
+			defer response.Body.Close()
+			status = response.StatusCode
+			const limit = 1024 * 1024
+			var readErr error
+			raw, readErr = io.ReadAll(io.LimitReader(response.Body, limit+1))
+			err = errors.Join(err, readErr)
+			if len(raw) > limit {
+				raw, truncated, err = raw[:limit], true, errors.New("视频模型响应超过限制")
 			}
-		} else if err = json.Unmarshal(raw, &task); err == nil &&
-			(task.Code != "" || task.Output.Status == "FAILED" || task.Output.Status == "CANCELED" || task.Output.Status == "UNKNOWN") {
-			cause := fmt.Errorf("视频供应商返回错误 %s %s %s", task.Code, task.Output.Status, task.Output.Code)
-			err = videoProviderFailure(task, cause)
 		}
-	}
-	if err == nil && operation == "video" && task.Output.ID == "" {
-		err = errors.New("视频供应商未返回任务编号")
-	}
-	if err != nil {
-		result, message = "failed", err.Error()
-	}
-	route, caller := prepared.Route, prepared.Caller
-	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-	defer cancel()
-	logErr := w.gateway.RecordCall(logCtx, modelgateway.RecordCallInput{
-		OrganizationID: caller.OrganizationID, UserID: caller.UserID, DepartmentID: caller.DepartmentID, AuthType: "user",
-		ModelID: route.ModelID, ProviderID: route.ProviderID, ModelCode: route.ModelCode, ModelType: "video", UpstreamModelID: route.UpstreamModelID,
-		RequestID: uuid.NewString(), Result: result, HTTPStatus: status, LatencyMS: time.Since(start).Milliseconds(),
-		Source: "ai_drama", Operation: operation, SegmentVideoID: videoID, RequestBody: body, ResponseBody: raw, ResponseTruncated: truncated, ErrorMessage: message,
+		if err == nil {
+			if status < 200 || status >= 300 {
+				err = fmt.Errorf("视频供应商返回 HTTP %d", status)
+				// HTTP 错误也可能带有可识别的供应商错误码。
+				if json.Unmarshal(raw, &task) == nil {
+					err = videoProviderFailure(task, err)
+				}
+			} else if err = json.Unmarshal(raw, &task); err == nil &&
+				(task.Code != "" || task.Output.Status == "FAILED" || task.Output.Status == "CANCELED" || task.Output.Status == "UNKNOWN") {
+				cause := fmt.Errorf("视频供应商返回错误 %s %s %s", task.Code, task.Output.Status, task.Output.Code)
+				err = videoProviderFailure(task, cause)
+			}
+		}
+		if err == nil && operation == "video" && task.Output.ID == "" {
+			err = errors.New("视频供应商未返回任务编号")
+		}
+		if err != nil {
+			result, message = "failed", err.Error()
+		}
+		callErr = err
+		return modelgateway.CallOutcome{
+			Result: result, HTTPStatus: status, ErrorMessage: message,
+			ResponseBody: raw, ResponseTruncated: truncated,
+		}
 	})
-	return task, errors.Join(err, logErr)
+	return task, errors.Join(callErr, logErr)
 }
 
 func videoProviderFailure(task dramaVideoOutput, cause error) error {

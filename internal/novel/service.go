@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -72,13 +73,14 @@ type Project struct {
 }
 
 type Workspace struct {
-	AuthorGuidance string    `json:"authorGuidance,omitempty"`
-	StoryMode      string    `json:"storyMode,omitempty"`
-	ModelCode      string    `json:"modelCode"`
-	Outline        *Outline  `json:"outline"`
-	Confirmed      bool      `json:"confirmed"`
-	Chapters       []Chapter `json:"chapters"`
-	NeedsTitle     bool      `json:"needsTitle,omitempty"`
+	AuthorGuidance string        `json:"authorGuidance,omitempty"`
+	StoryMode      string        `json:"storyMode,omitempty"`
+	ModelCode      string        `json:"modelCode"`
+	Outline        *Outline      `json:"outline"`
+	OutlineCheck   *OutlineCheck `json:"outlineCheck,omitempty"`
+	Confirmed      bool          `json:"confirmed"`
+	Chapters       []Chapter     `json:"chapters"`
+	NeedsTitle     bool          `json:"needsTitle,omitempty"`
 }
 
 type Outline struct {
@@ -250,7 +252,7 @@ func (s *Service) Apply(ctx context.Context, owner Owner, id string, action Acti
 			}
 			return current, nil
 		}
-	case "generate_outline", "save_outline", "confirm_outline":
+	case "generate_outline", "check_outline", "save_outline", "confirm_outline":
 		err = s.applyOutline(ctx, owner, &p, action)
 	case "save_author_guidance":
 		err = applyAuthorGuidance(&p, action.AuthorGuidance)
@@ -329,15 +331,43 @@ func (s *Service) applyOutline(ctx context.Context, owner Owner, p *Project, act
 				p.NeedsTitle = false
 			}
 		}
+		p.OutlineCheck = s.checkOutline(ctx, owner, p, action.ModelCode, action.Instruction, &outline)
+		p.Outline = &outline
+	case "check_outline":
+		modelCode := strings.TrimSpace(action.ModelCode)
+		if !valid(modelCode, 160) {
+			return ErrModel
+		}
+		source := action.Outline
+		if source == nil {
+			source = p.Outline
+		}
+		if source == nil {
+			return fmt.Errorf("%w，请先准备完整大纲，再检查剧情因果", ErrInvalid)
+		}
+		outline := *source
+		outline.Beats = slices.Clone(source.Beats)
+		if !normalizeOutline(&outline, p.ChapterCount) {
+			return fmt.Errorf("%w，请先准备完整大纲，再检查剧情因果", ErrInvalid)
+		}
+		p.OutlineCheck = s.checkOutline(ctx, owner, p, modelCode, "", &outline)
 		p.Outline = &outline
 	case "save_outline", "confirm_outline":
 		if !normalizeOutline(action.Outline, p.ChapterCount) {
 			return fmt.Errorf("%w，请填写梗概、设定、人物及每章标题和目标", ErrInvalid)
 		}
+		if !equalOutlines(p.Outline, action.Outline) {
+			p.OutlineCheck = nil
+		}
 		p.Outline = action.Outline
 		p.Confirmed = action.Kind == "confirm_outline"
 	}
 	return nil
+}
+
+func equalOutlines(a, b *Outline) bool {
+	return a != nil && b != nil && a.Synopsis == b.Synopsis && a.World == b.World &&
+		a.Characters == b.Characters && slices.Equal(a.Beats, b.Beats)
 }
 
 func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, action Action) error {

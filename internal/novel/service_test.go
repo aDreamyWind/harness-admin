@@ -72,6 +72,7 @@ type testWriter struct {
 	result       string
 	prompt       string
 	beforeReturn func()
+	outlineCheck func(string) (string, error)
 }
 
 func (w *testWriter) Models(context.Context, Owner) ([]Model, error) {
@@ -79,6 +80,12 @@ func (w *testWriter) Models(context.Context, Owner) ([]Model, error) {
 }
 
 func (w *testWriter) Complete(_ context.Context, _ Owner, _, prompt string) (string, error) {
+	if strings.HasPrefix(prompt, outlineCheckPrompt) || strings.HasPrefix(prompt, outlineRepairPrompt) || strings.HasPrefix(prompt, outlineVerifyPrompt) {
+		if w.outlineCheck != nil {
+			return w.outlineCheck(prompt)
+		}
+		return `{"issues":[]}`, nil
+	}
 	w.prompt = prompt
 	if w.beforeReturn != nil {
 		w.beforeReturn()
@@ -133,6 +140,9 @@ func TestNovelWorkflowUsesOnlyConfirmedContinuity(t *testing.T) {
 	run(Action{Kind: "generate_outline", ModelCode: "writer"}, nil)
 	if p.Outline.Characters != "姓名：林静\n身份：守塔人" {
 		t.Fatalf("大纲人物列表未整理成文本: %q", p.Outline.Characters)
+	}
+	if p.OutlineCheck == nil || p.OutlineCheck.Status != OutlineCheckPassed {
+		t.Fatalf("AI 生成的大纲未自动检查: %+v", p.OutlineCheck)
 	}
 	run(Action{Kind: "write", Chapter: 1, ModelCode: "writer"}, ErrState)
 	p.Outline.Beats[0].Goal = "保存后可修改的目标"
