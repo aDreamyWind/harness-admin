@@ -29,32 +29,24 @@ Harness Admin 是一个可自托管的企业 AI 管理后台。你可以在同�
 
 ## 快速启动
 
-准备 Go 1.26、Node.js 22.12 或更新的 LTS 版本、pnpm、Make，以及已启动的 Docker 和 Docker Compose。在项目根目录执行：
+安装并启动 Docker Desktop，或准备 Docker Engine 和支持 `up --wait` 的 Docker Compose。拉取代码后，在项目根目录执行：
 
 ```bash
-cp .env.example .env
-make infra-up
+make demo-up
 ```
 
-打开 `.env`，给 `BOOTSTRAP_ADMIN_PASSWORD` 设置一个本地开发密码。等待 `docker compose ps` 显示 PostgreSQL 和 Redis 均为 `healthy`，再初始化企业管理员并启动后端：
+也可以直接运行 `docker compose -f compose.demo.yaml up --build --wait`。首次启动会下载镜像和依赖，构建前后端，并自动初始化数据库和账号。
 
-```bash
-make bootstrap-admin
-make dev
-```
+| 登录入口 | 企业 | 用户名 | 初始密码 |
+| --- | --- | --- | --- |
+| [企业管理端](http://127.0.0.1:18080/) | 演示企业 | `admin` | `demo-admin` |
+| [平台管理端](http://127.0.0.1:18080/platform/login) | — | `platform-admin` | `demo-platform` |
 
-另开一个终端，在项目根目录启动前端：
+启动完成后可以直接登录。模型调用和 AI 创作功能需要在「AI 资源管理 → 模型目录」配置上游模型。若端口已被占用，可以设置 `HARNESS_DEMO_PORT` 后重新启动。
 
-```bash
-make web-install
-make web-dev
-```
+运行 `make demo-down`（或 `docker compose -f compose.demo.yaml down`）停止服务并保留数据。
 
-打开 [企业管理端](http://localhost:5173)，选择「默认企业」，使用账号 `admin` 和刚设置的密码登录。可以在「AI 资源管理 → 模型目录」登记供应商和模型，再到「模型网关」创建调用密钥。模型调用和 AI 创作功能需要配置相应的上游模型。
-
-如果要管理多个企业，在 `.env` 中设置 `BOOTSTRAP_PLATFORM_ADMIN_PASSWORD`，执行 `make bootstrap-platform-admin`，然后用 `platform-admin` 登录[平台管理端](http://localhost:5173/platform/login)。初始化完成后，可从 `.env` 移除初始化密码。
-
-示例配置用于本地开发。部署到服务器前，请配置独立的数据库凭据、凭据加密主密钥和 OIDC 签名密钥，并启用 HTTPS。详见[开发与部署指南](docs/development.md)。
+默认账号和密码仅用于本机演示。日常开发和正式部署的配置见[开发与部署指南](docs/development.md)。
 
 ## 文档
 
@@ -64,3 +56,7 @@ make web-dev
 - [MCP 接入方案](docs/enterprise-skills-mcp-plan.md) · 服务来源、网关和权限
 - [企业 Skills 接入](docs/enterprise-skill-management-plan.md) · 导入、发布与分发
 - [漫剧工作流](docs/ai-drama-workflow.md) · 剧本解析、资产与分镜制作
+
+## 开源许可证
+
+本项目采用 [MIT 许可证](LICENSE)。

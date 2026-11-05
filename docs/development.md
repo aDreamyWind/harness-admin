@@ -1,6 +1,28 @@
 # 开发与部署指南
 
-本地安装和首次登录见[项目首页](../README.md)。接口参数、响应和认证要求以 [OpenAPI 契约](../api/openapi.yaml)为准。
+Docker 一键演示见[项目首页](../README.md)。接口参数、响应和认证要求以 [OpenAPI 契约](../api/openapi.yaml)为准。
+
+## 本地开发
+
+准备 Go 1.26、Node.js 22.12 或更新的 LTS 版本、pnpm、Make，以及已启动的 Docker 和 Docker Compose。在项目根目录执行：
+
+```bash
+cp .env.example .env
+make infra-up
+```
+
+在 `.env` 中设置 `BOOTSTRAP_ADMIN_PASSWORD`。等待 `docker compose ps` 显示 PostgreSQL 和 Redis 均为 `healthy`，再初始化企业管理员并启动后端：
+
+```bash
+make bootstrap-admin
+make dev
+```
+
+另开一个终端，在项目根目录执行 `make web-install` 和 `make web-dev`。访问[企业管理端](http://localhost:5173)，选择「默认企业」，使用 `admin` 和刚设置的密码登录。
+
+如需平台管理员，在 `.env` 中设置 `BOOTSTRAP_PLATFORM_ADMIN_PASSWORD`，执行 `make bootstrap-platform-admin`，然后用 `platform-admin` 登录[平台管理端](http://localhost:5173/platform/login)。初始化完成后，可从 `.env` 移除两个初始化密码。
+
+正式部署时使用独立的数据库凭据、凭据加密主密钥和 OIDC 签名密钥，并配置 HTTPS。
 
 ## 代码结构
 
