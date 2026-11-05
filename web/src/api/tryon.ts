@@ -8,6 +8,7 @@ export interface TryOnAsset {
   kind: TryOnKind
   name: string
   category?: string
+  builtin?: boolean
   createdAt: string
 }
 export interface TryOnCandidate {

@@ -8,7 +8,7 @@ import {
 
 export const tryOnCategories = ['上衣', '外套', '裤子', '半裙', '连衣裙', '鞋履', '包袋', '首饰', '其他配饰']
 export const tryOnLabels: Record<TryOnKind, string> = {
-  person_2d: '2D 插画', person_real: '真人 / 写实', garment: '衣物', pose: '姿势',
+  person_2d: '2D 插画', person_real: '真人 / 写实', garment: '衣物', pose: '姿态',
 }
 
 async function normalizePhoto(file: File) {
@@ -218,7 +218,7 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
             <button className="tryon-drop" type="button" disabled={busy} onClick={() => input.current?.click()}
               onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); void pick(e.dataTransfer.files[0]) }}>
               <CloudUploadOutlined /><strong>{working === 'upload' ? '正在读取图片' : '点击或拖入图片'}</strong>
-              <span>{person ? '推荐单人、全身清晰、遮挡少的照片或插画' : '支持 JPG、PNG 和 WebP'}</span>
+              <span>{person || kind === 'pose' ? '推荐单人、全身清晰、遮挡少的照片或插画' : '支持 JPG、PNG 和 WebP'}</span>
             </button>}
           {kind === 'garment' && file && <>
             <Space wrap>

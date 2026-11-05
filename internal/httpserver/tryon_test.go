@@ -52,7 +52,7 @@ func (r *tryOnRepoFixture) Asset(_ context.Context, owner tryon.Owner, id string
 	}
 	return asset, nil
 }
-func (r *tryOnRepoFixture) CreateJob(_ context.Context, owner tryon.Owner, job tryon.Job, _ time.Time) (tryon.Job, error) {
+func (r *tryOnRepoFixture) CreateJob(_ context.Context, owner tryon.Owner, job tryon.Job, _ time.Time, builtinAssets []tryon.AssetImage) (tryon.Job, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if owner != r.owner {
@@ -60,6 +60,10 @@ func (r *tryOnRepoFixture) CreateJob(_ context.Context, owner tryon.Owner, job t
 	}
 	if r.job.Status == "running" {
 		return tryon.Job{}, tryon.ErrBusy
+	}
+	for _, asset := range builtinAssets {
+		asset.Builtin = false // PostgreSQL 只保存素材快照，标记由业务层补回。
+		r.assets[asset.ID] = asset
 	}
 	job.Status = "running"
 	r.job = job
@@ -188,8 +192,20 @@ func TestTryOnHTTPFlow(t *testing.T) {
 	garment := tryOnResponse[tryon.Asset](t, upload("/assets", map[string]string{"kind": "garment", "name": "蓝色衬衫", "category": "上衣", "box": "[0.1,0.2,0.9,0.8]"}, 201))
 	pose := tryOnResponse[tryon.Asset](t, upload("/assets", map[string]string{"kind": "pose", "name": "站姿"}, 201))
 	assets := tryOnResponse[[]tryon.Asset](t, send("GET", "/assets", "", nil, true, false, 200))
-	if len(assets) != 3 || pose.Kind != tryon.Pose {
+	privateCount := 0
+	builtin := make(map[string][]tryon.Asset)
+	for _, asset := range assets {
+		if asset.Builtin {
+			builtin[asset.Kind] = append(builtin[asset.Kind], asset)
+		} else {
+			privateCount++
+		}
+	}
+	if privateCount != 3 || pose.Kind != tryon.Pose {
 		t.Fatalf("未找到已保存的三种素材: %#v", assets)
+	}
+	if len(builtin[tryon.Person2D]) == 0 || len(builtin[tryon.PersonReal]) == 0 || len(builtin[tryon.Garment]) < 2 || len(builtin[tryon.Pose]) < 2 {
+		t.Fatalf("试衣样例素材未覆盖人物、衣物和姿态库: %#v", builtin)
 	}
 	cropped := send("GET", "/assets/"+garment.ID+"/content", "", nil, true, false, 200)
 	info, err := png.DecodeConfig(cropped.Body)
@@ -226,6 +242,46 @@ func TestTryOnHTTPFlow(t *testing.T) {
 	res := send("GET", "/jobs/"+job.ID+"/result", "", nil, true, false, 200)
 	if !bytes.Equal(res.Body.Bytes(), photo.Bytes()) {
 		t.Fatal("输出图片未保存")
+	}
+
+	builtinPerson := builtin[tryon.Person2D][0]
+	builtinGarment := builtin[tryon.Garment][0]
+	builtinPose := builtin[tryon.Pose][0]
+	var expected [][]byte
+	for _, asset := range []tryon.Asset{builtinPerson, builtinGarment, builtinPose} {
+		ref := send("GET", "/assets/"+asset.ID+"/content", "", nil, true, false, 200)
+		if _, _, err := image.DecodeConfig(bytes.NewReader(ref.Body.Bytes())); err != nil {
+			t.Fatalf("内置素材 %s 无法作为图片预览: %v", asset.Name, err)
+		}
+		expected = append(expected, ref.Body.Bytes())
+	}
+	repo.done = make(chan struct{})
+	builtinBody := `{"personId":"` + builtinPerson.ID + `","garmentId":"` + builtinGarment.ID + `","poseId":"` + builtinPose.ID + `","modelCode":"editor"}`
+	builtinJob := tryOnResponse[tryon.Job](t, post("/jobs", builtinBody, 202))
+	if builtinJob.PersonID != builtinPerson.ID || builtinJob.GarmentID != builtinGarment.ID || builtinJob.PoseID != builtinPose.ID {
+		t.Fatalf("任务未保存选中的内置参考: %#v", builtinJob)
+	}
+	select {
+	case refs := <-engine.references:
+		if len(refs) != len(expected) {
+			t.Fatalf("模型收到 %d 张参考图", len(refs))
+		}
+		for i, ref := range refs {
+			if !bytes.Equal(ref.Data, expected[i]) {
+				t.Fatalf("第 %d 张模型参考图与预览不一致", i+1)
+			}
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("未发起内置素材试穿")
+	}
+	select {
+	case <-repo.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("内置素材试穿未结束")
+	}
+	listed := tryOnResponse[[]tryon.Asset](t, send("GET", "/assets", "", nil, true, false, 200))
+	if len(listed) != len(assets) {
+		t.Fatalf("任务保存的快照在素材库重复展示: %d，预期 %d", len(listed), len(assets))
 	}
 }
 

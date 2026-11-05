@@ -91,9 +91,10 @@ export const getNovel = (id: string) => request<NovelProject>(base + '/projects/
 export const listNovelFinalizedChapters = (id: string) =>
   request<{ number: number; title: string }[]>(`${base}/projects/${encodeURIComponent(id)}/finalized-chapters`)
 
-function post<T>(path: string, data: object) {
+function post<T>(path: string, data: object, options?: Pick<RequestInit, 'keepalive'>) {
   return request<T>(base + path, {
     method: 'POST',
+    ...options,
     headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
     body: JSON.stringify(data),
   })
@@ -122,8 +123,21 @@ export interface NovelCoverGenerationInput {
   styleId?: string
 }
 
-export const generateNovelCover = (id: string, input: NovelCoverGenerationInput) =>
-  post<NovelCoverPreview>(`/projects/${encodeURIComponent(id)}/cover/generate`, input)
+export interface NovelCoverGeneration {
+  status: 'idle' | 'running' | 'succeeded' | 'failed'
+  jobId?: string
+  preview?: NovelCoverPreview
+  errorMessage?: string
+  modelCode?: string
+  styleId?: string
+  instruction?: string
+}
+
+export const getNovelCoverGeneration = (id: string, signal?: AbortSignal) =>
+  request<NovelCoverGeneration>(`${base}/projects/${encodeURIComponent(id)}/cover/generation`, { signal })
+
+export const startNovelCoverGeneration = (id: string, input: NovelCoverGenerationInput) =>
+  post<NovelCoverGeneration>(`/projects/${encodeURIComponent(id)}/cover/generation`, input, { keepalive: true })
 
 export const applyNovelCover = (id: string, token: string) =>
   post<NovelCover>(`/projects/${encodeURIComponent(id)}/cover/apply`, { token })

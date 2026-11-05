@@ -1,10 +1,11 @@
-import { PictureOutlined, RobotOutlined, UploadOutlined } from '@ant-design/icons'
+import { LoadingOutlined, PictureOutlined, RobotOutlined, UploadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Form, Image, Input, Modal, Select, Space, Tabs, Upload } from 'antd'
 import { useEffect, useState } from 'react'
 
 import { ApiError } from '../api/client'
-import { applyNovelCover, generateNovelCover, listNovelCoverModels, uploadNovelCover, type NovelBook, type NovelCoverGenerationInput, type NovelCoverPreview, type NovelProject } from '../api/novel'
+import { applyNovelCover, getNovelCoverGeneration, listNovelCoverModels, startNovelCoverGeneration, uploadNovelCover,
+  type NovelBook, type NovelCoverGeneration, type NovelCoverGenerationInput, type NovelProject } from '../api/novel'
 import { useAuth } from '../auth/AuthContext'
 import { DramaStylePicker } from './DramaStylePicker'
 import './novel-cover-editor.css'
@@ -12,27 +13,41 @@ import './novel-cover-editor.css'
 const maxCoverBytes = 10 * 1024 * 1024
 const coverFileTypes = 'image/jpeg,image/png,image/webp'
 type CoverChange = { file: File } | { token: string }
-type CoverCandidate = NovelCoverPreview & { applyError?: string }
 
 export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: () => void }) {
   const { user } = useAuth()
   const cache = useQueryClient()
   const scope = [user?.organizationId, user?.id]
+  const generationKey = ['novel-cover-generation', ...scope, book.id]
   const [tab, setTab] = useState('ai')
-  const [model, setModel] = useState<string>()
-  const [styleId, setStyleId] = useState<string>()
-  const [instruction, setInstruction] = useState('')
-  const [candidate, setCandidate] = useState<CoverCandidate>()
+  const [draft, setDraft] = useState<Partial<NovelCoverGenerationInput>>({})
+  const [rejectedToken, setRejectedToken] = useState<string>()
   const [candidateImage, setCandidateImage] = useState<{ token: string; status: 'loaded' | 'failed' }>()
   const [picked, setPicked] = useState<{ file: File; url: string }>()
   const [fileError, setFileError] = useState('')
-  const [discardOpen, setDiscardOpen] = useState(false)
   const models = useQuery({ queryKey: ['novel-cover-models', ...scope], queryFn: listNovelCoverModels, enabled: tab === 'ai' })
+  const coverGeneration = useQuery({
+    queryKey: generationKey,
+    queryFn: ({ signal }) => getNovelCoverGeneration(book.id, signal),
+    refetchInterval: (query) => query.state.data?.status === 'running' ? 2500 : false,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: 'always',
+  })
+  const job = coverGeneration.data
+  const candidate = job?.preview
+  const model = draft.modelCode ?? job?.modelCode
+  const styleId = (draft.styleId ?? job?.styleId) || undefined
+  const instruction = draft.instruction ?? job?.instruction ?? ''
   const availableModels = models.data ?? []
   const activeModel = availableModels.find((item) => item.code === model) ?? availableModels[0]
   const generation = useMutation({
-    mutationFn: (input: NovelCoverGenerationInput) => generateNovelCover(book.id, input),
-    onSuccess: setCandidate,
+    mutationFn: (input: NovelCoverGenerationInput) => startNovelCoverGeneration(book.id, input),
+    onSuccess: async (current) => {
+      await cache.cancelQueries({ queryKey: generationKey })
+      cache.setQueryData(generationKey, current)
+      void cache.invalidateQueries({ queryKey: generationKey })
+    },
+    onError: () => { void cache.invalidateQueries({ queryKey: generationKey }) },
   })
   const change = useMutation({
     mutationFn: (input: CoverChange) => 'file' in input
@@ -44,16 +59,19 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
       await Promise.all([
         cache.cancelQueries({ queryKey: listKey }),
         cache.cancelQueries({ queryKey: projectKey }),
+        cache.cancelQueries({ queryKey: generationKey }),
       ])
       cache.setQueryData<NovelBook[]>(listKey, (books) => books?.map((item) => item.id === book.id ? { ...item, cover } : item))
       cache.setQueryData<NovelProject>(projectKey, (project) => project && { ...project, cover })
-      setCandidate(undefined)
+      cache.setQueryData<NovelCoverGeneration>(generationKey, (current) => current && { ...current, preview: undefined })
+      void cache.invalidateQueries({ queryKey: generationKey })
       setPicked(undefined)
     },
     onError: (error, input) => {
       if (!(error instanceof ApiError)) return
       if ('token' in input && ['novel_cover_preview_expired', 'novel_cover_conflict'].includes(error.code)) {
-        setCandidate((previous) => previous?.token === input.token ? { ...previous, applyError: error.message } : previous)
+        setRejectedToken(input.token)
+        void cache.invalidateQueries({ queryKey: generationKey })
       }
       if (error.status === 409) {
         void cache.invalidateQueries({ queryKey: ['novel-books', ...scope] })
@@ -61,7 +79,8 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
       }
     },
   })
-  const busy = generation.isPending || change.isPending
+  const generating = generation.isPending || job?.status === 'running'
+  const busy = generating || change.isPending
   const imageStatus = candidateImage?.token === candidate?.token ? candidateImage?.status : undefined
 
   useEffect(() => () => { if (picked) URL.revokeObjectURL(picked.url) }, [picked])
@@ -83,31 +102,25 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
   }
 
   function generatePreview() {
-    if (!activeModel || busy) return
+    if (!activeModel || !job || busy) return
     change.reset()
     generation.mutate({ modelCode: activeModel.code, instruction: instruction.trim(), styleId })
   }
 
   function applyPreview() {
-    if (!candidate || candidate.applyError || imageStatus !== 'loaded' || busy) return
+    if (!candidate || candidate.token === rejectedToken || imageStatus !== 'loaded' || busy) return
     generation.reset()
     change.mutate({ token: candidate.token })
-  }
-
-  function closeEditor() {
-    if (busy) return
-    if (candidate) setDiscardOpen(true)
-    else onClose()
   }
 
   const preview = (tab === 'upload' ? picked?.url : undefined) ?? book.cover?.url
   const shownCandidate = tab === 'ai' ? candidate : undefined
   const imageError = imageStatus === 'failed' ? '候选封面无法加载，请重新生成。' : undefined
-  const error = (tab === 'ai' ? generation.error?.message ?? candidate?.applyError ?? imageError : undefined) ?? change.error?.message
+  const error = change.error?.message ?? (tab === 'ai' ? (generating ? undefined : generation.error?.message) ?? imageError : undefined)
 
-  return <>
-    <Modal title={`设置封面 · ${book.title}`} open footer={null} onCancel={closeEditor} width={shownCandidate ? 820 : 620}
-      closable={!busy} keyboard={!busy} mask={{ closable: !busy && !candidate }}>
+  return (
+    <Modal title={`设置封面 · ${book.title}`} open footer={null} onCancel={() => { if (!change.isPending) onClose() }} width={shownCandidate ? 820 : 620}
+      closable={!change.isPending} keyboard={!change.isPending} mask={{ closable: !change.isPending }}>
       <div className={`novel-cover-editor${shownCandidate ? ' novel-cover-editor--comparison' : ''}`}>
         <div className="novel-cover-previews">
           <figure className="novel-cover-preview-item">
@@ -128,33 +141,45 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
                 preview={imageStatus === 'loaded'}
                 onError={() => setCandidateImage({ token: shownCandidate.token, status: 'failed' })} />
             </div>
-            <figcaption>候选封面</figcaption>
+            <figcaption>{generating || job?.status === 'failed' ? '上一次预览' : '候选封面'}</figcaption>
           </figure>}
         </div>
         <Tabs activeKey={tab} onChange={(key) => {
           change.reset()
-          generation.reset()
           setCandidateImage(undefined)
           setTab(key)
         }} items={[
-          { key: 'ai', label: 'AI 生成', disabled: busy && tab !== 'ai', children: <div className="novel-cover-fields">
+          { key: 'ai', label: 'AI 生成', disabled: change.isPending && tab !== 'ai', children: <div className="novel-cover-fields">
             <p>AI 会参考已保存的故事灵感和大纲。点「设为封面」后才会替换当前封面。</p>
+            {generating && <Alert type="info" showIcon icon={<LoadingOutlined />}
+              title={job?.status === 'running' ? '正在后台生成封面预览' : '正在提交生成任务'}
+              description={job?.status === 'running' ? '可以关闭弹窗或离开页面，回来后打开「设置封面」查看结果。' : undefined} />}
+            {coverGeneration.isPending && !generating && <Alert type="info" title="正在读取封面预览" />}
+            {coverGeneration.isError && <Alert type="warning" title="暂时无法读取封面生成状态"
+              action={<Button size="small" onClick={() => void coverGeneration.refetch()}>重试</Button>} />}
+            {!generating && job?.status === 'failed' && <Alert type="error" showIcon
+              title={job.errorMessage || '封面预览生成失败，请重试。'} />}
             <Form layout="vertical" disabled={busy}>
               <Form.Item label="图片模型" htmlFor="novel-cover-model">
-                <Select id="novel-cover-model" value={activeModel?.code} onChange={setModel}
+                <Select id="novel-cover-model" value={activeModel?.code}
+                  onChange={(modelCode: string) => setDraft((current) => ({ ...current, modelCode }))}
                   placeholder="暂无可用图片模型" loading={models.isPending}
                   options={availableModels.map((item) => ({ value: item.code, label: item.name }))} />
               </Form.Item>
               <Form.Item label="画面风格（选填）" htmlFor="novel-cover-style">
                 <div className="novel-cover-style">
                   <DramaStylePicker id="novel-cover-style" value={styleId} valueLabel={styleId ? undefined : '不限风格'}
-                    onChange={(style) => setStyleId(style.id)} disabled={busy} />
-                  {styleId && <Button type="link" size="small" aria-label="清除画面风格" onClick={() => setStyleId(undefined)}>清除</Button>}
+                    onChange={(style) => setDraft((current) => ({ ...current, styleId: style.id }))} disabled={busy} />
+                  {styleId && <Button type="link" size="small" aria-label="清除画面风格"
+                    onClick={() => setDraft((current) => ({ ...current, styleId: '' }))}>清除</Button>}
                 </div>
               </Form.Item>
               <Form.Item label={candidate ? '画面要求与修改意见（选填）' : '画面要求（选填）'} htmlFor="novel-cover-instruction">
                 <Input.TextArea id="novel-cover-instruction" rows={candidate ? 3 : 2} maxLength={1200} value={instruction}
-                  onChange={(event) => setInstruction(event.target.value)}
+                  onChange={(event) => {
+                    const text = event.target.value
+                    setDraft((current) => ({ ...current, instruction: text }))
+                  }}
                   placeholder={candidate ? '补充想调整的地方，例如把雨夜改成清晨' : '例如突出雨夜里的孤舟'} />
               </Form.Item>
             </Form>
@@ -162,23 +187,24 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
               action={<Button size="small" onClick={() => void models.refetch()}>重试</Button>} />}
             {models.isSuccess && !activeModel && <Alert type="info" title="当前没有可用的图片模型，可以切换到自己上传。" />}
             <Space wrap>
-              <Button type={candidate ? 'default' : 'primary'} icon={<RobotOutlined />} loading={generation.isPending}
-                disabled={!activeModel || change.isPending} onClick={generatePreview}>
-                {generation.isPending ? '正在生成预览' : candidate ? '重新生成' : '生成预览'}
+              <Button type={candidate ? 'default' : 'primary'} icon={<RobotOutlined />} loading={generating}
+                disabled={!activeModel || !job || busy} onClick={generatePreview}>
+                {generating ? '正在生成预览' : candidate || job?.status === 'failed' ? '重新生成' : '生成预览'}
               </Button>
               {candidate && <Button type="primary" loading={change.isPending}
-                disabled={generation.isPending || imageStatus !== 'loaded' || Boolean(candidate.applyError)}
+                disabled={busy || imageStatus !== 'loaded' || candidate.token === rejectedToken}
                 onClick={applyPreview}>设为封面</Button>}
             </Space>
           </div> },
-          { key: 'upload', label: '自己上传', disabled: busy && tab !== 'upload', children: <div className="novel-cover-fields">
+          { key: 'upload', label: '自己上传', disabled: change.isPending && tab !== 'upload', children: <div className="novel-cover-fields">
             <p>支持 JPG、PNG 和 WebP，最大 10 MB，边长不超过 4096 像素。建议使用 2:3 的竖图。</p>
-            <Upload accept={coverFileTypes} beforeUpload={pickFile} disabled={busy} showUploadList={false}>
-              <Button icon={<UploadOutlined />} disabled={busy}>选择图片</Button>
+            <Upload accept={coverFileTypes} beforeUpload={pickFile} disabled={change.isPending} showUploadList={false}>
+              <Button icon={<UploadOutlined />} disabled={change.isPending}>选择图片</Button>
             </Upload>
             {picked && <p className="novel-cover-filename">{picked.file.name}</p>}
             {fileError && <Alert type="error" title={fileError} />}
-            <Button type="primary" loading={change.isPending} disabled={!picked}
+            {generating && <Alert type="info" title="封面预览正在生成，请等待完成后再替换当前封面。" />}
+            <Button type="primary" loading={change.isPending} disabled={!picked || generating}
               onClick={() => picked && change.mutate({ file: picked.file })}>上传并设为封面</Button>
           </div> },
         ]} />
@@ -186,9 +212,5 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
       {error && <Alert type="error" showIcon title={error} />}
       {change.isSuccess && <Alert type="success" showIcon title="封面已更新" />}
     </Modal>
-    <Modal title="放弃候选封面？" open={discardOpen} onCancel={() => setDiscardOpen(false)} onOk={onClose}
-      okText="放弃预览" cancelText="继续编辑" okButtonProps={{ danger: true }}>
-      <p>候选封面还未应用。关闭后需要重新生成预览。</p>
-    </Modal>
-  </>
+  )
 }

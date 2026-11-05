@@ -23,6 +23,8 @@ type NovelService interface {
 	CoverContent(context.Context, novel.Owner, string, string) (novel.CoverImage, error)
 	UploadCover(context.Context, novel.Owner, string, []byte) (novel.Cover, error)
 	GenerateCover(context.Context, novel.Owner, string, novel.GenerateCoverInput) (string, error)
+	StartCoverGeneration(context.Context, novel.Owner, string, novel.GenerateCoverInput) (novel.CoverGeneration, error)
+	GetCoverGeneration(context.Context, novel.Owner, string) (novel.CoverGeneration, error)
 	CoverPreviewContent(context.Context, novel.Owner, string, string) (novel.CoverImage, error)
 	ApplyCoverPreview(context.Context, novel.Owner, string, string) (novel.Cover, error)
 }

@@ -36,9 +36,24 @@ func registerNovelCoverRoutes(group *gin.RouterGroup, deps Dependencies) {
 		}
 		id := c.Param("id")
 		token, err := deps.Novel.GenerateCover(c.Request.Context(), novelOwner(c), id, input)
-		previewURL := "/api/v1/ai-novel/projects/" + url.PathEscape(id) + "/cover/previews/" + url.PathEscape(token)
 		c.Header("Cache-Control", "private, no-store")
-		writeNovelResponse(c, deps, http.StatusOK, gin.H{"token": token, "previewUrl": previewURL}, err)
+		writeNovelResponse(c, deps, http.StatusOK, novelCoverPreviewWithURL(id, token), err)
+	})
+	group.POST("/projects/:id/cover/generation", requireCSRF(deps), func(c *gin.Context) {
+		c.Header("Cache-Control", "private, no-store")
+		var input novel.GenerateCoverInput
+		if !bindNovelInput(c, &input) {
+			return
+		}
+		id := c.Param("id")
+		generation, err := deps.Novel.StartCoverGeneration(c.Request.Context(), novelOwner(c), id, input)
+		writeNovelResponse(c, deps, http.StatusAccepted, novelCoverGenerationWithPreview(id, generation), err)
+	})
+	group.GET("/projects/:id/cover/generation", func(c *gin.Context) {
+		c.Header("Cache-Control", "private, no-store")
+		id := c.Param("id")
+		generation, err := deps.Novel.GetCoverGeneration(c.Request.Context(), novelOwner(c), id)
+		writeNovelResponse(c, deps, http.StatusOK, novelCoverGenerationWithPreview(id, generation), err)
 	})
 	group.GET("/projects/:id/cover/previews/:token", func(c *gin.Context) {
 		image, err := deps.Novel.CoverPreviewContent(c.Request.Context(), novelOwner(c), c.Param("id"), c.Param("token"))
@@ -55,6 +70,37 @@ func registerNovelCoverRoutes(group *gin.RouterGroup, deps Dependencies) {
 		cover, err := deps.Novel.ApplyCoverPreview(c.Request.Context(), novelOwner(c), id, input.Token)
 		writeNovelResponse(c, deps, http.StatusOK, novelCoverWithURL(id, &cover), err)
 	})
+}
+
+type novelCoverPreviewResponse struct {
+	Token      string `json:"token"`
+	PreviewURL string `json:"previewUrl"`
+}
+
+type novelCoverGenerationResponse struct {
+	Status       string                     `json:"status"`
+	JobID        string                     `json:"jobId,omitempty"`
+	Preview      *novelCoverPreviewResponse `json:"preview,omitempty"`
+	ErrorMessage string                     `json:"errorMessage,omitempty"`
+	ModelCode    string                     `json:"modelCode,omitempty"`
+	StyleID      string                     `json:"styleId,omitempty"`
+	Instruction  string                     `json:"instruction,omitempty"`
+}
+
+func novelCoverPreviewWithURL(id, token string) *novelCoverPreviewResponse {
+	if token == "" {
+		return nil
+	}
+	return &novelCoverPreviewResponse{
+		Token: token, PreviewURL: "/api/v1/ai-novel/projects/" + url.PathEscape(id) + "/cover/previews/" + url.PathEscape(token),
+	}
+}
+
+func novelCoverGenerationWithPreview(id string, generation novel.CoverGeneration) novelCoverGenerationResponse {
+	return novelCoverGenerationResponse{
+		Status: generation.Status, JobID: generation.JobID, Preview: novelCoverPreviewWithURL(id, generation.PreviewToken),
+		ErrorMessage: generation.ErrorMessage, ModelCode: generation.ModelCode, StyleID: generation.StyleID, Instruction: generation.Instruction,
+	}
 }
 
 func writeNovelCoverImage(c *gin.Context, deps Dependencies, image novel.CoverImage, err error) {

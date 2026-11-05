@@ -39,6 +39,7 @@ type Asset struct {
 	Kind      string    `json:"kind"`
 	Name      string    `json:"name"`
 	Category  string    `json:"category,omitempty"`
+	Builtin   bool      `json:"builtin,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -97,7 +98,7 @@ type Repository interface {
 	SaveAsset(context.Context, Owner, AssetImage) (Asset, error)
 	Asset(context.Context, Owner, string) (AssetImage, error)
 	ListJobs(context.Context, Owner) ([]Job, error)
-	CreateJob(context.Context, Owner, Job, time.Time) (Job, error)
+	CreateJob(context.Context, Owner, Job, time.Time, []AssetImage) (Job, error)
 	FinishJob(context.Context, Owner, string, Image, string) error
 	Result(context.Context, Owner, string) (Image, error)
 }
@@ -122,14 +123,48 @@ func (s *Service) Models(ctx context.Context, owner Owner) (Models, error) {
 	return s.engine.Models(ctx, owner)
 }
 func (s *Service) ListAssets(ctx context.Context, owner Owner) ([]Asset, error) {
-	return s.repo.ListAssets(ctx, owner)
+	items, err := s.repo.ListAssets(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]int, len(items))
+	for i, asset := range items {
+		byID[asset.ID] = i
+	}
+	for _, p := range presets {
+		asset := p.asset(owner)
+		if i, exists := byID[asset.ID]; exists {
+			items[i].Builtin = true
+		} else {
+			items = append(items, asset)
+		}
+	}
+	return items, nil
 }
 func (s *Service) Asset(ctx context.Context, owner Owner, id string) (AssetImage, error) {
 	parsed, err := uuid.Parse(id)
 	if err != nil {
 		return AssetImage{}, ErrNotFound
 	}
-	return s.repo.Asset(ctx, owner, parsed.String())
+	id = parsed.String()
+	stored, err := s.repo.Asset(ctx, owner, id)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return AssetImage{}, err
+	}
+	for _, p := range presets {
+		asset := p.asset(owner)
+		if asset.ID != id {
+			continue
+		}
+		// 已被试穿记录引用的图片沿用当时保存的素材版本。
+		if err == nil {
+			stored.Builtin = true
+			return stored, nil
+		}
+		image, readErr := p.image()
+		return AssetImage{Asset: asset, Image: image}, readErr
+	}
+	return stored, err
 }
 
 func isPerson(kind string) bool { return kind == Person2D || kind == PersonReal }
@@ -231,7 +266,7 @@ func (s *Service) Start(ctx context.Context, owner Owner, in JobInput) (Job, err
 	if !isPerson(person.Kind) || garment.Kind != Garment {
 		return Job{}, invalid("请选择一张人物图和一张衣物图")
 	}
-	refs := []Image{person.Image, garment.Image}
+	assets := []AssetImage{person, garment}
 	if in.PoseID != "" {
 		pose, err := s.Asset(ctx, owner, in.PoseID)
 		if err != nil {
@@ -240,7 +275,7 @@ func (s *Service) Start(ctx context.Context, owner Owner, in JobInput) (Job, err
 		if pose.Kind != Pose {
 			return Job{}, invalid("请选择姿势参考图")
 		}
-		refs = append(refs, pose.Image)
+		assets = append(assets, pose)
 		in.PoseID = pose.ID
 	}
 	models, err := s.engine.Models(ctx, owner)
@@ -257,9 +292,17 @@ func (s *Service) Start(ctx context.Context, owner Owner, in JobInput) (Job, err
 	if !allowed {
 		return Job{}, ErrModel
 	}
+	refs := make([]Image, 0, len(assets))
+	var builtinAssets []AssetImage
+	for _, asset := range assets {
+		refs = append(refs, asset.Image)
+		if asset.Builtin {
+			builtinAssets = append(builtinAssets, asset)
+		}
+	}
 	job, err := s.repo.CreateJob(ctx, owner, Job{
 		ID: uuid.NewString(), PersonID: person.ID, GarmentID: garment.ID, PoseID: in.PoseID, ModelCode: in.ModelCode,
-	}, time.Now().Add(jobTimeout+30*time.Second))
+	}, time.Now().Add(jobTimeout+30*time.Second), builtinAssets)
 	if err != nil {
 		return Job{}, err
 	}

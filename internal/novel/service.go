@@ -142,6 +142,7 @@ type Repository interface {
 	Create(context.Context, Owner, Project) (Project, error)
 	Get(context.Context, Owner, string) (Project, error)
 	Save(context.Context, Owner, Project) (Project, error)
+	GetCoverRevision(context.Context, Owner, string) (string, error)
 	GetCover(context.Context, Owner, string, string) (CoverImage, error)
 	SaveCover(context.Context, Owner, string, string, Cover, CoverImage) (Cover, error)
 }
@@ -157,6 +158,7 @@ type Service struct {
 	coverGenerator CoverGenerator
 	coverPreviews  CoverPreviewStore
 	coverStyles    CoverStyleResolver
+	coverJobs      CoverGenerationStore
 }
 
 func NewService(repo Repository, writer Writer, coverGenerator CoverGenerator, coverPreviews CoverPreviewStore) *Service {

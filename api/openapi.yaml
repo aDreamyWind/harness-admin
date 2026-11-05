@@ -30,12 +30,12 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
   /ai-tryon/assets:
     get:
-      summary: 列出当前用户的人物、衣物和姿势素材
+      summary: 列出当前用户的试衣素材和内置样例
       operationId: listTryOnAssets
       security: [{ sessionCookie: [] }]
       responses:
         '200':
-          description: 素材列表，按创建时间倒序。
+          description: 素材列表，用户保存的素材按创建时间倒序。内置样例可直接用于试穿。
           content:
             application/json:
               schema:
@@ -411,21 +411,15 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
-      summary: 根据故事内容生成本人小说的封面预览
+      summary: 同步生成本人小说的封面预览
       operationId: generateNovelCover
-      description: 图片模型依据书名、故事灵感、可用的大纲资料和可选封面要求绘制竖版插画。可从漫剧风格库选用画面风格。每部作品保留最新成功的预览 30 分钟，作者可在预览期间确认设为正式封面。
+      description: 提交封面生成并等待结果。图片模型依据书名、故事灵感、可用的大纲资料和可选封面要求绘制竖版插画。同一部作品已有生成任务时等待该任务的结果。最新成功的预览保留 24 小时，可在此期间确认设为正式封面。
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [modelCode]
-              properties:
-                modelCode: { type: string, minLength: 1, maxLength: 160 }
-                styleId: { type: string, maxLength: 80, description: 可选的画面风格编号，来自漫剧风格目录。省略或传空字符串时由模型根据故事选择画风。 }
-                instruction: { type: string, maxLength: 1200, description: 可选的构图、题材或风格要求。 }
+            schema: { $ref: '#/components/schemas/NovelCoverGenerateInput' }
       responses:
         '200':
           description: 封面预览及其确认令牌。
@@ -438,12 +432,7 @@ paths:
                 type: object
                 required: [data]
                 properties:
-                  data:
-                    type: object
-                    required: [token, previewUrl]
-                    properties:
-                      token: { type: string, format: uuid }
-                      previewUrl: { type: string, format: uri-reference }
+                  data: { $ref: '#/components/schemas/NovelCoverPreview' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -453,6 +442,34 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /ai-novel/projects/{id}/cover/generation:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 查询本人小说的封面生成状态和候选预览
+      operationId: getNovelCoverGeneration
+      description: 返回最新的后台生成状态。上一次成功的候选预览仍有效时一并返回。没有生成任务时返回 idle。
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/NovelCoverGenerationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: 提交本人小说的后台封面生成
+      operationId: startNovelCoverGeneration
+      description: 接受后在后台生成，同一部作品已有生成任务时返回该任务的当前状态。最新成功的预览保留 24 小时，候选封面需另行确认才能成为正式封面。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NovelCoverGenerateInput' }
+      responses:
+        '202': { $ref: '#/components/responses/NovelCoverGenerationResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-novel/projects/{id}/cover/previews/{token}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4316,6 +4333,18 @@ components:
             required: [data]
             properties:
               data: { $ref: '#/components/schemas/NovelCover' }
+    NovelCoverGenerationResponse:
+      description: 封面生成状态，以及仍有效且尚未应用的候选封面。
+      headers:
+        Cache-Control:
+          schema: { type: string, const: 'private, no-store' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { $ref: '#/components/schemas/NovelCoverGeneration' }
     NovelCoverConflict:
       description: 封面已被其他操作更新。应用预览时可重新生成预览后确认。
       content:
@@ -4373,6 +4402,7 @@ components:
         kind: { $ref: '#/components/schemas/TryOnAssetKind' }
         name: { type: string }
         category: { type: string }
+        builtin: { type: boolean, description: 内置样例时为 true。 }
         createdAt: { type: string, format: date-time }
     TryOnInput:
       type: object
@@ -4399,6 +4429,30 @@ components:
         url: { type: string, format: uri-reference, description: 需要本人会话的同源图片地址，每次更换封面后更新。 }
         source: { type: string, enum: [upload, ai] }
         updatedAt: { type: string, format: date-time }
+    NovelCoverGenerateInput:
+      type: object
+      required: [modelCode]
+      properties:
+        modelCode: { type: string, minLength: 1, maxLength: 160 }
+        styleId: { type: string, maxLength: 80, description: 可选的画面风格编号，来自漫剧风格目录。省略或传空字符串时由模型根据故事选择画风。 }
+        instruction: { type: string, maxLength: 1200, description: 可选的构图、题材或风格要求。 }
+    NovelCoverPreview:
+      type: object
+      required: [token, previewUrl]
+      properties:
+        token: { type: string, format: uuid }
+        previewUrl: { type: string, format: uri-reference }
+    NovelCoverGeneration:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [idle, running, succeeded, failed] }
+        jobId: { type: string, format: uuid, description: 本次封面生成任务编号。 }
+        preview: { $ref: '#/components/schemas/NovelCoverPreview' }
+        errorMessage: { type: string, description: 生成失败时提供的提示。 }
+        modelCode: { type: string }
+        styleId: { type: string }
+        instruction: { type: string }
     NovelBook:
       type: object
       required: [id, title, chapterCount, finalizedChapterCount, updatedAt]

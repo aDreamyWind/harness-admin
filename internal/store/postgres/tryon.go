@@ -81,18 +81,34 @@ func (r *TryOnRepository) ListJobs(ctx context.Context, owner tryon.Owner) ([]tr
 	return items, rows.Err()
 }
 
-func (r *TryOnRepository) CreateJob(ctx context.Context, owner tryon.Owner, job tryon.Job, expires time.Time) (tryon.Job, error) {
+func (r *TryOnRepository) CreateJob(ctx context.Context, owner tryon.Owner, job tryon.Job, expires time.Time, builtinAssets []tryon.AssetImage) (tryon.Job, error) {
 	if err := r.expireJobs(ctx, owner); err != nil {
 		return tryon.Job{}, err
 	}
-	err := r.pool.QueryRow(ctx, `INSERT INTO tryon_jobs (id, organization_id, owner_id, person_id, garment_id, pose_id, model_code, status, expires_at)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return tryon.Job{}, err
+	}
+	defer tx.Rollback(ctx)
+	// 素材首次用于试穿时保存快照，与引用它的任务一起提交。
+	for _, asset := range builtinAssets {
+		if _, err := tx.Exec(ctx, `INSERT INTO tryon_assets (id, organization_id, owner_id, kind, name, category, image_mime, image_data, created_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING`,
+			asset.ID, owner.OrganizationID, owner.UserID, asset.Kind, asset.Name, asset.Category, asset.MIME, asset.Data, asset.CreatedAt); err != nil {
+			return tryon.Job{}, err
+		}
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO tryon_jobs (id, organization_id, owner_id, person_id, garment_id, pose_id, model_code, status, expires_at)
 		VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,$7,'running',$8) RETURNING status, created_at`, job.ID, owner.OrganizationID,
 		owner.UserID, job.PersonID, job.GarmentID, job.PoseID, job.ModelCode, expires).Scan(&job.Status, &job.CreatedAt)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "tryon_jobs_one_running_idx" {
-		err = tryon.ErrBusy
+		return tryon.Job{}, tryon.ErrBusy
 	}
-	return job, err
+	if err != nil {
+		return tryon.Job{}, err
+	}
+	return job, tx.Commit(ctx)
 }
 
 func (r *TryOnRepository) FinishJob(ctx context.Context, owner tryon.Owner, id string, image tryon.Image, failure string) error {

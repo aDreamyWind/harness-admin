@@ -106,47 +106,66 @@ func (s *Service) UploadCover(ctx context.Context, owner Owner, id string, data 
 }
 
 func (s *Service) GenerateCover(ctx context.Context, owner Owner, id string, input GenerateCoverInput) (string, error) {
-	project, err := s.Get(ctx, owner, id)
+	if s.coverJobs != nil {
+		return s.awaitCoverGeneration(ctx, owner, id, input)
+	}
+	project, prompt, err := s.prepareCoverGeneration(ctx, owner, id, &input)
 	if err != nil {
 		return "", err
 	}
-	input.ModelCode = strings.TrimSpace(input.ModelCode)
-	input.Instruction = strings.TrimSpace(input.Instruction)
-	if !valid(input.ModelCode, 160) || s.coverGenerator == nil {
-		return "", ErrCoverModel
-	}
-	if s.coverPreviews == nil {
-		return "", errors.New("未配置封面预览存储")
-	}
-	if !validOptional(input.Instruction, 1200) {
-		return "", fmt.Errorf("%w，封面要求最多 1200 字", ErrInvalid)
-	}
-	var style CoverStyle
-	if styleID := strings.TrimSpace(input.StyleID); styleID != "" {
-		if !valid(styleID, 80) || s.coverStyles == nil {
-			return "", ErrCoverStyle
-		}
-		style, err = s.coverStyles.ResolveCoverStyle(ctx, styleID)
-		if err != nil {
-			return "", err
-		}
-	}
-	data, err := s.coverGenerator.GenerateCover(ctx, owner, input.ModelCode, coverPrompt(project, input.Instruction, style))
-	if errors.Is(err, ErrCoverModel) {
-		return "", ErrCoverModel
-	}
+	preview, err := s.generateCoverPreview(ctx, owner, input.ModelCode, prompt, coverRevision(project), uuid.NewString())
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrCoverGeneration, err)
+		return "", err
 	}
-	cover, err := readCoverImage(data)
-	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrCoverGeneration, err)
-	}
-	preview := CoverPreview{Token: uuid.NewString(), PreviousRevision: coverRevision(project), Image: cover}
 	if err := s.coverPreviews.Put(ctx, owner, project.ID, preview); err != nil {
 		return "", fmt.Errorf("保存小说封面预览失败: %w", err)
 	}
 	return preview.Token, nil
+}
+
+func (s *Service) prepareCoverGeneration(ctx context.Context, owner Owner, id string, input *GenerateCoverInput) (Project, string, error) {
+	project, err := s.Get(ctx, owner, id)
+	if err != nil {
+		return Project{}, "", err
+	}
+	input.ModelCode = strings.TrimSpace(input.ModelCode)
+	input.StyleID = strings.TrimSpace(input.StyleID)
+	input.Instruction = strings.TrimSpace(input.Instruction)
+	if !valid(input.ModelCode, 160) || s.coverGenerator == nil {
+		return Project{}, "", ErrCoverModel
+	}
+	if s.coverPreviews == nil {
+		return Project{}, "", errors.New("未配置封面预览存储")
+	}
+	if !validOptional(input.Instruction, 1200) {
+		return Project{}, "", fmt.Errorf("%w，封面要求最多 1200 字", ErrInvalid)
+	}
+	var style CoverStyle
+	if input.StyleID != "" {
+		if !valid(input.StyleID, 80) || s.coverStyles == nil {
+			return Project{}, "", ErrCoverStyle
+		}
+		style, err = s.coverStyles.ResolveCoverStyle(ctx, input.StyleID)
+		if err != nil {
+			return Project{}, "", err
+		}
+	}
+	return project, coverPrompt(project, input.Instruction, style), nil
+}
+
+func (s *Service) generateCoverPreview(ctx context.Context, owner Owner, modelCode, prompt, previousRevision, token string) (CoverPreview, error) {
+	data, err := s.coverGenerator.GenerateCover(ctx, owner, modelCode, prompt)
+	if errors.Is(err, ErrCoverModel) {
+		return CoverPreview{}, ErrCoverModel
+	}
+	if err != nil {
+		return CoverPreview{}, fmt.Errorf("%w: %v", ErrCoverGeneration, err)
+	}
+	cover, err := readCoverImage(data)
+	if err != nil {
+		return CoverPreview{}, fmt.Errorf("%w: %v", ErrCoverGeneration, err)
+	}
+	return CoverPreview{Token: token, PreviousRevision: previousRevision, Image: cover}, nil
 }
 
 func (s *Service) CoverPreviewContent(ctx context.Context, owner Owner, id, token string) (CoverImage, error) {

@@ -1,5 +1,5 @@
 import {
-  CameraOutlined, HistoryOutlined, PictureOutlined, PlusOutlined, SkinOutlined, UserOutlined,
+  CameraOutlined, HistoryOutlined, PictureOutlined, PlusOutlined, UserOutlined,
 } from '@ant-design/icons'
 import { Alert, Button, Empty, Image, Segmented, Select, Spin, Tabs, Tag } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -53,14 +53,20 @@ export function TryOnPage() {
 
   useEffect(() => {
     if (!jobs.data || restored.current) return
-    restored.current = true
     const job = jobs.data[0]
     if (job) {
       setJobId(job.id)
       setSelection({ personId: job.personId, garmentId: job.garmentId, poseId: job.poseId ?? '' })
       setChosenModel(job.modelCode)
+    } else if (assets.data) {
+      const items = assets.data
+      const firstBuiltin = (kind: TryOnKind) => items.find((asset) => asset.builtin && asset.kind === kind)?.id ?? ''
+      setSelection({ personId: firstBuiltin('person_2d') || firstBuiltin('person_real'), garmentId: firstBuiltin('garment'), poseId: firstBuiltin('pose') })
+    } else {
+      return
     }
-  }, [jobs.data])
+    restored.current = true
+  }, [assets.data, jobs.data])
 
   const allAssets = assets.data ?? []
   const people = allAssets.filter((a) => a.kind === 'person_2d' || a.kind === 'person_real')
@@ -107,12 +113,7 @@ export function TryOnPage() {
   }
 
   return (
-    <main className="tryon-page">
-      <header className="tryon-heading">
-        <div><div className="tryon-kicker"><SkinOutlined /> 虚拟试衣工作室</div>
-          <h1>AI 试衣</h1><p>为同一个人物试穿不同衣物，并排看效果。</p></div>
-        <Button icon={<HistoryOutlined />} onClick={() => setTab('history')}>试穿记录</Button>
-      </header>
+    <main className="tryon-page" aria-label="AI 试衣">
       {refError && <Alert type="error" showIcon title={message(refError)}
         action={<Button size="small" onClick={() => { void assets.refetch(); void jobs.refetch() }}>重试</Button>} />}
       {models.isError && <Alert type="error" showIcon title={message(models.error)}
@@ -150,8 +151,8 @@ export function TryOnPage() {
                 onSelect={(id) => select('personId', id)} onAdd={() => setDialog(personKind)} />
               <Reference title="衣物" detail="参考款式、颜色和纹理" asset={garment} options={garments}
                 onSelect={(id) => select('garmentId', id)} onAdd={() => setDialog('garment')} />
-              <Reference title="姿势（可选）" detail={pose ? '只参考动作和朝向' : '默认保留人物原姿势'} asset={pose} options={poses}
-                onSelect={(id) => select('poseId', id)} onAdd={() => setDialog('pose')} />
+              <Reference title="姿态（可选）" detail={pose ? '清空后保留人物原姿态' : '保留人物原姿态'} asset={pose} options={poses}
+                onSelect={(id) => select('poseId', id)} onAdd={() => setDialog('pose')} onBrowse={() => setTab('poses')} />
               <label className="tryon-model">图片模型
                 <Select value={modelCode} loading={models.isPending} onChange={setChosenModel} placeholder="暂无可用图片模型"
                   options={imageModels.map((item) => ({ label: item.name, value: item.code }))} />
@@ -174,6 +175,9 @@ export function TryOnPage() {
               onChange={setCategory} style={{ width: 170 }} options={tryOnCategories.map((value) => ({ label: value, value }))} />}
             assets={garments.filter((a) => !category || a.category === category)} addLabel="添加衣物" pending={assets.isPending}
             onAdd={() => setDialog('garment')} onSelect={useAsset} /> },
+        { key: 'poses', label: '姿态库', children:
+          <Library controls={<span>选择全身动作，作为试穿时的姿态参考。</span>} assets={poses} addLabel="上传姿态"
+            pending={assets.isPending} useLabel="使用此姿态" onAdd={() => setDialog('pose')} onSelect={useAsset} /> },
         { key: 'history', label: '试穿记录', children: <section className="tryon-library">
           {jobs.isPending ? <Spin /> : !jobs.data?.length ? <Empty description="生成试穿图后，记录会出现在这里。" /> :
             <div className="tryon-history">{jobs.data.map((job) => {
@@ -192,14 +196,17 @@ export function TryOnPage() {
   )
 }
 
-function Reference({ title, detail, asset, options, onSelect, onAdd }: {
-  title: string; detail: string; asset?: TryOnAsset; options: TryOnAsset[]; onSelect: (id?: string) => void; onAdd: () => void
+function Reference({ title, detail, asset, options, onSelect, onAdd, onBrowse }: {
+  title: string; detail: string; asset?: TryOnAsset; options: TryOnAsset[]; onSelect: (id?: string) => void; onAdd: () => void; onBrowse?: () => void
 }) {
   return (
     <div className="tryon-reference">
       <div className="tryon-thumb">{asset ? <Image src={tryOnAssetURL(asset.id)} alt={asset.name} /> : <PictureOutlined />}</div>
       <div className="tryon-reference-info">
-        <div><strong>{title}</strong><small>{detail}</small></div>
+        <div className="tryon-reference-heading">
+          <div><strong>{title}</strong><small>{detail}</small></div>
+          {onBrowse && <Button type="link" size="small" onClick={onBrowse}>浏览姿态库</Button>}
+        </div>
         <div className="tryon-picker">
           <Select aria-label={`选择${title}`} showSearch optionFilterProp="label" allowClear value={asset?.id}
             onChange={onSelect} placeholder={options.length ? '从素材库选择' : '暂无素材'}
@@ -211,8 +218,8 @@ function Reference({ title, detail, asset, options, onSelect, onAdd }: {
   )
 }
 
-function Library({ assets, controls, addLabel, pending, onAdd, onSelect }: {
-  assets: TryOnAsset[]; controls: React.ReactNode; addLabel: string; pending: boolean; onAdd: () => void; onSelect: (asset: TryOnAsset) => void
+function Library({ assets, controls, addLabel, useLabel = '去试穿', pending, onAdd, onSelect }: {
+  assets: TryOnAsset[]; controls: React.ReactNode; addLabel: string; useLabel?: string; pending: boolean; onAdd: () => void; onSelect: (asset: TryOnAsset) => void
 }) {
   return (
     <section className="tryon-library">
@@ -221,8 +228,8 @@ function Library({ assets, controls, addLabel, pending, onAdd, onSelect }: {
         <div className="tryon-library-grid">{assets.map((asset) =>
           <article key={asset.id}>
             <div className="tryon-library-image"><Image src={tryOnAssetURL(asset.id)} alt={asset.name} loading="lazy" /></div>
-            <div className="tryon-library-meta"><strong>{asset.name}</strong><small>{asset.category || tryOnLabels[asset.kind]}</small></div>
-            <Button block onClick={() => onSelect(asset)}>去试穿</Button>
+            <div className="tryon-library-meta"><strong>{asset.name}</strong><small>{asset.builtin ? '内置 · ' : ''}{asset.category || tryOnLabels[asset.kind]}</small></div>
+            <Button block onClick={() => onSelect(asset)}>{useLabel}</Button>
           </article>,
         )}</div>}
     </section>

@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -17,16 +18,18 @@ import (
 )
 
 type novelHTTPStub struct {
-	owner        novel.Owner
-	createInput  novel.CreateInput
-	refineInput  novel.RefineIdeaInput
-	planInput    novel.ChapterPlanInput
-	actionInput  novel.Action
-	actionResult *novel.Project
-	actionError  error
-	coverInput   novel.GenerateCoverInput
-	cover        novel.Cover
-	coverData    []byte
+	owner              novel.Owner
+	createInput        novel.CreateInput
+	refineInput        novel.RefineIdeaInput
+	planInput          novel.ChapterPlanInput
+	actionInput        novel.Action
+	actionResult       *novel.Project
+	actionError        error
+	coverInput         novel.GenerateCoverInput
+	cover              novel.Cover
+	coverData          []byte
+	coverGeneration    novel.CoverGeneration
+	coverGenerationErr error
 }
 
 func (s *novelHTTPStub) List(_ context.Context, owner novel.Owner) ([]novel.Book, error) {
@@ -227,6 +230,19 @@ func (s *novelHTTPStub) GenerateCover(_ context.Context, owner novel.Owner, _ st
 	return "generated-revision", nil
 }
 
+func (s *novelHTTPStub) StartCoverGeneration(ctx context.Context, owner novel.Owner, id string, input novel.GenerateCoverInput) (novel.CoverGeneration, error) {
+	s.coverInput = input
+	return s.GetCoverGeneration(ctx, owner, id)
+}
+
+func (s *novelHTTPStub) GetCoverGeneration(_ context.Context, owner novel.Owner, id string) (novel.CoverGeneration, error) {
+	s.owner = owner
+	if id != "book" {
+		return novel.CoverGeneration{}, novel.ErrNotFound
+	}
+	return s.coverGeneration, s.coverGenerationErr
+}
+
 func (s *novelHTTPStub) CoverPreviewContent(_ context.Context, owner novel.Owner, _ string, token string) (novel.CoverImage, error) {
 	s.owner = owner
 	if token != "generated-revision" {
@@ -410,5 +426,87 @@ func TestNovelCoverRoutesProtectAndVersionImages(t *testing.T) {
 	if response := send("GET", "/projects", nil, "", true, false); response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), path+"?v=generated-revision") || strings.Contains(response.Body.String(), `"revision"`) {
 		t.Fatalf("作品列表未使用新封面地址: %d %s", response.Code, response.Body)
+	}
+}
+
+func TestNovelCoverGenerationRoutes(t *testing.T) {
+	stub := &novelHTTPStub{}
+	router := New(Dependencies{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth:   &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}},
+		Novel:  stub, SessionCookie: "test_session",
+	})
+	const path = "/api/v1/ai-novel/projects/book/cover/generation"
+	const input = `{"modelCode":"art","styleId":"ink-wash","instruction":"夜晚的灯塔","ownerId":"other"}`
+	send := func(method, path, body string, session, csrf bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		if session {
+			request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+		}
+		if csrf {
+			request.Header.Set("X-CSRF-Token", "csrf-token")
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	for _, tt := range []struct {
+		name, method, path, body string
+		session, csrf            bool
+		status                   int
+	}{
+		{"匿名查询", http.MethodGet, path, "", false, false, http.StatusUnauthorized},
+		{"匿名提交", http.MethodPost, path, input, false, false, http.StatusUnauthorized},
+		{"缺少 CSRF", http.MethodPost, path, input, true, false, http.StatusForbidden},
+		{"请求格式无效", http.MethodPost, path, "{", true, true, http.StatusBadRequest},
+		{"其他作品", http.MethodGet, strings.Replace(path, "/book/", "/other-book/", 1), "", true, false, http.StatusNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if response := send(tt.method, tt.path, tt.body, tt.session, tt.csrf); response.Code != tt.status {
+				t.Fatalf("响应状态 %d，期望 %d: %s", response.Code, tt.status, response.Body)
+			}
+		})
+	}
+	assertGeneration := func(response *httptest.ResponseRecorder, status int, want map[string]any) {
+		t.Helper()
+		if response.Code != status || response.Header().Get("Cache-Control") != "private, no-store" {
+			t.Fatalf("生成状态响应或缓存头不符: %d %+v %s", response.Code, response.Header(), response.Body)
+		}
+		var result struct{ Data map[string]any }
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || !reflect.DeepEqual(result.Data, want) {
+			t.Fatalf("生成状态响应错误: %s (%v)", response.Body, err)
+		}
+	}
+	stub.coverGeneration.Status = novel.CoverGenerationIdle
+	assertGeneration(send(http.MethodGet, path, "", true, false), http.StatusOK, map[string]any{"status": "idle"})
+	stub.coverGeneration = novel.CoverGeneration{
+		Status: novel.CoverGenerationRunning, JobID: "new-job", ModelCode: "art", StyleID: "ink-wash", Instruction: "夜晚的灯塔",
+	}
+	running := map[string]any{
+		"status": "running", "jobId": "new-job", "modelCode": "art", "styleId": "ink-wash", "instruction": "夜晚的灯塔",
+	}
+	assertGeneration(send(http.MethodPost, path, input, true, true), http.StatusAccepted, running)
+	if stub.coverInput != (novel.GenerateCoverInput{ModelCode: "art", StyleID: "ink-wash", Instruction: "夜晚的灯塔"}) ||
+		stub.owner != (novel.Owner{OrganizationID: "org-1", UserID: "user-1"}) {
+		t.Fatalf("任务未使用请求参数和会话身份: %+v %+v", stub.coverInput, stub.owner)
+	}
+	assertGeneration(send(http.MethodGet, path, "", true, false), http.StatusOK, running)
+	preview := map[string]any{"token": "generated-revision", "previewUrl": "/api/v1/ai-novel/projects/book/cover/previews/generated-revision"}
+	stub.coverGeneration = novel.CoverGeneration{
+		Status: novel.CoverGenerationSucceeded, JobID: "new-job", PreviewToken: "generated-revision",
+	}
+	assertGeneration(send(http.MethodGet, path, "", true, false), http.StatusOK, map[string]any{
+		"status": "succeeded", "jobId": "new-job", "preview": preview,
+	})
+	stub.coverGeneration = novel.CoverGeneration{
+		Status: novel.CoverGenerationFailed, JobID: "next-job", PreviewToken: "generated-revision", ErrorMessage: "封面生成失败，请重试",
+	}
+	assertGeneration(send(http.MethodGet, path, "", true, false), http.StatusOK, map[string]any{
+		"status": "failed", "jobId": "next-job", "errorMessage": "封面生成失败，请重试", "preview": preview,
+	})
+	stub.coverGenerationErr = novel.ErrCoverStyle
+	if response := send(http.MethodPost, path, input, true, true); response.Code != http.StatusBadRequest {
+		t.Fatalf("无效风格未返回参数错误: %d %s", response.Code, response.Body)
 	}
 }

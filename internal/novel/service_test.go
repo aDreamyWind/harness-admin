@@ -45,6 +45,13 @@ func (r *memoryRepository) Save(_ context.Context, owner Owner, p Project) (Proj
 	return p, nil
 }
 
+func (r *memoryRepository) GetCoverRevision(_ context.Context, owner Owner, id string) (string, error) {
+	if r.owner != owner || r.project.ID != id {
+		return "", ErrNotFound
+	}
+	return coverRevision(r.project), nil
+}
+
 func (r *memoryRepository) GetCover(_ context.Context, owner Owner, id, revision string) (CoverImage, error) {
 	if r.owner != owner || r.project.ID != id || r.project.Cover == nil ||
 		(revision != "" && revision != r.project.Cover.Revision) {

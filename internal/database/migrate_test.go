@@ -356,15 +356,39 @@ func testTryOnPersistence(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := tryon.Job{ID: "bb4ed136-72cd-4589-8ebd-6b8841edb776", PersonID: person.ID, GarmentID: garment.ID, ModelCode: "editor"}
-	stored, err := repo.CreateJob(ctx, owner, job, time.Now().Add(time.Minute))
+	service := tryon.NewService(repo, nil, nil)
+	assets, err := service.ListAssets(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pose tryon.AssetImage
+	for _, asset := range assets {
+		if asset.Kind == tryon.Pose && asset.Builtin {
+			pose, err = service.Asset(ctx, owner, asset.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if !pose.Builtin || len(pose.Data) == 0 {
+		t.Fatal("未加载内置姿态")
+	}
+	if _, err := repo.Asset(ctx, owner, pose.ID); !errors.Is(err, tryon.ErrNotFound) {
+		t.Fatalf("仅浏览素材不应创建快照: %v", err)
+	}
+	job := tryon.Job{ID: "bb4ed136-72cd-4589-8ebd-6b8841edb776", PersonID: person.ID, GarmentID: garment.ID, PoseID: pose.ID, ModelCode: "editor"}
+	stored, err := repo.CreateJob(ctx, owner, job, time.Now().Add(time.Minute), []tryon.AssetImage{pose})
 	if err != nil || stored.Status != "running" {
 		t.Fatalf("试穿任务未创建: %#v %v", stored, err)
 	}
 	second := job
 	second.ID = "073ffdae-3350-4a08-9651-248d5ec5db43"
-	if _, err := repo.CreateJob(ctx, owner, second, time.Now().Add(time.Minute)); !errors.Is(err, tryon.ErrBusy) {
+	if _, err := repo.CreateJob(ctx, owner, second, time.Now().Add(time.Minute), []tryon.AssetImage{pose}); !errors.Is(err, tryon.ErrBusy) {
 		t.Fatalf("未限制同一用户的并发试穿: %v", err)
+	}
+	if snapshot, err := repo.Asset(ctx, owner, pose.ID); err != nil || !bytes.Equal(snapshot.Data, pose.Data) {
+		t.Fatalf("姿态快照未随试穿任务保存: %v", err)
 	}
 	if err := repo.FinishJob(ctx, owner, job.ID, photo, ""); err != nil {
 		t.Fatal(err)
@@ -376,6 +400,9 @@ func testTryOnPersistence(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	for _, stranger := range []tryon.Owner{otherUser, otherOrg} {
 		if _, err := repo.Asset(ctx, stranger, person.ID); !errors.Is(err, tryon.ErrNotFound) {
 			t.Fatalf("其他用户可读取素材: %v", err)
+		}
+		if _, err := service.Asset(ctx, stranger, pose.ID); !errors.Is(err, tryon.ErrNotFound) {
+			t.Fatalf("其他用户可读取当前用户的姿态快照: %v", err)
 		}
 		if _, err := repo.Result(ctx, stranger, job.ID); !errors.Is(err, tryon.ErrNotFound) {
 			t.Fatalf("其他用户可读取试穿结果: %v", err)

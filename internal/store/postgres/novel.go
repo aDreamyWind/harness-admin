@@ -94,6 +94,18 @@ func (r *NovelRepository) Save(ctx context.Context, owner novel.Owner, p novel.P
 	return p, err
 }
 
+func (r *NovelRepository) GetCoverRevision(ctx context.Context, owner novel.Owner, projectID string) (string, error) {
+	var revision string
+	err := r.db.QueryRow(ctx, `SELECT COALESCE(c.revision::text, '') FROM novel_projects p
+		LEFT JOIN novel_project_covers c ON c.project_id=p.id
+		WHERE p.organization_id=$1 AND p.owner_id=$2 AND p.id=$3`,
+		owner.OrganizationID, owner.UserID, projectID).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", novel.ErrNotFound
+	}
+	return revision, err
+}
+
 func (r *NovelRepository) GetCover(ctx context.Context, owner novel.Owner, projectID, revision string) (novel.CoverImage, error) {
 	var image novel.CoverImage
 	err := r.db.QueryRow(ctx, `SELECT c.image_data, c.mime_type FROM novel_project_covers c
