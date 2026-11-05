@@ -3,12 +3,15 @@ package postgres
 import (
 	"context"
 	"errors"
+
 	"github.com/jackc/pgx/v5"
+
 	"harness-admin/internal/drama"
 )
 
 func (r *DramaRepository) ListStyles(ctx context.Context) ([]drama.StyleOption, error) {
-	rows, err := r.db.Query(ctx, `SELECT id,name,category,preview_url,preview_x,preview_y FROM drama_visual_styles WHERE enabled ORDER BY sort_order,id`)
+	rows, err := r.db.Query(ctx, `SELECT id,catalog_name,category,preview_url,preview_x,preview_y
+		FROM drama_visual_styles WHERE enabled AND category='2D' AND catalog_name IS NOT NULL ORDER BY sort_order,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -24,7 +27,9 @@ func (r *DramaRepository) ListStyles(ctx context.Context) ([]drama.StyleOption, 
 	return out, rows.Err()
 }
 func (r *DramaRepository) ResolveStyle(ctx context.Context, key string) (drama.VisualStyle, error) {
-	return readVisualStyle(r.db.QueryRow(ctx, `SELECT id,name,category,preview_url,preview_x,preview_y,image_prompt,video_prompt FROM drama_visual_styles WHERE enabled AND (id=$1 OR name=$1) ORDER BY CASE WHEN id=$1 THEN 0 ELSE 1 END LIMIT 1`, key))
+	return readVisualStyle(r.db.QueryRow(ctx, `SELECT id,COALESCE(catalog_name,name),category,preview_url,preview_x,preview_y,image_prompt,video_prompt
+		FROM drama_visual_styles WHERE enabled AND (id=$1 OR name=$1 OR catalog_name=$1)
+		ORDER BY CASE WHEN id=$1 THEN 0 WHEN catalog_name=$1 THEN 1 ELSE 2 END LIMIT 1`, key))
 }
 func readVisualStyle(row pgx.Row) (drama.VisualStyle, error) {
 	var s drama.VisualStyle

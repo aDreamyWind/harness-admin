@@ -165,6 +165,7 @@ type Call struct {
 	ModelCode        string
 	ModelName        string
 	ModelType        string
+	Operation        string
 	UpstreamModelID  string
 	ProviderName     string
 	Streaming        bool
@@ -243,6 +244,9 @@ type UsageGroup struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	CallCount         int64  `json:"callCount"`
+	VideoSubmitCount  int64  `json:"videoSubmitCount"`
+	VideoSuccessCount int64  `json:"videoSuccessCount"`
+	VideoQueryCount   int64  `json:"videoQueryCount"`
 	KnownTokens       int64  `json:"knownTokens"`
 	UnknownUsageCalls int64  `json:"unknownUsageCalls"`
 	OverQuotaCalls    int64  `json:"overQuotaCalls"`
@@ -252,6 +256,9 @@ type UsagePage struct {
 	Month             string       `json:"month"`
 	GroupBy           string       `json:"groupBy"`
 	CallCount         int64        `json:"callCount"`
+	VideoSubmitCount  int64        `json:"videoSubmitCount"`
+	VideoSuccessCount int64        `json:"videoSuccessCount"`
+	VideoQueryCount   int64        `json:"videoQueryCount"`
 	KnownTokens       int64        `json:"knownTokens"`
 	UnknownUsageCalls int64        `json:"unknownUsageCalls"`
 	OverQuotaCalls    int64        `json:"overQuotaCalls"`

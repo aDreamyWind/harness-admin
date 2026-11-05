@@ -184,7 +184,7 @@ export function DramaProjectPage() {
       {section === 'overview' ? <section className="drama-overview" aria-label="剧本概览内容">
         <div className="drama-overview-toolbar">
           <div className="drama-overview-controls">
-            <label><span>视频风格</span><DramaStylePicker value={editing ? draft.styleId || draft.videoStyle : project.styleId || project.style} onChange={(style) => { setEditing(true); setDraft((current) => ({ ...(editing ? current : project.overview), aspectRatio: editing ? current.aspectRatio : selectedAspectRatio(project), styleId: style.id, videoStyle: style.name })) }} /></label>
+            <label><span>视频风格</span><DramaStylePicker value={editing ? draft.styleId || draft.videoStyle : project.styleId || project.style} valueLabel={editing ? draft.videoStyle : project.style} onChange={(style) => { setEditing(true); setDraft((current) => ({ ...(editing ? current : project.overview), aspectRatio: editing ? current.aspectRatio : selectedAspectRatio(project), styleId: style.id, videoStyle: style.name })) }} /></label>
             <label><span>画面比例</span><Select value={editing ? draft.aspectRatio : selectedAspectRatio(project)} options={ratioOptions} onChange={(value) => changeSelection('aspectRatio', value)} /></label>
           </div>
           <div className="drama-overview-actions">{editing ? <><Button onClick={() => setEditing(false)}>取消</Button><Button type="primary" loading={saving} onClick={() => void save()}>保存修改</Button></> : <><Button loading={reanalyzing} disabled={project.status === 'queued' || project.status === 'running' || (project.status === 'failed' && !overview.protagonist)} onClick={() => void reanalyze()}>AI重新解析</Button><Button onClick={beginEditing}>编辑概览</Button></>}</div>

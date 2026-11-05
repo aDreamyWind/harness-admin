@@ -104,6 +104,7 @@ type gatewayCallResponse struct {
 	ModelCode        string                   `json:"modelCode"`
 	ModelName        string                   `json:"modelName"`
 	ModelType        string                   `json:"modelType"`
+	Operation        string                   `json:"operation,omitempty"`
 	UpstreamModelID  string                   `json:"upstreamModelId"`
 	ProviderName     string                   `json:"providerName"`
 	Streaming        bool                     `json:"streaming"`
@@ -324,7 +325,7 @@ func listGatewayCallsHandler(deps Dependencies) gin.HandlerFunc {
 			response = append(response, gatewayCallResponse{
 				Timing: item.Timing, ID: item.ID, APIKeyID: item.APIKeyID, APIKeyName: item.APIKeyName,
 				AuthType: item.AuthType, UserID: item.UserID, UserName: item.UserName, DepartmentID: item.DepartmentID, RequestID: item.RequestID,
-				ModelCode: item.ModelCode, ModelName: item.ModelName, ModelType: item.ModelType,
+				ModelCode: item.ModelCode, ModelName: item.ModelName, ModelType: item.ModelType, Operation: item.Operation,
 				UpstreamModelID: item.UpstreamModelID, ProviderName: item.ProviderName, Streaming: item.Streaming,
 				Result: item.Result, HTTPStatus: item.HTTPStatus, LatencyMS: item.LatencyMS,
 				PromptTokens: item.PromptTokens, CompletionTokens: item.CompletionTokens, TotalTokens: item.TotalTokens,

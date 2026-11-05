@@ -62,6 +62,14 @@ func registerNovelRoutes(router *gin.Engine, deps Dependencies) {
 		p.Cover = novelCoverWithURL(p.ID, p.Cover)
 		writeNovelResponse(c, deps, http.StatusOK, p, err)
 	})
+	group.GET("/projects/:id/finalized-chapters", func(c *gin.Context) {
+		p, err := deps.Novel.Get(c.Request.Context(), novelOwner(c), c.Param("id"))
+		if err != nil {
+			writeNovelResponse(c, deps, http.StatusOK, nil, err)
+			return
+		}
+		writeNovelResponse(c, deps, http.StatusOK, p.FinalizedChapters(), nil)
+	})
 	group.POST("/projects/:id/chapter-plan", requireCSRF(deps), func(c *gin.Context) {
 		var input novel.ChapterPlanInput
 		if !bindNovelInput(c, &input) {
@@ -113,7 +121,15 @@ func writeNovelResponse(c *gin.Context, deps Dependencies, success int, data any
 		httpx.Fail(c, http.StatusConflict, "novel_state_conflict", err.Error())
 	case errors.Is(err, novel.ErrGeneration):
 		deps.Logger.Warn("AI 小说模型调用失败", "error", err)
-		httpx.Fail(c, http.StatusBadGateway, "novel_generation_failed", novel.ErrGeneration.Error())
+		message := novel.ErrGeneration.Error()
+		var countError *novel.SerialOpeningCountError
+		var draftError *novel.DraftOutputError
+		if errors.As(err, &countError) {
+			message = countError.Error()
+		} else if errors.As(err, &draftError) {
+			message = draftError.Error()
+		}
+		httpx.Fail(c, http.StatusBadGateway, "novel_generation_failed", message)
 	case errors.Is(err, novel.ErrCoverGeneration):
 		deps.Logger.Warn("AI 小说封面生成失败", "error", err)
 		httpx.Fail(c, http.StatusBadGateway, "novel_cover_generation_failed", novel.ErrCoverGeneration.Error())

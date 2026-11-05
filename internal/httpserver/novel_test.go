@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -19,6 +20,7 @@ type novelHTTPStub struct {
 	createInput novel.CreateInput
 	refineInput novel.RefineIdeaInput
 	planInput   novel.ChapterPlanInput
+	actionError error
 	coverInput  novel.GenerateCoverInput
 	cover       novel.Cover
 	coverData   []byte
@@ -43,7 +45,7 @@ func (s *novelHTTPStub) RefineIdea(_ context.Context, owner novel.Owner, input n
 func (s *novelHTTPStub) Create(_ context.Context, owner novel.Owner, input novel.CreateInput) (novel.Project, error) {
 	s.owner = owner
 	s.createInput = input
-	return novel.Project{Book: novel.Book{Title: input.Title}}, nil
+	return novel.Project{Book: novel.Book{Title: input.Title}, Workspace: novel.Workspace{StoryMode: input.StoryMode}}, nil
 }
 
 func TestNovelCreateBindsIdeaModeWithoutTitle(t *testing.T) {
@@ -53,13 +55,35 @@ func TestNovelCreateBindsIdeaModeWithoutTitle(t *testing.T) {
 		Auth:   &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}},
 		Novel:  stub, SessionCookie: "test_session",
 	})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/ai-novel/projects", strings.NewReader(`{"brief":"守塔人听到呼救","chapterCount":3,"suggestTitle":true}`))
-	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
-	request.Header.Set("X-CSRF-Token", "csrf-token")
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusCreated || stub.createInput != (novel.CreateInput{Brief: "守塔人听到呼救", ChapterCount: 3, SuggestTitle: true}) {
-		t.Fatalf("未接收灵感创作参数，响应 %d，参数 %+v", recorder.Code, stub.createInput)
+	for _, test := range []struct {
+		name string
+		body string
+		want novel.CreateInput
+	}{
+		{
+			name: "普通小说",
+			body: `{"brief":"守塔人听到呼救","chapterCount":3,"suggestTitle":true}`,
+			want: novel.CreateInput{Brief: "守塔人听到呼救", ChapterCount: 3, SuggestTitle: true},
+		},
+		{
+			name: "长篇连载",
+			body: `{"brief":"守塔人听到呼救","storyMode":"serial"}`,
+			want: novel.CreateInput{Brief: "守塔人听到呼救", StoryMode: novel.StoryModeSerial},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/ai-novel/projects", strings.NewReader(test.body))
+			request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+			request.Header.Set("X-CSRF-Token", "csrf-token")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusCreated || stub.createInput != test.want {
+				t.Fatalf("未接收灵感创作参数，响应 %d，参数 %+v", recorder.Code, stub.createInput)
+			}
+			if hasStoryMode := strings.Contains(recorder.Body.String(), `"storyMode":"serial"`); hasStoryMode != (test.want.StoryMode == novel.StoryModeSerial) {
+				t.Fatalf("小说模式响应错误: %s", recorder.Body)
+			}
+		})
 	}
 }
 func (s *novelHTTPStub) Get(_ context.Context, owner novel.Owner, _ string) (novel.Project, error) {
@@ -72,7 +96,42 @@ func (s *novelHTTPStub) PlanChapters(_ context.Context, owner novel.Owner, _ str
 }
 func (s *novelHTTPStub) Apply(_ context.Context, owner novel.Owner, _ string, _ novel.Action) (novel.Project, error) {
 	s.owner = owner
+	if s.actionError != nil {
+		return novel.Project{}, s.actionError
+	}
 	return novel.Project{}, novel.ErrConflict
+}
+
+func TestNovelOutlineGenerationReportsChapterCountWithoutExposingProviderErrors(t *testing.T) {
+	stub := &novelHTTPStub{}
+	router := New(Dependencies{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth:   &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}},
+		Novel:  stub, SessionCookie: "test_session",
+	})
+	for _, test := range []struct {
+		name    string
+		err     error
+		message string
+	}{
+		{"章数不符", &novel.SerialOpeningCountError{InitialCount: 9, ActualCount: 10, TargetCount: 8},
+			"模型首次生成 9 章，调整后返回 10 章，预期 8 章"},
+		{"供应商错误", fmt.Errorf("%w: 供应商内部信息", novel.ErrGeneration), novel.ErrGeneration.Error()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stub.actionError = test.err
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/ai-novel/projects/book/actions",
+				strings.NewReader(`{"kind":"generate_outline","version":1,"modelCode":"writer"}`))
+			request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+			request.Header.Set("X-CSRF-Token", "csrf-token")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if body := response.Body.String(); response.Code != http.StatusBadGateway ||
+				!strings.Contains(body, test.message) || strings.Contains(body, "供应商内部信息") {
+				t.Fatalf("模型生成错误响应有误: %d %s", response.Code, body)
+			}
+		})
+	}
 }
 
 func (s *novelHTTPStub) CoverModels(_ context.Context, owner novel.Owner) ([]novel.Model, error) {

@@ -258,11 +258,15 @@ export function ModelGatewayPage() {
       title: '模型', key: 'modelName', width: 230,
       render: (_, item) => <div className="gateway-call-model">
         <strong>{item.modelName || item.modelCode}</strong>
-        <div><Tag>{item.modelType === 'image' ? '图片' : item.modelType === 'video' ? '视频' : '对话'}</Tag>{item.streaming ? <Tag>流式</Tag> : null}</div>
+        <div>
+          <Tag>{item.operation === 'video_task_query' ? '视频状态查询' : item.operation === 'video' ? '视频生成提交'
+            : item.modelType === 'image' ? '图片' : item.modelType === 'video' ? '视频' : '对话'}</Tag>
+          {item.streaming ? <Tag>流式</Tag> : null}
+        </div>
       </div>,
     },
     { title: '调用身份', key: 'caller', width: 170, render: (_, item) => item.authType === 'user' ? <span>{item.userName || item.userId}<Tag color="blue">用户</Tag></span> : item.apiKeyName },
-    { title: '结果', key: 'result', width: 105, render: (_, item) => <StatusIndicator label={item.result === 'success' ? '成功' : '失败'} tone={item.result === 'success' ? 'success' : 'danger'} /> },
+    { title: '请求结果', key: 'result', width: 105, render: (_, item) => <StatusIndicator label={item.result === 'success' ? '成功' : '失败'} tone={item.result === 'success' ? 'success' : 'danger'} /> },
     { title: 'HTTP', dataIndex: 'httpStatus', key: 'httpStatus', width: 80 },
     { title: '错误码', dataIndex: 'errorCode', key: 'errorCode', width: 180, render: (value: string) => value ? <Text className="model-resource-code" copyable>{value}</Text> : '—' },
     { title: '耗时', dataIndex: 'latencyMs', key: 'latencyMs', width: 100, render: (value: number) => `${value} ms` },
@@ -273,8 +277,13 @@ export function ModelGatewayPage() {
 
   const usageColumns: TableColumnsType<GatewayUsageGroup> = [
     { title: usageQuery.groupBy === 'department' ? '部门' : usageQuery.groupBy === 'user' ? '用户' : '模型', key: 'name', render: (_, item) => <span>{item.name}{item.id && usageQuery.groupBy !== 'model' ? <Text type="secondary" style={{ marginLeft: 8 }}>{item.id.slice(0, 8)}</Text> : null}</span> },
-    { title: '调用次数', dataIndex: 'callCount', key: 'callCount', render: (value: number) => value.toLocaleString() },
-    { title: '已统计 Token', dataIndex: 'knownTokens', key: 'knownTokens', render: (value: number) => value.toLocaleString() },
+    { title: '其他调用', key: 'otherCallCount', align: 'right', width: 100, render: (_, item) => otherCallCount(item).toLocaleString() },
+    { title: '视频', key: 'video', children: [
+      { title: '生成提交', dataIndex: 'videoSubmitCount', key: 'videoSubmitCount', align: 'right', width: 105, render: formatUsageCount },
+      { title: '成功生成', dataIndex: 'videoSuccessCount', key: 'videoSuccessCount', align: 'right', width: 105, render: formatUsageCount },
+      { title: '状态查询', dataIndex: 'videoQueryCount', key: 'videoQueryCount', align: 'right', width: 105, render: formatUsageCount },
+    ] },
+    { title: '已统计 Token', dataIndex: 'knownTokens', key: 'knownTokens', align: 'right', render: formatUsageCount },
     { title: '未返回 Token', dataIndex: 'unknownUsageCalls', key: 'unknownUsageCalls', render: (value: number) => value > 0 ? <Tag color="orange">{value} 次</Tag> : '—' },
     { title: '超额调用', dataIndex: 'overQuotaCalls', key: 'overQuotaCalls', render: (value: number) => value > 0 ? <Tag color="red">{value} 次</Tag> : '—' },
     ...(canReadPolicies && usageQuery.month === currentUTCMonth && usageQuery.groupBy !== 'model' ? [{
@@ -313,7 +322,7 @@ export function ModelGatewayPage() {
       key: 'usage', label: '用量统计',
       children: <GatewayResource
         title="用量统计"
-        hint="按 UTC 自然月统计；部门和用户仅统计登录用户调用，模型包含调用密钥。未知用量不计入 Token 合计。"
+        hint="按 UTC 自然月统计。视频成功数按确认完成的月份计入。部门和用户仅统计登录用户，按模型还包含调用密钥。"
         action={<Button icon={<ReloadOutlined />} loading={usageResult.isFetching} onClick={() => usageResult.refetch()}>刷新</Button>}
         error={usageResult.isError ? errorMessage(usageResult.error, '用量统计加载失败') : ''}
         retry={() => usageResult.refetch()}
@@ -324,14 +333,22 @@ export function ModelGatewayPage() {
           }} />
           <Select aria-label="统计维度" value={usageQuery.groupBy} onChange={(groupBy) => setUsageQuery((current) => ({ ...current, groupBy, page: 1 }))}
             options={[{ value: 'department', label: '按部门' }, { value: 'user', label: '按用户' }, { value: 'model', label: '按模型' }]} />
-          <Text type="secondary">{usagePage ? `调用 ${usagePage.callCount.toLocaleString()} 次 · 已统计 ${usagePage.knownTokens.toLocaleString()} Token · 未返回 Token ${usagePage.unknownUsageCalls.toLocaleString()} 次 · 超额 ${usagePage.overQuotaCalls.toLocaleString()} 次` : '正在加载统计'}</Text>
+          {usagePage ? <Space wrap size={[12, 4]}>
+            <Text type="secondary">其他调用 {otherCallCount(usagePage).toLocaleString()} 次</Text>
+            <Text type="secondary">视频提交 {formatUsageCount(usagePage.videoSubmitCount)} 次</Text>
+            <Text type="secondary">成功生成 {formatUsageCount(usagePage.videoSuccessCount)} 条</Text>
+            <Text type="secondary">状态查询 {formatUsageCount(usagePage.videoQueryCount)} 次</Text>
+            <Text type="secondary">已统计 {usagePage.knownTokens.toLocaleString()} Token</Text>
+            <Text type="secondary">未返回 Token {usagePage.unknownUsageCalls.toLocaleString()} 次</Text>
+            <Text type="secondary">超额 {usagePage.overQuotaCalls.toLocaleString()} 次</Text>
+          </Space> : <Text type="secondary">正在加载统计</Text>}
         </div>
         {usagePage && usagePage.unknownUsageCalls > 0 ? <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="图片、视频调用通常不返回 Token；对话调用若未返回用量，请检查供应商响应。Token 额度只统计已返回的用量。" /> : null}
         <Table<GatewayUsageGroup> rowKey={(item) => item.id || 'unknown'} columns={usageColumns} dataSource={usagePage?.items ?? []}
           loading={usageResult.isLoading} pagination={{ current: usageQuery.page, pageSize: usageQuery.pageSize,
             total: usagePage?.total ?? 0, showSizeChanger: true, showTotal: (total) => `共 ${total} 项`,
             onChange: (page, pageSize) => setUsageQuery((current) => ({ ...current, page, pageSize })) }}
-          scroll={{ x: 780 }} locale={{ emptyText: '此月份没有调用记录' }} />
+          scroll={{ x: 1060 }} locale={{ emptyText: '此月份没有调用记录' }} />
       </GatewayResource>,
     },
     {
@@ -369,7 +386,7 @@ export function ModelGatewayPage() {
       key: 'calls', label: `调用记录 ${callsPage.total}`,
       children: <GatewayResource
         title="最近调用"
-        hint="展示路由、结果、用量及阶段耗时；原始请求与响应另存于服务端日志。"
+        hint="展示每次请求的路由、操作、结果、用量及阶段耗时。"
         action={<Button icon={<ReloadOutlined />} loading={callsQuery.isFetching} onClick={() => callsQuery.refetch()}>刷新</Button>}
         error={callsQuery.isError ? errorMessage(callsQuery.error, '调用记录加载失败') : ''}
         retry={() => callsQuery.refetch()}
@@ -551,6 +568,14 @@ function renderPolicyQuota(policy?: ModelPolicy) {
     <span>{used.toLocaleString()} / {limit.toLocaleString()}（{ratio}%）</span>
     {used >= limit ? <Tag color="red">已达上限</Tag> : used >= limit - Math.floor(limit / 5) ? <Tag color="orange">接近上限</Tag> : null}
   </Space>
+}
+
+function formatUsageCount(value?: number) {
+  return (value ?? 0).toLocaleString()
+}
+
+function otherCallCount({ callCount, videoSubmitCount, videoQueryCount }: Pick<GatewayUsageGroup, 'callCount' | 'videoSubmitCount' | 'videoQueryCount'>) {
+  return callCount - (videoSubmitCount ?? 0) - (videoQueryCount ?? 0)
 }
 
 function formatTime(value: string) {

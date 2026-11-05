@@ -15,6 +15,8 @@ export interface NovelBook {
   id: string
   title: string
   chapterCount: number
+  finalizedChapterCount: number
+  openingPending?: boolean
   updatedAt: string
   cover?: NovelCover
 }
@@ -35,11 +37,16 @@ export interface NovelChapter {
   body: string
   summary: string
   review: string
+  reviewFailed?: boolean
+  reviewPassed?: boolean
+  authorInstruction?: string
   final: boolean
 }
 
 export interface NovelProject extends NovelBook {
   brief: string
+  authorGuidance?: string
+  storyMode?: 'serial'
   needsTitle?: boolean
   version: number
   modelCode: string
@@ -52,15 +59,19 @@ export interface NovelCreate {
   title?: string
   suggestTitle?: boolean
   brief: string
-  chapterCount: number
+  chapterCount?: number
+  storyMode?: 'serial'
 }
 
 export type NovelAction =
   | { kind: 'generate_outline'; modelCode: string; instruction?: string; outline?: NovelOutline }
+  | { kind: 'rename'; title: string }
+  | { kind: 'suggest_title'; modelCode: string }
+  | { kind: 'save_author_guidance'; authorGuidance: string }
   | { kind: 'save_outline' | 'confirm_outline'; outline: NovelOutline }
   | { kind: 'append_chapters'; beats: NovelBeat[] }
   | { kind: 'write'; chapter: number; modelCode: string; instruction: string }
-  | { kind: 'review'; chapter: number; modelCode: string }
+  | { kind: 'review' | 'revise_review'; chapter: number; modelCode: string }
   | { kind: 'save_draft' | 'finalize'; chapter: number; body: string; summary: string }
 
 const base = '/api/v1/ai-novel'
@@ -69,6 +80,8 @@ export const listNovels = () => request<NovelBook[]>(base + '/projects')
 export const listNovelModels = () => request<{ code: string; name: string }[]>(base + '/models')
 export const listNovelCoverModels = () => request<{ code: string; name: string }[]>(base + '/cover-models')
 export const getNovel = (id: string) => request<NovelProject>(base + '/projects/' + encodeURIComponent(id))
+export const listNovelFinalizedChapters = (id: string) =>
+  request<{ number: number; title: string }[]>(`${base}/projects/${encodeURIComponent(id)}/finalized-chapters`)
 
 function post<T>(path: string, data: object) {
   return request<T>(base + path, {

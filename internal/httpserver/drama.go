@@ -114,20 +114,13 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "请填写有效的剧本内容和项目配置")
 			return
 		}
-		session := currentSession(ctx)
-		input.OrganizationID, input.OwnerID = session.User.OrganizationID, session.User.ID
-		project, err := deps.Drama.Create(ctx.Request.Context(), input)
-		if err != nil {
-			handleDramaError(ctx, deps, err)
-			return
-		}
-		go func() {
-			if err := deps.Drama.Analyze(project); err != nil {
-				deps.Logger.Error("AI 漫剧解析失败", "project_id", project.ID, "error", err)
-			}
-		}()
-		httpx.OK(ctx, http.StatusCreated, project)
+		createAndAnalyzeDramaProject(ctx, deps, input)
 	})
+	if deps.Novel != nil {
+		group.POST("/projects/from-novel", requireCSRF(deps), func(ctx *gin.Context) {
+			createDramaFromNovel(ctx, deps)
+		})
+	}
 	group.GET("/projects/:id", func(ctx *gin.Context) {
 		session := currentSession(ctx)
 		project, err := deps.Drama.Get(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"))

@@ -1,21 +1,20 @@
 import { BookOutlined, EditOutlined, PictureOutlined, PlusOutlined, RobotOutlined } from '@ant-design/icons'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Empty, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Radio, Select, Space, Spin, Tag } from 'antd'
+import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Alert, Button, Card, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Space, Spin, Tag } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
-import { applyNovelAction, createNovel, getNovel, listNovelModels, listNovels, type NovelAction, type NovelBeat, type NovelCreate, type NovelOutline, type NovelProject } from '../api/novel'
+import { applyNovelAction, getNovel, listNovelModels, listNovels, type NovelAction, type NovelBeat, type NovelOutline, type NovelProject } from '../api/novel'
 import { useAuth } from '../auth/AuthContext'
 import { NovelAppendChapters, novelChapterLimit } from './NovelAppendChapters'
 import { NovelCoverEditor } from './NovelCoverEditor'
-import { NovelIdeaRefinement } from './NovelIdeaRefinement'
+import { NovelCreateDialog } from './NovelCreateDialog'
+import { NovelTitleEditor } from './NovelTitleEditor'
 import './novel.css'
 
 const { TextArea } = Input
-const defaultChapterCount = 3
 const chapterPageSize = 20
-type CreationMode = 'ai' | 'author'
 type NewNovelLocation = { outlineModel?: string }
 type NovelMutation = {
   p: NovelProject
@@ -25,11 +24,15 @@ type NovelMutation = {
 }
 const messages: Record<NovelAction['kind'], string> = {
   generate_outline: '正在生成大纲',
+  rename: '正在保存书名',
+  suggest_title: '正在拟定新书名',
+  save_author_guidance: '正在保存写作约定',
   save_outline: '正在保存大纲',
   confirm_outline: '正在确认大纲',
   append_chapters: '正在追加章节',
-  write: '正在生成正文和连续性摘要',
+  write: '正在生成正文并审稿',
   review: '正在审稿',
+  revise_review: '正在按审稿意见修改并复核',
   save_draft: '正在保存草稿',
   finalize: '正在定稿',
 }
@@ -39,63 +42,21 @@ function errorMessage(error: Error) {
 }
 
 export function NovelPage() {
-  const navigate = useNavigate()
   const { user } = useAuth()
-  const cache = useQueryClient()
   const listKey = ['novel-books', user?.organizationId, user?.id]
   const books = useQuery({ queryKey: listKey, queryFn: listNovels })
   const [creating, setCreating] = useState(false)
-  const [mode, setMode] = useState<CreationMode>('ai')
-  const [selectedModel, setSelectedModel] = useState('')
-  const [createForm] = Form.useForm<NovelCreate>()
-  const brief = Form.useWatch('brief', createForm) ?? ''
-  const aiMode = mode === 'ai'
-  const models = useQuery({
-    queryKey: ['novel-models', user?.organizationId, user?.id],
-    queryFn: listNovelModels,
-    enabled: creating,
-  })
-  const availableModels = models.data ?? []
-  const defaultModel = availableModels.find((model) => model.code === selectedModel) ?? availableModels[0]
-  const create = useMutation({
-    mutationFn: ({ input }: { input: NovelCreate; outlineModel?: string }) => createNovel(input),
-    onSuccess: (project, { outlineModel }) => {
-      void cache.invalidateQueries({ queryKey: listKey })
-      navigate('/ai-apps/novel/' + project.id, { state: { outlineModel } satisfies NewNovelLocation })
-    },
-  })
-
-  function openCreate() {
-    create.reset()
-    setMode('ai')
-    setSelectedModel('')
-    setCreating(true)
-  }
-
-  function submitCreate(values: NovelCreate) {
-    if (create.isPending) return
-    if (aiMode) {
-      if (!defaultModel) return
-      create.mutate({
-        input: { title: values.title, brief: values.brief, chapterCount: values.chapterCount, suggestTitle: true },
-        outlineModel: defaultModel.code,
-      })
-      return
-    }
-    create.mutate({ input: values })
-  }
 
   return (
     <main className="novel-page novel-library-page">
-      <header className="novel-heading">
-        <h1>AI 小说</h1>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建小说</Button>
-      </header>
       <section aria-labelledby="novel-library-title" className="novel-library">
-        <div className="novel-library-heading">
-          <h2 id="novel-library-title">我的作品</h2>
-          {books.data && <span>{books.data.length} 本</span>}
-        </div>
+        <header className="novel-library-heading">
+          <div className="novel-library-heading-title">
+            <h1 id="novel-library-title">我的作品</h1>
+            {books.data && <span>{books.data.length} 本</span>}
+          </div>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreating(true)}>新建小说</Button>
+        </header>
         {books.isPending && <Spin aria-label="正在读取作品" />}
         {books.isError && <Alert type="error" title={errorMessage(books.error)} action={<Button onClick={() => void books.refetch()}>重试</Button>} />}
         {books.data?.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有作品，先记下一条故事灵感。" />}
@@ -108,7 +69,7 @@ export function NovelPage() {
                     : <BookOutlined aria-hidden="true" />}
                   <strong>{book.title}</strong>
                   <span className="novel-book-meta">
-                    <span>计划 {book.chapterCount} 章</span>
+                    <span>{book.openingPending ? '待规划开篇' : `计划 ${book.chapterCount} 章`}</span>
                     <time dateTime={book.updatedAt}>{new Date(book.updatedAt).toLocaleDateString('zh-CN')}</time>
                   </span>
                 </span>
@@ -117,68 +78,7 @@ export function NovelPage() {
           ))}
         </ul>
       </section>
-      <Modal className="novel-create-modal" title="新建小说" open={creating} footer={null} destroyOnHidden closable={!create.isPending}
-        mask={{ closable: !create.isPending }} onCancel={() => { if (!create.isPending) setCreating(false) }}>
-        <Radio.Group className="novel-mode-options" aria-label="大纲规划方式" value={mode}
-          onChange={(event) => setMode(event.target.value)} disabled={create.isPending}>
-          <Radio className="novel-mode-option" value="ai">
-            <span><RobotOutlined /> AI 帮我规划</span>
-            <small>给一句灵感，AI 拟书名、设定和各章大纲。</small>
-          </Radio>
-          <Radio className="novel-mode-option" value="author">
-            <span><EditOutlined /> 我自己规划</span>
-            <small>从空白大纲开始，自己决定人物和剧情。</small>
-          </Radio>
-        </Radio.Group>
-        <Form<NovelCreate> form={createForm} layout="vertical"
-          onFinish={submitCreate} disabled={create.isPending} clearOnDestroy>
-          {!aiMode && <Form.Item label="作品名称" name="title" rules={[{ required: true, whitespace: true, message: '请输入作品名称' }]}>
-            <Input maxLength={120} />
-          </Form.Item>}
-          <Form.Item label={aiMode ? '故事灵感' : '故事构想'} name="brief"
-            rules={[{ required: true, whitespace: true, message: '请写下你的故事想法' }]}>
-            <TextArea rows={aiMode ? 4 : 5} maxLength={4000} showCount placeholder={aiMode
-              ? '例如：一个只负责归还遗失物的夜班店员，收到了一把来自明天的钥匙。'
-              : '谁想做什么？什么阻止了他？也可以写下题材、视角和写作要求。'} />
-          </Form.Item>
-          <NovelIdeaRefinement brief={brief} model={defaultModel} disabled={create.isPending}
-            onApply={(value) => createForm.setFieldValue('brief', value)} />
-          <div className={aiMode ? 'novel-create-settings' : undefined}>
-            {aiMode ? <details>
-              <summary>生成选项{defaultModel ? <small> · 默认 {defaultChapterCount} 章，可换模型或调整章数</small> : null}</summary>
-              <div className="novel-create-settings-fields">
-                <Form.Item label="作品名称（选填）" name="title">
-                  <Input maxLength={120} placeholder="留空由 AI 拟定" />
-                </Form.Item>
-                <Form.Item label="首批章数" name="chapterCount" initialValue={defaultChapterCount}
-                  extra="确认大纲后可以继续分批追加。" rules={[{ required: true, message: '请输入 1 到 30 之间的章数' }]}>
-                  <InputNumber min={1} max={30} precision={0} />
-                </Form.Item>
-                <Form.Item label="文本模型" htmlFor="novel-create-model">
-                  <Select id="novel-create-model" value={defaultModel?.code} onChange={setSelectedModel}
-                    loading={models.isPending} placeholder="暂无可用模型"
-                    options={availableModels.map((model) => ({ value: model.code, label: model.name }))} />
-                </Form.Item>
-              </div>
-            </details> : (
-              <Form.Item label="首批章数" name="chapterCount" initialValue={defaultChapterCount}
-                extra="确认大纲后可以继续分批追加。" rules={[{ required: true, message: '请输入 1 到 30 之间的章数' }]}>
-                <InputNumber min={1} max={30} precision={0} />
-              </Form.Item>
-            )}
-          </div>
-          {aiMode && models.isError && <Alert type="error" title={errorMessage(models.error)}
-            action={<Button size="small" onClick={() => void models.refetch()}>重试</Button>} />}
-          {aiMode && models.isSuccess && !defaultModel && <Alert type="info" title="当前没有可用的文本模型，可以切换为自己规划，或请管理员配置模型。" />}
-          {create.error && <Alert type="error" title={errorMessage(create.error)} />}
-          <div className="novel-create-footer">
-            {aiMode && defaultModel && <span>先规划首批章节，后续可分批追加。使用 {defaultModel.name} 生成。</span>}
-            <Button type="primary" htmlType="submit" loading={create.isPending} disabled={aiMode && !defaultModel}>
-              {aiMode ? '生成小说大纲' : '创建作品'}
-            </Button>
-          </div>
-        </Form>
-      </Modal>
+      {creating && <NovelCreateDialog onClose={() => setCreating(false)} />}
     </main>
   )
 }
@@ -188,57 +88,93 @@ export function NovelProjectPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const { outlineModel } = (location.state ?? {}) as NewNovelLocation
+  const fromDrama = new URLSearchParams(location.search).get('from') === 'drama'
   const started = useRef<string | undefined>(undefined)
   const { user } = useAuth()
   const organizationId = user?.organizationId
   const userId = user?.id
   const cache = useQueryClient()
   const key = ['novel-project', organizationId, userId, id]
+  const mutationKey = ['novel-action', organizationId, userId, id]
+  const [dismissedFailure, setDismissedFailure] = useState<number>()
   const project = useQuery({ queryKey: key, queryFn: () => getNovel(id), refetchOnWindowFocus: false, refetchOnReconnect: false })
   const models = useQuery({ queryKey: ['novel-models', organizationId, userId], queryFn: listNovelModels })
   const action = useMutation({
+    mutationKey,
     mutationFn: ({ p, input }: NovelMutation) => applyNovelAction(p, input),
     onSuccess: async (updated, { p, scope }) => {
       const updatedKey = ['novel-project', ...scope, updated.id]
       await cache.cancelQueries({ queryKey: updatedKey })
       cache.setQueryData<NovelProject>(updatedKey, (current) => {
+        if (current && current.version > updated.version) return current
         const cover = current?.cover
         return cover && cover.url !== p.cover?.url && updated.cover?.url === p.cover?.url ? { ...updated, cover } : updated
       })
       void cache.invalidateQueries({ queryKey: ['novel-books', ...scope] })
     },
   })
+  const actionStates = useMutationState({
+    filters: { mutationKey: ['novel-action'] },
+    select: (mutation) => ({
+      id: mutation.mutationId,
+      status: mutation.state.status,
+      variables: mutation.state.variables as NovelMutation | undefined,
+      error: mutation.state.error,
+    }),
+  }).filter(({ variables }) => variables?.p.id === id && variables.scope[0] === organizationId && variables.scope[1] === userId)
+  const latestAction = actionStates.at(-1)
+  const pendingAction = actionStates.find((item) => item.status === 'pending')?.variables
+  const automaticAction = latestAction?.variables?.automatic ? latestAction.variables.input : undefined
 
   const { mutate } = action
   useEffect(() => {
     if (!outlineModel || !project.data || started.current === id) return
     started.current = id
-    if (!project.data.outline && !project.data.confirmed) {
+    if (!cache.isMutating({ mutationKey: ['novel-action', organizationId, userId, id], exact: true }) &&
+      !project.data.outline && !project.data.confirmed) {
       mutate({ p: project.data, input: { kind: 'generate_outline', modelCode: outlineModel },
         scope: [organizationId, userId], automatic: true })
     }
-    navigate(location.pathname, { replace: true, state: null })
-  }, [id, location.pathname, mutate, navigate, organizationId, outlineModel, project.data, userId])
+    navigate({ pathname: location.pathname, search: location.search }, { replace: true, state: null })
+  }, [cache, id, location.pathname, location.search, mutate, navigate, organizationId, outlineModel, project.data, userId])
 
-  const activeAction = action.variables?.p.id === id ? action.variables : undefined
-  const automaticAction = activeAction?.automatic ? activeAction.input : undefined
   const initialModel = outlineModel ?? (automaticAction?.kind === 'generate_outline' ? automaticAction.modelCode : undefined)
+  const failure = latestAction && latestAction.id !== dismissedFailure && latestAction.variables?.input.kind !== 'append_chapters'
+    ? latestAction.error : null
+  function applyAction(p: NovelProject, input: NovelAction) {
+    if (cache.isMutating({ mutationKey, exact: true })) {
+      return Promise.reject(new Error('当前作品还有操作正在进行'))
+    }
+    return action.mutateAsync({ p, input, scope: [organizationId, userId] })
+  }
+  const coverURL = project.data?.cover?.url
 
   return (
-    <main className="novel-page">
+    <main className={coverURL ? 'novel-page novel-project-with-cover' : 'novel-page'}>
+      {coverURL && <div className="novel-cover-backdrop" aria-hidden="true">
+        <div className="novel-cover-backdrop-frame">
+          <img key={coverURL} src={coverURL} alt="" onError={(event) => { event.currentTarget.hidden = true }} />
+        </div>
+      </div>}
       {project.isPending && <Spin aria-label="正在加载作品" />}
       {project.isError && <Alert type="error" title={errorMessage(project.error)} action={<Button onClick={() => void project.refetch()}>重试</Button>} />}
       {project.data && (
         <NovelWorkspace key={project.data.id} project={project.data} models={models.data ?? []}
-          initialModel={initialModel}
+          initialModel={initialModel} fromDrama={fromDrama}
           modelsNotice={models.isPending ? '正在查询可用模型' : models.isError ? errorMessage(models.error) : '当前账号没有可用的文本模型，请联系管理员配置'}
-          run={(input) => action.mutate({ p: project.data, input, scope: [organizationId, userId] })}
-          append={(p, beats) => action.mutateAsync({ p, input: { kind: 'append_chapters', beats }, scope: [organizationId, userId] })}
-          pending={action.isPending ? activeAction?.input.kind : undefined}
-          revisingOutline={action.isPending && activeAction?.input.kind === 'generate_outline' && !!activeAction.input.instruction}
-          autoOutlining={action.isPending && !!automaticAction}
-          failure={activeAction && activeAction.input.kind !== 'append_chapters' ? action.error : null}
-          reload={() => { action.reset(); void project.refetch() }}
+          run={(input) => {
+            if (!cache.isMutating({ mutationKey, exact: true })) {
+              mutate({ p: project.data, input, scope: [organizationId, userId] })
+            }
+          }}
+          runTitle={(input) => applyAction(project.data, input)}
+          saveAuthorGuidance={(p, authorGuidance) => applyAction(p, { kind: 'save_author_guidance', authorGuidance })}
+          append={(p, beats) => applyAction(p, { kind: 'append_chapters', beats })}
+          pending={pendingAction?.input.kind}
+          revisingOutline={pendingAction?.input.kind === 'generate_outline' && !!pendingAction.input.instruction}
+          autoOutlining={!!pendingAction?.automatic}
+          failure={failure}
+          reload={() => { setDismissedFailure(latestAction?.id); void project.refetch() }}
         />
       )}
     </main>
@@ -246,13 +182,17 @@ export function NovelProjectPage() {
 }
 
 type RunAction = (action: NovelAction) => void
+type RunTitleAction = (action: Extract<NovelAction, { kind: 'rename' | 'suggest_title' }>) => Promise<NovelProject>
 
-function NovelWorkspace({ project, models, modelsNotice, initialModel, run, append, pending, revisingOutline, autoOutlining, failure, reload }: {
+function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama, run, runTitle, saveAuthorGuidance, append, pending, revisingOutline, autoOutlining, failure, reload }: {
   project: NovelProject
   models: { code: string; name: string }[]
   modelsNotice: string
   initialModel?: string
+  fromDrama: boolean
   run: RunAction
+  runTitle: RunTitleAction
+  saveAuthorGuidance: (p: NovelProject, authorGuidance: string) => Promise<NovelProject>
   append: (p: NovelProject, beats: NovelBeat[]) => Promise<NovelProject>
   pending?: NovelAction['kind']
   revisingOutline?: boolean
@@ -266,8 +206,10 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, run, appe
   const [chapterPage, setChapterPage] = useState(() => Math.floor(Math.max(selected, 0) / chapterPageSize) + 1)
   const [selectedModel, setModel] = useState<string>()
   const [editingCover, setEditingCover] = useState(false)
+  const [guidanceProject, setGuidanceProject] = useState<NovelProject>()
   const [appendProject, setAppendProject] = useState<NovelProject>()
   const [dirtyVersion, setDirtyVersion] = useState<number>()
+  const [instructionDraft, setInstructionDraft] = useState<{ index: number; saved: string; value: string }>()
   const dirty = dirtyVersion === project.version
   const markDirty = (value: boolean) => setDirtyVersion(value ? project.version : undefined)
   const busy = !!pending
@@ -275,15 +217,24 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, run, appe
   const defaultModelCode = !project.outline ? models[0]?.code : undefined
   const modelCode = models.some((item) => item.code === preferredModel) ? preferredModel : defaultModelCode ?? ''
   const finalized = project.chapters.filter((chapter) => chapter.final).length
+  const serial = project.storyMode === 'serial'
+  const awaitingOpening = serial && !project.outline
+  const backPath = fromDrama
+    ? '/ai-apps/drama?' + new URLSearchParams({ source: 'novel', novelId: project.id })
+    : '/ai-apps/novel'
   const canAppend = project.confirmed && project.chapterCount < novelChapterLimit
   const visibleChapterPage = Math.min(chapterPage, Math.ceil(project.chapterCount / chapterPageSize))
   const chapterOffset = (visibleChapterPage - 1) * chapterPageSize
   const openAppend = () => { if (!busy && !dirty) setAppendProject(project) }
+  const savedInstruction = project.chapters[selected]?.authorInstruction ?? ''
+  const chapterInstruction = instructionDraft?.index === selected && instructionDraft.saved === savedInstruction
+    ? instructionDraft.value : savedInstruction
 
   function switchSection(index: number) {
     if (selected === index || busy) return
     setSelected(index)
     if (index >= 0) setChapterPage(Math.floor(index / chapterPageSize) + 1)
+    setInstructionDraft(undefined)
     markDirty(false)
   }
 
@@ -300,13 +251,22 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, run, appe
   return (
     <>
       <div className="novel-back">
-        <Link to="/ai-apps/novel" onClick={(event) => {
-          if ((dirty || busy) && !window.confirm(busy ? '当前操作仍在进行，确认离开？' : '放弃当前未保存的修改？')) event.preventDefault()
-        }}>← 返回我的作品</Link>
+        <Link to={backPath} onClick={(event) => {
+          if (dirty && !window.confirm('放弃当前未保存的修改？')) event.preventDefault()
+        }}>← {fromDrama ? '返回 AI 漫剧' : '返回我的作品'}</Link>
       </div>
       <header className="novel-heading">
-        <div><h1>{project.title}</h1><span className="novel-heading-progress">已定稿 {finalized} / {project.chapterCount} 章</span></div>
+        <div className="novel-heading-name">
+          <NovelTitleEditor title={project.title} modelCode={modelCode || models[0]?.code}
+            busy={busy} suggesting={pending === 'suggest_title'} dirty={dirty} run={runTitle} />
+          <div className="novel-heading-meta">
+            {serial && <Tag>长篇连载</Tag>}
+            <span className="novel-heading-progress">{awaitingOpening ? '待规划开篇' : `已定稿 ${finalized} / ${project.chapterCount} 章`}</span>
+          </div>
+        </div>
         <div className="novel-heading-actions">
+          <Button icon={<EditOutlined />} disabled={busy || dirty} title={dirty ? '请先保存当前草稿' : undefined}
+            onClick={() => setGuidanceProject(project)}>写作约定</Button>
           <Button icon={<PictureOutlined />} disabled={busy} onClick={() => setEditingCover(true)}>设置封面</Button>
           <div className="novel-model">
             <label htmlFor="novel-model">文本模型</label>
@@ -316,6 +276,11 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, run, appe
         </div>
       </header>
       {editingCover && <NovelCoverEditor book={project} onClose={() => setEditingCover(false)} />}
+      {guidanceProject && <NovelAuthorGuidance initialValue={guidanceProject.authorGuidance ?? ''} saving={pending === 'save_author_guidance'}
+        onClose={() => setGuidanceProject(undefined)} onSave={async (value) => {
+          await saveAuthorGuidance(guidanceProject, value)
+          setGuidanceProject(undefined)
+        }} />}
       {appendProject && <NovelAppendChapters project={appendProject} model={models.find((item) => item.code === modelCode) ?? models[0]}
         onClose={() => setAppendProject(undefined)} onReload={() => { setAppendProject(undefined); reload() }}
         onAppend={async (beats) => {
@@ -324,9 +289,12 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, run, appe
           if (appendProject.chapters.every((chapter) => chapter.final)) switchSection(appendProject.chapterCount)
         }} />}
       {!models.length && <Alert type="info" title={modelsNotice} />}
-      {pending && <Alert type="info" showIcon icon={<Spin size="small" />} title={revisingOutline ? '正在按意见修改大纲' : messages[pending]} />}
+      {pending && <Alert type="info" showIcon icon={<Spin size="small" />} title={revisingOutline ? '正在按意见修改大纲'
+        : awaitingOpening && pending === 'generate_outline' ? '正在规划长篇开篇' : messages[pending]}
+        description={pending === 'write' || pending === 'review' || pending === 'revise_review' ? '可以先在站内切换页面，稍后回来查看结果。' : undefined} />}
       {failure && <Alert type="error" showIcon title={errorMessage(failure)}
-        description={initialModel && !project.outline ? '灵感已保存，可以重试生成大纲，也可以自己填写。' : undefined}
+        description={awaitingOpening ? '灵感已保存，可以重试规划。'
+          : initialModel && !project.outline ? '灵感已保存，可以重试生成大纲，也可以自己填写。' : undefined}
         action={failure instanceof ApiError && failure.code === 'novel_conflict'
           ? <Popconfirm title="重新加载会清除当前未保存的修改，继续吗？" onConfirm={reload}><Button size="small">重新加载</Button></Popconfirm>
           : initialModel && !project.outline && <Button size="small" disabled={busy || dirty || !modelCode}
@@ -336,7 +304,7 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, run, appe
           {sectionButton(-1, '作品大纲', project.confirmed ? '已确认' : '待确认')}
           {canAppend && <button type="button" className="novel-index-item novel-append-trigger" disabled={busy || dirty}
             title={dirty ? '请先保存当前草稿' : undefined} onClick={openAppend}><span><PlusOutlined /> 追加章节</span></button>}
-          {project.chapters.slice(chapterOffset, chapterOffset + chapterPageSize).map((chapter, pageIndex) => {
+          {!awaitingOpening && project.chapters.slice(chapterOffset, chapterOffset + chapterPageSize).map((chapter, pageIndex) => {
             const index = chapterOffset + pageIndex
             const locked = !project.confirmed || (index > 0 && !project.chapters[index - 1].final)
             return <div key={index}>
@@ -348,15 +316,17 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, run, appe
             showSizeChanger={false} onChange={setChapterPage} />}
         </nav>
         <Card className="novel-paper" variant="borderless">
-          {selected === -1 && autoOutlining && !project.outline
+          {selected === -1 && !project.outline && (autoOutlining || (awaitingOpening && pending === 'generate_outline'))
             ? <div className="novel-generating-outline">
                 <h2>正在规划你的故事</h2>
-                <p>AI 会根据这条灵感拟好故事设定、人物关系和 {project.chapterCount} 章的写作目标。</p>
+                <p>{serial ? 'AI 正在拟定全书主线，并根据开篇需要安排首批章节。'
+                  : `AI 会根据这条灵感拟好故事设定、人物关系和 ${project.chapterCount} 章的写作目标。`}</p>
               </div>
             : selected === -1
             ? <OutlineEditor key={project.version} project={project} modelCode={modelCode} busy={busy} run={run}
                 dirty={dirty} markDirty={markDirty} onStart={() => switchSection(Math.max(0, firstUnfinished))} />
             : <ChapterEditor key={project.version + ':' + selected} project={project} index={selected}
+                instruction={chapterInstruction} setInstruction={(value) => setInstructionDraft({ index: selected, saved: savedInstruction, value })}
                 modelCode={modelCode} busy={busy} run={run} dirty={dirty} markDirty={markDirty}
                 onNext={() => switchSection(selected + 1)} onAppend={canAppend ? openAppend : undefined} />}
         </Card>
@@ -365,9 +335,43 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, run, appe
   )
 }
 
+function NovelAuthorGuidance({ initialValue, saving, onClose, onSave }: {
+  initialValue: string; saving: boolean; onClose: () => void; onSave: (value: string) => Promise<void>
+}) {
+  const [value, setValue] = useState(initialValue)
+  const [error, setError] = useState('')
+  const guidance = value.trim()
+
+  async function save() {
+    if (saving || guidance === initialValue) return
+    setError('')
+    try {
+      await onSave(guidance)
+    } catch (error) {
+      setError(error instanceof Error ? errorMessage(error) : '保存失败，请稍后重试')
+    }
+  }
+
+  return (
+    <Modal title="写作约定" open width={540} okText="保存约定" cancelText="取消" onOk={() => void save()}
+      onCancel={() => { if (!saving) onClose() }} confirmLoading={saving} closable={!saving} keyboard={!saving}
+      mask={{ closable: false }} okButtonProps={{ disabled: guidance === initialValue }} cancelButtonProps={{ disabled: saving }}>
+      <Form layout="vertical" disabled={saving}>
+        <Form.Item label="全书约定" htmlFor="novel-author-guidance"
+          extra="适用于后续章节的规划、写作和审稿。保存后可按新约定重新检查现有草稿。">
+          <TextArea id="novel-author-guidance" value={value} onChange={(event) => setValue(event.target.value)}
+            rows={5} maxLength={2000} showCount placeholder="例如：主角统一称太子为「皇兄」，不用「哥」。" />
+        </Form.Item>
+      </Form>
+      {error && <Alert type="error" showIcon title={error} />}
+    </Modal>
+  )
+}
+
 function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStart }: {
   project: NovelProject; modelCode: string; busy: boolean; dirty: boolean; markDirty: (value: boolean) => void; run: RunAction; onStart: () => void
 }) {
+  const serial = project.storyMode === 'serial'
   const [outline, setOutline] = useState<NovelOutline>(() => project.outline ?? {
     synopsis: '', world: '', characters: '', beats: Array.from({ length: project.chapterCount }, () => ({ title: '', goal: '' })),
   })
@@ -381,14 +385,24 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
     && outline.beats.every((beat) => beat.title.trim() && beat.goal.trim()))
   const generate = () => run({ kind: 'generate_outline', modelCode })
   const generateButton = <Button icon={<RobotOutlined />} disabled={busy || !modelCode} onClick={project.outline || dirty ? undefined : generate}>
-    {project.outline ? '重新生成大纲' : '生成大纲'}
+    {project.outline ? '重新生成大纲' : serial ? '规划长篇开篇' : '生成大纲'}
   </Button>
   const changeOutline = (next: NovelOutline) => { setOutline(next); markDirty(true) }
+  const brief = <details className="novel-brief" open={!project.outline}><summary>故事构想</summary><p>{project.brief}</p></details>
+
+  if (serial && !project.outline) {
+    return <>
+      <h2>作品大纲</h2>
+      {brief}
+      <p className="novel-hint">AI 会根据灵感规划全书主线，并建议开篇章数。</p>
+      {generateButton}
+    </>
+  }
 
   return (
     <>
       <h2>作品大纲</h2>
-      <details className="novel-brief" open={!project.outline}><summary>故事构想</summary><p>{project.brief}</p></details>
+      {brief}
       {!project.confirmed && <p className="novel-hint">{project.outline
         ? '重新生成会从最初的故事灵感出发。要在当前大纲上纠正或补充细节，可以按意见修改。'
         : '可先生成大纲，也可手动填写。确认后开放第一章，并锁定大纲。'}</p>}
@@ -414,13 +428,13 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
         </div>
       )}
       <Form layout="vertical" disabled={busy}>
-        {([{ key: 'synopsis', label: '故事梗概' }, { key: 'world', label: '世界设定' }, { key: 'characters', label: '主要人物与关系' }] as const).map(({ key, label }) => (
+        {([{ key: 'synopsis', label: serial ? '全书主线' : '故事梗概' }, { key: 'world', label: '世界设定' }, { key: 'characters', label: '主要人物与关系' }] as const).map(({ key, label }) => (
           <Form.Item key={key} label={label} htmlFor={'novel-outline-' + key}>
             <TextArea id={'novel-outline-' + key} rows={3} value={outline[key]} readOnly={project.confirmed} maxLength={4000}
               onChange={(event) => changeOutline({ ...outline, [key]: event.target.value })} />
           </Form.Item>
         ))}
-        <h3>章节蓝图</h3>
+        <h3>{serial && !project.confirmed ? `开篇蓝图 · AI 建议 ${project.chapterCount} 章` : '章节蓝图'}</h3>
         {visibleBeats.map((beat, pageIndex) => {
           const index = paginateBeats ? beatOffset + pageIndex : pageIndex
           return (
@@ -457,18 +471,23 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
   )
 }
 
-function ChapterEditor({ project, index, modelCode, busy, dirty, markDirty, run, onNext, onAppend }: {
+function ChapterEditor({ project, index, instruction, setInstruction, modelCode, busy, dirty, markDirty, run, onNext, onAppend }: {
   project: NovelProject; index: number; modelCode: string; busy: boolean; dirty: boolean
+  instruction: string; setInstruction: (value: string) => void
   markDirty: (value: boolean) => void; run: RunAction; onNext: () => void; onAppend?: () => void
 }) {
   const chapter = project.chapters[index]
   const beat = project.outline?.beats[index]
   const [body, setBody] = useState(chapter.body)
   const [summary, setSummary] = useState(chapter.summary)
-  const [instruction, setInstruction] = useState('')
   const number = index + 1
+  const summaryMissing = !!chapter.body.trim() && !chapter.summary.trim()
+  const awaitingRecheck = chapter.reviewFailed && !!chapter.review
+  const reviewPassed = chapter.reviewPassed && !dirty && !chapter.reviewFailed && !summaryMissing
+  const writeDisabled = busy || dirty || !modelCode
   const generate = () => run({ kind: 'write', chapter: number, modelCode, instruction })
-  const writeButton = <Button icon={<RobotOutlined />} disabled={busy || dirty || !modelCode}
+  const reviseFromReview = () => run({ kind: 'revise_review', chapter: number, modelCode })
+  const writeButton = <Button icon={<RobotOutlined />} disabled={writeDisabled}
     onClick={chapter.body ? undefined : generate}>{chapter.body ? 'AI 改写' : '生成正文'}</Button>
 
   return (
@@ -490,17 +509,36 @@ function ChapterEditor({ project, index, modelCode, busy, dirty, markDirty, run,
             setSummary(event.target.value); markDirty(body !== chapter.body || event.target.value !== chapter.summary)
           }} />
         </Form.Item>
-        {!chapter.final && <Form.Item label="给 AI 的写作或改写要求（可选）" htmlFor="novel-instruction">
+        {!chapter.final && <Form.Item label="本章写作要求（可选）" htmlFor="novel-instruction"
+          extra="生成正文或 AI 改写时会保存这些要求，用于本章后续写作和审稿。">
           <TextArea id="novel-instruction" rows={2} value={instruction} maxLength={1200} onChange={(event) => setInstruction(event.target.value)} />
         </Form.Item>}
       </Form>
-      {chapter.review && <aside className="novel-review"><h3>{body === chapter.body ? '审稿意见' : '上一版草稿的审稿意见'}</h3><p>{chapter.review}</p></aside>}
+      {reviewPassed && !chapter.final && <Alert type="success" showIcon title="审稿通过，可以定稿" />}
+      {chapter.review && !reviewPassed && <aside className="novel-review">
+        <div className="novel-review-header">
+          <h3>{dirty ? '上一版草稿的审稿意见' : awaitingRecheck ? '上轮意见待复核' : '审稿意见'}</h3>
+          {!chapter.final && !awaitingRecheck && !summaryMissing && <Popconfirm title="按这份审稿意见修改？"
+            description="会更新本章草稿和连续性摘要，之后只核对原问题及本次修改引入的问题。"
+            okText="开始修改" cancelText="取消" onConfirm={reviseFromReview}>
+            <Button type="primary" size="small" icon={<RobotOutlined />} disabled={writeDisabled}>按审稿意见修改</Button>
+          </Popconfirm>}
+        </div>
+        <p>{chapter.review}</p>
+      </aside>}
+      {summaryMissing && !chapter.final && <Alert type="warning" showIcon title="正文已保存，连续性摘要待补全"
+        description="可以点击下方「AI 补摘要并审稿」，保留已保存的正文。" />}
+      {chapter.reviewFailed && !chapter.final && !summaryMissing && <Alert type="warning" showIcon
+        title={awaitingRecheck ? '修改已保存，复核未完成' : '正文已保存，自动审稿未完成'}
+        description={awaitingRecheck ? '可以点击下方「重试复核」核对上轮意见。' : '可以点击下方「AI 审稿」重新检查这版草稿。'} />}
       <div className="novel-actions">
         {chapter.final ? number < project.chapterCount ? <Button type="primary" onClick={onNext}>进入下一章</Button>
           : onAppend && <Button type="primary" icon={<PlusOutlined />} disabled={busy} onClick={onAppend}>追加章节</Button> : <Space wrap>
           {chapter.body ? <Popconfirm title="用改写结果替换已保存的草稿？" onConfirm={generate}>{writeButton}</Popconfirm> : writeButton}
           <Button disabled={busy || !dirty || !body.trim()} onClick={() => run({ kind: 'save_draft', chapter: number, body, summary })}>保存草稿</Button>
-          <Button disabled={busy || dirty || !chapter.body || !modelCode} onClick={() => run({ kind: 'review', chapter: number, modelCode })}>AI 审稿</Button>
+          <Button disabled={busy || dirty || !chapter.body || !modelCode} onClick={() => run({ kind: 'review', chapter: number, modelCode })}>
+            {summaryMissing ? 'AI 补摘要并审稿' : awaitingRecheck ? '重试复核' : 'AI 审稿'}
+          </Button>
           <Popconfirm title="定稿后本章将锁定，摘要会传给后续章节。确认定稿？"
             onConfirm={() => run({ kind: 'finalize', chapter: number, body, summary })}>
             <Button type="primary" disabled={busy || !body.trim() || !summary.trim()}>确认定稿</Button>

@@ -17,7 +17,8 @@ export function NovelAppendChapters({ project, model, onAppend, onClose, onReloa
   onReload: () => void
 }) {
   const maxCount = Math.min(maxBatchSize, novelChapterLimit - project.chapterCount)
-  const [count, setCount] = useState<number | null>(() => Math.min(3, maxCount))
+  const serial = project.storyMode === 'serial'
+  const [count, setCount] = useState<number | null>(() => Math.min(serial ? 5 : 3, maxCount))
   const [instruction, setInstruction] = useState('')
   const [beats, setBeats] = useState<NovelBeat[]>()
   const save = useMutation({ mutationFn: onAppend })
@@ -44,7 +45,9 @@ export function NovelAppendChapters({ project, model, onAppend, onClose, onReloa
   return <Modal title="追加章节" open width={660} footer={null} onCancel={onClose}
     closable={!busy} keyboard={!busy} mask={{ closable: !busy && !beats }}>
     <Form layout="vertical" disabled={busy || conflict}>
-      <p className="novel-hint">从第 {project.chapterCount + 1} 章接着规划。作品最多可分批追加到 {novelChapterLimit} 章。</p>
+      <p className="novel-hint">{serial
+        ? `AI 会根据全书主线和已定稿剧情，从第 ${project.chapterCount + 1} 章接着规划。直接点击「AI 规划下一批」即可。`
+        : `从第 ${project.chapterCount + 1} 章接着规划。作品最多可分批追加到 ${novelChapterLimit} 章。`}</p>
       <Form.Item label="本批章数" htmlFor="novel-append-count" extra={`本次可追加 1 到 ${maxCount} 章。`}>
         <InputNumber id="novel-append-count" min={1} max={maxCount} precision={0} value={count}
           onChange={setCount} disabled={!!beats || busy || conflict} />
@@ -75,7 +78,7 @@ export function NovelAppendChapters({ project, model, onAppend, onClose, onReloa
     <Space wrap className="novel-append-actions">
       {model && <Button icon={<RobotOutlined />} type={beats ? 'default' : 'primary'} loading={plan.isPending}
         disabled={!validCount || save.isPending || conflict} onClick={generate}>
-        {beats ? '重新生成章节蓝图' : 'AI 拟定章节蓝图'}
+        {beats ? '重新生成章节蓝图' : serial ? 'AI 规划下一批' : 'AI 拟定章节蓝图'}
       </Button>}
       {!beats && <Button type={model ? 'default' : 'primary'} disabled={!validCount || busy || conflict} onClick={() => {
         if (validCount) setBeats(Array.from({ length: count }, () => ({ title: '', goal: '' })))

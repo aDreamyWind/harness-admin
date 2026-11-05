@@ -15,9 +15,15 @@ type NovelRepository struct{ db *pgxpool.Pool }
 func NewNovelRepository(db *pgxpool.Pool) *NovelRepository { return &NovelRepository{db: db} }
 
 func (r *NovelRepository) List(ctx context.Context, owner novel.Owner) ([]novel.Book, error) {
-	rows, err := r.db.Query(ctx, `SELECT p.id, p.title, p.chapter_count, p.updated_at,
+	rows, err := r.db.Query(ctx, `SELECT p.id, p.title, p.chapter_count,
+		COALESCE((SELECT MIN(chapter.number)::integer - 1
+			FROM jsonb_array_elements(work.chapters) WITH ORDINALITY AS chapter(data, number)
+			WHERE chapter.data->'final' IS DISTINCT FROM 'true'::jsonb), jsonb_array_length(work.chapters)), p.updated_at,
+		COALESCE(p.workspace->>'storyMode' = 'serial' AND p.workspace->>'outline' IS NULL, false),
 		COALESCE(c.revision::text, ''), COALESCE(c.source, ''), COALESCE(c.updated_at, p.updated_at)
 		FROM novel_projects p LEFT JOIN novel_project_covers c ON c.project_id=p.id
+		CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(p.workspace->'chapters') = 'array'
+			THEN p.workspace->'chapters' ELSE '[]'::jsonb END AS chapters) work
 		WHERE p.organization_id=$1 AND p.owner_id=$2 ORDER BY p.updated_at DESC, p.id`, owner.OrganizationID, owner.UserID)
 	if err != nil {
 		return nil, err
@@ -27,7 +33,7 @@ func (r *NovelRepository) List(ctx context.Context, owner novel.Owner) ([]novel.
 	for rows.Next() {
 		var item novel.Book
 		var cover novel.Cover
-		if err := rows.Scan(&item.ID, &item.Title, &item.ChapterCount, &item.UpdatedAt,
+		if err := rows.Scan(&item.ID, &item.Title, &item.ChapterCount, &item.FinalizedChapterCount, &item.UpdatedAt, &item.OpeningPending,
 			&cover.Revision, &cover.Source, &cover.UpdatedAt); err != nil {
 			return nil, err
 		}

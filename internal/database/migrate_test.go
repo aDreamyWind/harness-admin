@@ -26,7 +26,7 @@ import (
 	"harness-admin/internal/store/postgres"
 )
 
-const expectedMigrationVersion = 62
+const expectedMigrationVersion = 63
 
 // 需要具备 CREATE DATABASE 权限的专用测试实例；绝不能指向生产数据库。
 func TestMigrateBaselineMatchesLegacy(t *testing.T) {
@@ -80,6 +80,44 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 	if expected := expectedMigrationVersion - baselineVersion + 1; appliedCount != expected {
 		t.Fatalf("全新数据库执行了 %d 个迁移，预期 %d 个", appliedCount, expected)
 	}
+	t.Run("二维风格目录与历史风格兼容", func(t *testing.T) {
+		repo := postgres.NewDramaRepository(freshPool)
+		options, err := repo.ListStyles(ctx)
+		if err != nil || len(options) != 31 {
+			t.Fatalf("读取风格目录: 得到 %d 项，错误 %v", len(options), err)
+		}
+		replacementPreviewSlots := map[string]int{
+			"american-dark-comic":      31,
+			"otomo-animation":          32,
+			"american-comic-animation": 33,
+			"shanghai-animation-style": 34,
+		}
+		for index, style := range options {
+			slot := index
+			if replacement, ok := replacementPreviewSlots[style.ID]; ok {
+				slot = replacement
+			}
+			if style.Category != "2D" || style.PreviewURL != fmt.Sprintf("/drama-styles/sheet-%d.jpg", slot/9+1) ||
+				style.PreviewX != slot%3 || style.PreviewY != slot%9/3 {
+				t.Fatalf("第 %d 个二维风格的预览坐标不匹配: %+v", index+1, style)
+			}
+		}
+		if options[0].Name != "像素风" || options[1].Name != "东方水墨画风" || options[30].Name != "2D动漫" {
+			t.Fatalf("风格目录展示名称或顺序异常: %+v / %+v / %+v", options[0], options[1], options[30])
+		}
+		for _, key := range []string{"ink-wash", "国风水墨", "东方水墨画风"} {
+			style, err := repo.ResolveStyle(ctx, key)
+			if err != nil || style.ID != "ink-wash" || style.Name != "东方水墨画风" || style.ImagePrompt == "" || style.VideoPrompt == "" {
+				t.Fatalf("水墨风格别名 %q 无法解析: %+v，错误 %v", key, style.StyleOption, err)
+			}
+		}
+		for _, key := range []string{"cinematic-realism", "animation-3d"} {
+			style, err := repo.ResolveStyle(ctx, key)
+			if err != nil || style.ImagePrompt == "" || style.VideoPrompt == "" {
+				t.Fatalf("历史风格 %q 无法用于既有作品: %v", key, err)
+			}
+		}
+	})
 
 	legacyConfig, err := pgx.ParseConfig(legacyURL)
 	if err != nil {
@@ -151,7 +189,7 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 		if _, err := service.Get(ctx, other, project.ID); !errors.Is(err, novel.ErrNotFound) {
 			t.Fatalf("他人的作品未隔离: %v", err)
 		}
-		if books, err := service.List(ctx, owner); err != nil || len(books) != 1 || books[0].ID != project.ID || books[0].Title != stored.Title {
+		if books, err := service.List(ctx, owner); err != nil || len(books) != 1 || books[0].ID != project.ID || books[0].Title != stored.Title || books[0].OpeningPending {
 			t.Fatalf("读取作品列表失败: %+v %v", books, err)
 		}
 		beats := make([]novel.Beat, 30)
@@ -197,6 +235,57 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 		if err != nil || final.Version != 4 || final.Cover == nil || final.Cover.Revision != secondCover.Revision {
 			t.Fatalf("保存封面改变了作品版本或详情未返回封面: %+v %v", final, err)
 		}
+		finalized, err := service.Apply(ctx, owner, project.ID, novel.Action{
+			Kind: "finalize", Version: final.Version, Chapter: 1, Body: "守塔人发现异常。", Summary: "出现异常信号。",
+		})
+		if err != nil || finalized.FinalizedChapterCount != 1 {
+			t.Fatalf("定稿响应未返回章节计数: %+v %v", finalized, err)
+		}
+		// 存在间隔的历史数据只能选用从第一章开始连续定稿的范围。
+		finalized.Chapters[2] = novel.Chapter{Body: "旧版第三章。", Summary: "旧记录。", Final: true}
+		if _, err := repo.Save(ctx, owner, finalized); err != nil {
+			t.Fatalf("写入历史章节测试数据失败: %v", err)
+		}
+		if books, err := service.List(ctx, owner); err != nil || len(books) != 1 || books[0].FinalizedChapterCount != 1 {
+			t.Fatalf("作品列表未返回定稿章节计数: %+v %v", books, err)
+		}
+	})
+	t.Run("长篇连载模式和首批章数持久化", func(t *testing.T) {
+		repo := postgres.NewNovelRepository(freshPool)
+		service := novel.NewService(repo, serialOpeningWriter{}, nil, nil)
+		owner := novel.Owner{OrganizationID: bootstrap.OrganizationID, UserID: bootstrap.UserID}
+		project, err := service.Create(ctx, owner, novel.CreateInput{Brief: "守塔人听到呼救", StoryMode: novel.StoryModeSerial})
+		if err != nil || project.ChapterCount != 3 {
+			t.Fatalf("只用灵感创建长篇连载失败: 章节数 %d，错误 %v", project.ChapterCount, err)
+		}
+		assertBook := func(wantPending bool, wantCount int) {
+			t.Helper()
+			books, err := service.List(ctx, owner)
+			if err != nil {
+				t.Fatalf("查询长篇连载列表失败: %v", err)
+			}
+			for _, book := range books {
+				if book.ID == project.ID {
+					if book.OpeningPending != wantPending || book.ChapterCount != wantCount {
+						t.Fatalf("列表中的开篇规划状态或章数错误: %+v", book)
+					}
+					return
+				}
+			}
+			t.Fatal("列表中缺少长篇连载作品")
+		}
+		assertBook(true, 3)
+		if _, err := service.Apply(ctx, owner, project.ID, novel.Action{
+			Kind: "generate_outline", Version: project.Version, ModelCode: "writer",
+		}); err != nil {
+			t.Fatalf("生成并保存开篇规划失败: %v", err)
+		}
+		stored, err := service.Get(ctx, owner, project.ID)
+		if err != nil || stored.StoryMode != novel.StoryModeSerial || stored.ChapterCount != 5 || len(stored.Chapters) != 5 ||
+			stored.Outline == nil || len(stored.Outline.Beats) != 5 || stored.Version != 2 {
+			t.Fatalf("首批规划未完整持久化: %+v %v", stored, err)
+		}
+		assertBook(false, 5)
 	})
 	created, err := postgres.NewPlatformAdminRepository(freshPool).CreateOrganization(ctx, platformadmin.OrganizationCreation{
 		Code: "migration-platform", Name: "平台创建的测试企业",
@@ -206,6 +295,22 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 		t.Fatalf("基线数据库通过平台创建企业失败: %v", err)
 	}
 	migrationTestAdminPermissions(t, ctx, freshPool, created.ID)
+}
+
+type serialOpeningWriter struct{}
+
+func (serialOpeningWriter) Models(context.Context, novel.Owner) ([]novel.Model, error) {
+	return []novel.Model{{Code: "writer", Name: "测试文本模型"}}, nil
+}
+
+func (serialOpeningWriter) Complete(context.Context, novel.Owner, string, string) (string, error) {
+	return `{"title":"孤岛回声","synopsis":"守塔人追查失联岛屿的来历。","world":"每次雾潮只开放一条航路。","characters":"守塔人与失联探险队。","beats":[
+		{"title":"雾笛","goal":"截获求救信号"},
+		{"title":"时刻表","goal":"推算航路开放时间"},
+		{"title":"信号浮标","goal":"定位求救信号来源"},
+		{"title":"空船","goal":"救下唯一幸存者"},
+		{"title":"第二道雾笛","goal":"发现更多失联岛屿"}
+	]}`, nil
 }
 
 func migrationTestAdminPermissions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, organizationID string) {

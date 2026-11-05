@@ -141,11 +141,18 @@ func TestNovelWorkflowUsesOnlyConfirmedContinuity(t *testing.T) {
 	run(Action{Kind: "save_outline", Outline: outline}, ErrState)
 	run(Action{Kind: "write", Chapter: 2, ModelCode: "writer"}, ErrState)
 	writer.result = `{"body":"林静走进雾里。","summary":"模型摘要"}`
+	writer.beforeReturn = func() {
+		if strings.HasPrefix(writer.prompt, reviewPrompt) {
+			writer.result = `{"review":["请具体描写她听到的声响。", "检查时间。"]}`
+		}
+	}
 	run(Action{Kind: "write", Chapter: 1, ModelCode: "writer"}, nil)
-	writer.result = `{"review":["请具体描写她听到的声响。", "检查时间。"]}`
-	run(Action{Kind: "review", Chapter: 1, ModelCode: "writer"}, nil)
-	if p.Chapters[0].Review != "请具体描写她听到的声响。\n\n检查时间。" {
-		t.Fatal("未按顺序保存数组形式的审稿意见")
+	writer.beforeReturn = nil
+	if p.Chapters[0].Review != "请具体描写她听到的声响。\n\n检查时间。" || p.Chapters[0].ReviewFailed {
+		t.Fatal("生成正文后未按顺序保存数组形式的审稿意见")
+	}
+	if !strings.Contains(writer.prompt, `"Draft":"林静走进雾里。"`) || !strings.Contains(writer.prompt, `"DraftSummary":"模型摘要"`) {
+		t.Fatal("自动审稿没有读取新生成的正文和摘要")
 	}
 	writer.result = `{"review":["有效片段", 1]}`
 	run(Action{Kind: "review", Chapter: 1, ModelCode: "writer"}, ErrGeneration)
@@ -166,14 +173,64 @@ func TestNovelWorkflowUsesOnlyConfirmedContinuity(t *testing.T) {
 	run(Action{Kind: "finalize", Chapter: 1, Body: p.Chapters[0].Body, Summary: "林静在灯塔听见两声雾笛，来源未明。"}, nil)
 	run(Action{Kind: "write", Chapter: 1, ModelCode: "writer"}, ErrState)
 	writer.result = `{"body":"她循声下楼。","summary":"林静离开灯塔。"}`
+	var writingPrompt string
+	writer.beforeReturn = func() {
+		if strings.HasPrefix(writer.prompt, reviewPrompt) {
+			writer.result = `{"review":"未发现明确问题。"}`
+		} else {
+			writingPrompt = writer.prompt
+		}
+	}
 	run(Action{Kind: "write", Chapter: 2, ModelCode: "writer"}, nil)
+	writer.beforeReturn = nil
 	for _, expected := range []string{"来源未明", "林静听到了两声雾笛", "验证呼救的来源"} {
-		if !strings.Contains(writer.prompt, expected) {
+		if !strings.Contains(writingPrompt, expected) {
 			t.Errorf("第二章缺少上下文 %q", expected)
 		}
 	}
-	if strings.Contains(writer.prompt, "模型摘要") {
+	if strings.Contains(writingPrompt, "模型摘要") {
 		t.Error("第二章读取了已替换的摘要")
+	}
+}
+
+func TestNovelRewriteKeepsDraftWhenAutomaticReviewFails(t *testing.T) {
+	ctx := context.Background()
+	owner := Owner{OrganizationID: "org", UserID: "author"}
+	repo, writer := &memoryRepository{}, &testWriter{}
+	service := NewService(repo, writer, nil, nil)
+	p, err := service.Create(ctx, owner, CreateInput{Title: "潮汐档案", Brief: "灯塔", ChapterCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.project.Confirmed = true
+	repo.project.Outline = &Outline{Synopsis: "寻找声源", World: "孤岛", Characters: "守塔人", Beats: []Beat{{Title: "雾笛", Goal: "发现异样"}}}
+	repo.project.Chapters[0] = Chapter{Body: "旧正文", Summary: "旧摘要", Review: "旧审稿意见"}
+
+	var writingPrompt string
+	writer.result = `{"body":"改写后的正文","summary":"新摘要"}`
+	writer.beforeReturn = func() {
+		if strings.HasPrefix(writer.prompt, reviewPrompt) {
+			writer.result = `{"review":[23]}`
+		} else {
+			writingPrompt = writer.prompt
+		}
+	}
+	p, err = service.Apply(ctx, owner, p.ID, Action{Kind: "write", Chapter: 1, ModelCode: "writer", Version: p.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(writingPrompt, "旧审稿意见") || !strings.Contains(writer.prompt, "改写后的正文") || strings.Contains(writer.prompt, "旧审稿意见") {
+		t.Fatal("改写应参考旧意见，自动审稿应只审查新正文")
+	}
+	if got := repo.project.Chapters[0]; got != (Chapter{Body: "改写后的正文", Summary: "新摘要", ReviewFailed: true}) {
+		t.Fatalf("自动审稿失败应保存新正文并清掉旧意见: %+v", got)
+	}
+
+	writer.beforeReturn = nil
+	writer.result = `{"review":"请补充声音的来处。"}`
+	p, err = service.Apply(ctx, owner, p.ID, Action{Kind: "review", Chapter: 1, ModelCode: "writer", Version: p.Version})
+	if err != nil || p.Chapters[0].ReviewFailed || p.Chapters[0].Review != "请补充声音的来处。" {
+		t.Fatalf("手动重试应补上新意见并清掉失败状态: %+v, %v", p.Chapters, err)
 	}
 }
 

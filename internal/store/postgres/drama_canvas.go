@@ -197,7 +197,9 @@ func (r *DramaRepository) QueueImage(ctx context.Context, org, user, project, fo
 	if description == "" {
 		return job, drama.ErrInvalidInput
 	}
-	style, err := readVisualStyle(tx.QueryRow(ctx, `SELECT id,name,category,preview_url,preview_x,preview_y,image_prompt,video_prompt FROM drama_visual_styles WHERE enabled AND (id=NULLIF($1::text,'') OR ($1::text='' AND name=$2)) LIMIT 1`, f.StyleID, f.Style))
+	style, err := readVisualStyle(tx.QueryRow(ctx, `SELECT id,COALESCE(catalog_name,name),category,preview_url,preview_x,preview_y,image_prompt,video_prompt
+		FROM drama_visual_styles WHERE enabled AND (id=NULLIF($1::text,'') OR ($1::text='' AND (name=$2 OR catalog_name=$2)))
+		ORDER BY CASE WHEN catalog_name=$2 THEN 0 ELSE 1 END LIMIT 1`, f.StyleID, f.Style))
 	if err != nil {
 		return job, err
 	}

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -24,6 +25,7 @@ type modelGatewayStub struct {
 	listQuery          modelgateway.CallQuery
 	listItems          []modelgateway.Call
 	usageQuery         modelgateway.UsageQuery
+	usagePage          modelgateway.UsagePage
 	alertQuery         modelgateway.AlertQuery
 	acknowledgeInput   modelgateway.AcknowledgeAlertInput
 	alertSettingsInput modelgateway.UpdateAlertSettingsInput
@@ -109,8 +111,9 @@ func (s *modelGatewayStub) ListCalls(_ context.Context, query modelgateway.CallQ
 }
 func (s *modelGatewayStub) ListUsage(_ context.Context, query modelgateway.UsageQuery) (modelgateway.UsagePage, error) {
 	s.usageQuery = query
-	return modelgateway.UsagePage{Month: query.Month, GroupBy: query.GroupBy, Page: query.Page,
-		PageSize: query.PageSize, Items: []modelgateway.UsageGroup{}}, nil
+	page := s.usagePage
+	page.Month, page.GroupBy, page.Page, page.PageSize = query.Month, query.GroupBy, query.Page, query.PageSize
+	return page, nil
 }
 func (s *modelGatewayStub) ListAlerts(_ context.Context, query modelgateway.AlertQuery) (modelgateway.AlertPage, error) {
 	s.alertQuery = query
@@ -200,7 +203,12 @@ func TestGatewayAlertSettingsAreScopedAndCSRFProtected(t *testing.T) {
 }
 
 func TestListGatewayUsageUsesCurrentOrganizationAndPagination(t *testing.T) {
-	gateway := &modelGatewayStub{}
+	gateway := &modelGatewayStub{usagePage: modelgateway.UsagePage{
+		CallCount: 347, VideoSubmitCount: 5, VideoSuccessCount: 4, VideoQueryCount: 342,
+		Items: []modelgateway.UsageGroup{{
+			ID: "user-1", Name: "测试用户", CallCount: 180, VideoSubmitCount: 3, VideoSuccessCount: 2, VideoQueryCount: 177,
+		}},
+	}}
 	router := newGatewayTestRouter(gateway)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/model-gateway/usage?month=2026-10&groupBy=user&page=2&pageSize=10", nil)
 	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
@@ -212,6 +220,25 @@ func TestListGatewayUsageUsesCurrentOrganizationAndPagination(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"groupBy":"user"`) || !strings.Contains(response.Body.String(), `"knownTokens":0`) {
 		t.Fatalf("用量统计 JSON 字段不符合契约: %s", response.Body.String())
+	}
+	type videoUsage struct {
+		CallCount         int64 `json:"callCount"`
+		VideoSubmitCount  int64 `json:"videoSubmitCount"`
+		VideoSuccessCount int64 `json:"videoSuccessCount"`
+		VideoQueryCount   int64 `json:"videoQueryCount"`
+	}
+	var result struct {
+		Data struct {
+			videoUsage
+			Items []videoUsage `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Data.videoUsage != (videoUsage{347, 5, 4, 342}) || len(result.Data.Items) != 1 ||
+		result.Data.Items[0] != (videoUsage{180, 3, 2, 177}) {
+		t.Fatalf("响应应分别返回汇总和分组的视频用量: %s", response.Body.String())
 	}
 }
 func (*modelGatewayStub) ListModelsForAPIKey(context.Context, string) ([]modelgateway.AvailableModel, error) {
@@ -296,7 +323,7 @@ func TestListGatewayAPIKeysIncludesCurrentModelNames(t *testing.T) {
 func TestListGatewayCallsParsesFiltersAndPagination(t *testing.T) {
 	gateway := &modelGatewayStub{listItems: []modelgateway.Call{{
 		Timing: &modelgateway.CallTiming{Stage: "director", ReasoningTokens: func() *int { v := 19; return &v }()}, ID: "30000000-0000-4000-8000-000000000002", ModelCode: "stable-code", ModelName: "当前模型名",
-		ProviderName: "当前供应商名", UpstreamModelID: "upstream-model", ModelType: "image",
+		ProviderName: "当前供应商名", UpstreamModelID: "upstream-model", ModelType: "video", Operation: "video_task_query",
 	}}}
 	router := newGatewayTestRouter(gateway)
 	startedAt := "2026-10-01T00:00:00+08:00"
@@ -310,6 +337,9 @@ func TestListGatewayCallsParsesFiltersAndPagination(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"timing":{"stage":"director"`) || !strings.Contains(response.Body.String(), `"reasoningTokens":19`) {
 		t.Fatal("计时契约缺失", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"operation":"video_task_query"`) {
+		t.Fatalf("调用明细应区分视频状态查询: %s", response.Body.String())
 	}
 	query := gateway.listQuery
 	if query.OrganizationID != "org-1" || query.Page != 2 || query.PageSize != 10 || query.APIKeyID == "" || query.ModelCode != "Main" || query.Result != "failed" || query.StartedAt == nil || query.EndedAt == nil {

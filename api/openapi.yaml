@@ -108,7 +108,8 @@ paths:
                   data: { type: array, items: { $ref: '#/components/schemas/NovelBook' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
-      summary: 创建空白小说作品
+      summary: 创建小说作品
+      description: 长篇连载只需提供灵感。创建后可生成全书主线和首批开篇大纲，由 AI 决定首批章数。
       operationId: createNovelProject
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -117,21 +118,31 @@ paths:
           application/json:
             schema:
               type: object
-              required: [brief, chapterCount]
+              required: [brief]
               properties:
                 title: { type: string, maxLength: 120 }
                 brief: { type: string, minLength: 1, maxLength: 4000 }
-                chapterCount: { type: integer, minimum: 1, maximum: 30 }
+                chapterCount: { type: integer, minimum: 0, maximum: 30, description: 普通作品必填。长篇连载可省略，首次生成大纲后使用 AI 决定的首批章数。 }
                 suggestTitle: { type: boolean, default: false, description: 开启时可省略书名，作品将以「未命名小说」创建。 }
+                storyMode: { type: string, enum: ['', serial], description: serial 为长篇连载，省略时按普通小说创建。 }
               if:
                 not:
-                  required: [suggestTitle]
+                  required: [storyMode]
                   properties:
-                    suggestTitle: { const: true }
+                    storyMode: { const: serial }
               then:
-                required: [title]
+                required: [chapterCount]
                 properties:
-                  title: { minLength: 1 }
+                  chapterCount: { minimum: 1 }
+                if:
+                  not:
+                    required: [suggestTitle]
+                    properties:
+                      suggestTitle: { const: true }
+                then:
+                  required: [title]
+                  properties:
+                    title: { minLength: 1 }
       responses:
         '201': { $ref: '#/components/responses/NovelProjectResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -292,12 +303,38 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NovelCoverPreviewNotFound' }
         '409': { $ref: '#/components/responses/NovelCoverConflict' }
+  /ai-novel/projects/{id}/finalized-chapters:
+    get:
+      summary: 查询本人小说已定稿章节的章号和标题
+      operationId: listNovelFinalizedChapters
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 从第 1 章开始连续定稿的章节元数据；没有已定稿章节时返回空数组。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [number, title]
+                      properties:
+                        number: { type: integer, minimum: 1, maximum: 500 }
+                        title: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-novel/projects/{id}/chapter-plan:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
       summary: 为已确认大纲的小说生成待追加的章节蓝图
-      description: 仅返回新增章节蓝图，现有章节和作品版本保持原样。确认后通过追加章节操作保存。
+      description: 仅返回新增章节蓝图，现有章节和作品版本保持原样。确认后通过追加章节操作保存。长篇连载会参考全书主线、现有规划及定稿摘要拟定下一阶段，作者可选填续写方向。
       operationId: planNovelChapters
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -348,8 +385,8 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
-      summary: 管理大纲、追加章节、写稿、审稿和定稿
-      description: 模型操作在本次请求中完成。成功后返回完整作品及新版本。大纲确认后可分批追加新章，每次最多 30 章，作品最多 500 章。定稿会保存作者确认的正文与连续性摘要，并开放下一章。生成大纲时填写修改意见，模型会依据原始灵感、当前大纲和修改意见定向修订。省略修改意见时，模型从作品资料重新生成。
+      summary: 修改书名、管理大纲、追加章节、写稿、审稿和定稿
+      description: 模型操作在本次请求中完成。成功后返回完整作品及新版本。长篇连载首次生成大纲时，模型规划全书主线及 3 到 8 章的开篇，作品计划章数随之更新。大纲确认后可分批追加新章，每次最多 30 章，作品最多 500 章。定稿会保存作者确认的正文与连续性摘要，并开放下一章。生成大纲时填写修改意见，模型会依据原始灵感、当前大纲和修改意见定向修订。省略修改意见时，模型从作品资料重新生成。
       operationId: applyNovelAction
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -627,6 +664,36 @@ paths:
                   data: { $ref: '#/components/schemas/DramaProject' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /ai-drama/projects/from-novel:
+    post:
+      summary: 从本人 AI 小说的连续已定稿章节创建漫剧项目
+      operationId: createDramaProjectFromNovel
+      description: 服务端读取所选定稿章节并保存为独立的漫剧原文快照，随后启动与原文上传相同的后台概览解析。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaCreateFromNovelInput' }
+      responses:
+        '201':
+          description: 已保存漫剧项目和选定章节的完整正文。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaProject' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 所选章节尚未全部定稿，或漫剧文本模型尚未配置。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   /ai-drama/projects/{id}:
     get:
       summary: 查询漫剧项目及概览解析结果
@@ -2812,7 +2879,7 @@ paths:
   /model-gateway/calls:
     get:
       summary: 查询当前企业的模型网关调用记录
-      description: 不保存提示词与模型回答，支持按调用密钥、模型编码、结果和时间范围查询。
+      description: 返回调用元数据与操作类型。支持按调用密钥、模型编码、结果和时间范围查询。
       operationId: listModelGatewayCalls
       security:
         - sessionCookie: []
@@ -2849,7 +2916,7 @@ paths:
   /model-gateway/usage:
     get:
       summary: 查询模型网关月度用量
-      description: 按 UTC 自然月汇总；部门和用户维度只包含 OIDC 用户调用，模型维度包含用户和调用密钥。缺少上游 usage 的调用计为用量未知，不当作零 Token。需要 `model.gateway.read` 权限。
+      description: 按 UTC 自然月汇总；部门和用户维度只包含 OIDC 用户调用，模型维度包含用户和调用密钥。单独返回视频生成提交次数、确认成功的视频任务数和状态查询次数。缺少上游 usage 的调用计为用量未知。需要 `model.gateway.read` 权限。
       operationId: listModelGatewayUsage
       security:
         - sessionCookie: []
@@ -4071,11 +4138,13 @@ components:
         updatedAt: { type: string, format: date-time }
     NovelBook:
       type: object
-      required: [id, title, chapterCount, updatedAt]
+      required: [id, title, chapterCount, finalizedChapterCount, updatedAt]
       properties:
         id: { type: string, format: uuid }
         title: { type: string }
         chapterCount: { type: integer, minimum: 1, maximum: 500 }
+        finalizedChapterCount: { type: integer, minimum: 0, maximum: 500, description: 从第 1 章开始连续定稿的章节数。 }
+        openingPending: { type: boolean, description: 长篇连载尚未生成开篇规划，此时计划章数为临时值。 }
         updatedAt: { type: string, format: date-time }
         cover: { $ref: '#/components/schemas/NovelCover' }
     NovelBeat:
@@ -4088,7 +4157,7 @@ components:
       type: object
       required: [synopsis, world, characters, beats]
       properties:
-        synopsis: { type: string, minLength: 1, maxLength: 4000 }
+        synopsis: { type: string, minLength: 1, maxLength: 4000, description: 普通作品的故事梗概，或长篇连载的全书主线。 }
         world: { type: string, minLength: 1, maxLength: 4000 }
         characters: { type: string, minLength: 1, maxLength: 4000 }
         beats:
@@ -4104,6 +4173,8 @@ components:
           required: [brief, version, modelCode, outline, confirmed, chapters]
           properties:
             brief: { type: string }
+            storyMode: { type: string, const: serial, description: 长篇连载。普通作品省略该字段。 }
+            authorGuidance: { type: string, maxLength: 2000, description: 持续适用于这部作品的写作约定。 }
             version: { type: integer, minimum: 1 }
             modelCode: { type: string, description: 上次成功使用的文本模型编码。 }
             needsTitle: { type: boolean, description: 尚未获得有效的 AI 书名。生成大纲时会再次尝试命名。 }
@@ -4119,8 +4190,11 @@ components:
                 required: [body, summary, review, final]
                 properties:
                   body: { type: string }
-                  summary: { type: string }
+                  summary: { type: string, description: 连续性摘要。正文可先保存为空摘要，定稿前须补齐。 }
                   review: { type: string, description: 统一保存为文本的审稿意见，数组形式的模型输出按条目合并。 }
+                  reviewPassed: { type: boolean, description: 本轮审稿没有发现需要修改的实质问题时为 true。 }
+                  reviewFailed: { type: boolean, description: 正文已保存但补摘要或自动审稿未完成时为 true，可通过审稿操作重试。 }
+                  authorInstruction: { type: string, maxLength: 1200, description: 作者为本章保存的写作要求。 }
                   final: { type: boolean }
     NovelAction:
       type: object
@@ -4128,8 +4202,11 @@ components:
       properties:
         kind:
           type: string
-          enum: [generate_outline, save_outline, confirm_outline, append_chapters, write, save_draft, review, finalize]
+          enum: [rename, suggest_title, generate_outline, save_outline, confirm_outline, save_author_guidance, append_chapters, write, revise_review, save_draft, review, finalize]
+          description: rename 保存手填书名；suggest_title 用所选模型根据灵感及已有大纲拟定并保存新书名。两种改名操作也适用于已确认大纲的作品。
         version: { type: integer, minimum: 1, description: 客户端读取到的作品版本。 }
+        title: { type: string, minLength: 1, maxLength: 120, description: 手动改名时提交并保存的新书名。 }
+        authorGuidance: { type: string, maxLength: 2000, description: 保存全书写作约定时提交。空字符串清除约定。 }
         chapter: { type: integer, minimum: 1, maximum: 500 }
         modelCode: { type: string, minLength: 1, maxLength: 160 }
         outline:
@@ -4147,9 +4224,14 @@ components:
       allOf:
         - if:
             properties:
-              kind: { enum: [generate_outline, write, review] }
+              kind: { enum: [suggest_title, generate_outline, write, revise_review, review] }
           then:
             required: [modelCode]
+        - if:
+            properties:
+              kind: { const: rename }
+          then:
+            required: [title]
         - if:
             properties:
               kind: { enum: [save_outline, confirm_outline] }
@@ -4157,12 +4239,17 @@ components:
             required: [outline]
         - if:
             properties:
+              kind: { const: save_author_guidance }
+          then:
+            required: [authorGuidance]
+        - if:
+            properties:
               kind: { const: append_chapters }
           then:
             required: [beats]
         - if:
             properties:
-              kind: { enum: [write, save_draft, review, finalize] }
+              kind: { enum: [write, revise_review, save_draft, review, finalize] }
           then:
             required: [chapter]
         - if:
@@ -4320,6 +4407,18 @@ components:
         sourceMode: { type: string, enum: [upload, generate] }
         style: { type: string, maxLength: 80 }
         aspectRatio: { type: string, enum: ['9:16', '16:9'] }
+    DramaCreateFromNovelInput:
+      type: object
+      required: [novelId, startChapter, endChapter, aspectRatio]
+      anyOf: [{ required: [styleId] }, { required: [style] }]
+      properties:
+        novelId: { type: string, format: uuid }
+        startChapter: { type: integer, minimum: 1, maximum: 500, description: 选中范围的第一章。 }
+        endChapter: { type: integer, minimum: 1, maximum: 500, description: 选中范围的最后一章，含本章。 }
+        title: { type: string, maxLength: 120, description: 漫剧项目名称。省略或留空时使用小说书名。 }
+        styleId: { type: string, maxLength: 80, description: 服务端风格目录主键。 }
+        style: { type: string, maxLength: 80 }
+        aspectRatio: { type: string, enum: ['9:16', '16:9'] }
     DramaOverview:
       type: object
       properties:
@@ -4343,6 +4442,7 @@ components:
       properties:
         name: { type: string }
         description: { type: string }
+        previewImageUrl: { type: string, format: uri-reference, description: 项目列表中资产当前成功图片的鉴权地址。优先采用默认形象，没有图片时省略。 }
         sourceBatch:
           description: 首次提取该资产的批次，无法追溯时为空。
           anyOf: [{ $ref: '#/components/schemas/DramaBatchReference' }, { type: 'null' }]
@@ -5755,6 +5855,7 @@ components:
         modelCode: { type: string }
         modelName: { type: string, description: 当前模型目录名称；修改名称后，历史调用记录会显示新名称。 }
         modelType: { type: string, enum: [chat, image, video] }
+        operation: { type: string, description: 实际调用操作。video 为视频生成提交，video_task_query 为查询视频任务状态；历史日志缺失时省略。 }
         upstreamModelId: { type: string }
         providerName: { type: string, description: 当前供应商连接名称；修改名称后，历史调用记录会显示新名称。 }
         streaming: { type: boolean }
@@ -5781,21 +5882,27 @@ components:
         pageSize: { type: integer, minimum: 1, maximum: 100 }
     GatewayUsageGroup:
       type: object
-      required: [id, name, callCount, knownTokens, unknownUsageCalls, overQuotaCalls]
+      required: [id, name, callCount, videoSubmitCount, videoSuccessCount, videoQueryCount, knownTokens, unknownUsageCalls, overQuotaCalls]
       properties:
         id: { type: string, description: 部门或用户 UUID、模型编码；历史缺失部门时为空字符串。 }
         name: { type: string, description: 当前显示名称；按模型统计时为当前模型名称，目录项已删除时回退到模型编码。 }
-        callCount: { type: integer, format: int64 }
+        callCount: { type: integer, format: int64, description: 请求总次数，包含视频生成提交和状态查询。 }
+        videoSubmitCount: { type: integer, format: int64, minimum: 0, description: 视频生成请求的提交次数。 }
+        videoSuccessCount: { type: integer, format: int64, minimum: 0, description: 在所选 UTC 月份确认完成的视频任务数，同一任务只计一次。 }
+        videoQueryCount: { type: integer, format: int64, minimum: 0, description: 查询视频任务状态的请求次数。 }
         knownTokens: { type: integer, format: int64 }
         unknownUsageCalls: { type: integer, format: int64 }
         overQuotaCalls: { type: integer, format: int64 }
     GatewayUsagePage:
       type: object
-      required: [month, groupBy, callCount, knownTokens, unknownUsageCalls, overQuotaCalls, items, total, page, pageSize]
+      required: [month, groupBy, callCount, videoSubmitCount, videoSuccessCount, videoQueryCount, knownTokens, unknownUsageCalls, overQuotaCalls, items, total, page, pageSize]
       properties:
         month: { type: string, description: UTC 月份，YYYY-MM。 }
         groupBy: { type: string, enum: [department, user, model] }
-        callCount: { type: integer, format: int64 }
+        callCount: { type: integer, format: int64, description: 当前统计维度的请求总次数，包含视频生成提交和状态查询。 }
+        videoSubmitCount: { type: integer, format: int64, minimum: 0, description: 当前统计维度的视频生成提交总次数。 }
+        videoSuccessCount: { type: integer, format: int64, minimum: 0, description: 当前统计维度在所选 UTC 月份确认完成的视频任务总数。 }
+        videoQueryCount: { type: integer, format: int64, minimum: 0, description: 当前统计维度的视频状态查询总次数。 }
         knownTokens: { type: integer, format: int64 }
         unknownUsageCalls: { type: integer, format: int64 }
         overQuotaCalls: { type: integer, format: int64 }

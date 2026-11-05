@@ -42,7 +42,19 @@ func parseReview(raw json.RawMessage) (string, error) {
 		}
 		raw = wrapped.Review
 	}
-	return normalizeTextParts(raw, 4000)
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) == nil && items != nil && len(items) == 0 {
+		return "", nil
+	}
+	review, err := normalizeTextParts(raw, 4000)
+	if err != nil {
+		return "", err
+	}
+	switch strings.TrimSuffix(review, "。") {
+	case "未发现明确问题", "未发现明显矛盾", "未发现需要修改的实质问题", "审稿通过，可以定稿":
+		return "", nil
+	}
+	return reviewText(reviewIssuesToVerify(review)), nil
 }
 
 func normalizeTextParts(raw json.RawMessage, limit int) (string, error) {

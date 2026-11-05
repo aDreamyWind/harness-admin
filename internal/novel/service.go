@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,10 +14,13 @@ import (
 )
 
 const (
-	MaxInitialChapters = 30
-	MaxChapters        = 500
-	MaxAppendChapters  = 30
-	untitledNovel      = "未命名小说"
+	MaxInitialChapters       = 30
+	MaxChapters              = 500
+	MaxAppendChapters        = 30
+	StoryModeSerial          = "serial"
+	minSerialOpeningChapters = 3
+	maxSerialOpeningChapters = 8
+	untitledNovel            = "未命名小说"
 )
 
 var (
@@ -27,6 +31,18 @@ var (
 	ErrModel      = errors.New("请选择当前账号可用的文本模型")
 	ErrGeneration = errors.New("模型生成失败，请重试或更换文本模型")
 )
+
+type SerialOpeningCountError struct {
+	InitialCount int
+	ActualCount  int
+	TargetCount  int
+}
+
+func (e *SerialOpeningCountError) Error() string {
+	return fmt.Sprintf("模型首次生成 %d 章，调整后返回 %d 章，预期 %d 章。请重试或更换文本模型", e.InitialCount, e.ActualCount, e.TargetCount)
+}
+
+func (e *SerialOpeningCountError) Unwrap() error { return ErrGeneration }
 
 type Owner struct {
 	OrganizationID string
@@ -39,11 +55,13 @@ type Model struct {
 }
 
 type Book struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	ChapterCount int       `json:"chapterCount"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-	Cover        *Cover    `json:"cover,omitempty"`
+	ID                    string    `json:"id"`
+	Title                 string    `json:"title"`
+	ChapterCount          int       `json:"chapterCount"`
+	FinalizedChapterCount int       `json:"finalizedChapterCount"`
+	OpeningPending        bool      `json:"openingPending,omitempty"`
+	UpdatedAt             time.Time `json:"updatedAt"`
+	Cover                 *Cover    `json:"cover,omitempty"`
 }
 
 type Project struct {
@@ -54,11 +72,13 @@ type Project struct {
 }
 
 type Workspace struct {
-	ModelCode  string    `json:"modelCode"`
-	Outline    *Outline  `json:"outline"`
-	Confirmed  bool      `json:"confirmed"`
-	Chapters   []Chapter `json:"chapters"`
-	NeedsTitle bool      `json:"needsTitle,omitempty"`
+	AuthorGuidance string    `json:"authorGuidance,omitempty"`
+	StoryMode      string    `json:"storyMode,omitempty"`
+	ModelCode      string    `json:"modelCode"`
+	Outline        *Outline  `json:"outline"`
+	Confirmed      bool      `json:"confirmed"`
+	Chapters       []Chapter `json:"chapters"`
+	NeedsTitle     bool      `json:"needsTitle,omitempty"`
 }
 
 type Outline struct {
@@ -74,10 +94,13 @@ type Beat struct {
 }
 
 type Chapter struct {
-	Body    string `json:"body"`
-	Summary string `json:"summary"`
-	Review  string `json:"review"`
-	Final   bool   `json:"final"`
+	AuthorInstruction string `json:"authorInstruction,omitempty"`
+	Body              string `json:"body"`
+	Summary           string `json:"summary"`
+	Review            string `json:"review"`
+	ReviewFailed      bool   `json:"reviewFailed,omitempty"`
+	ReviewPassed      bool   `json:"reviewPassed,omitempty"`
+	Final             bool   `json:"final"`
 }
 
 type CreateInput struct {
@@ -85,6 +108,7 @@ type CreateInput struct {
 	Brief        string `json:"brief"`
 	ChapterCount int    `json:"chapterCount"`
 	SuggestTitle bool   `json:"suggestTitle"`
+	StoryMode    string `json:"storyMode,omitempty"`
 }
 
 type RefineIdeaInput struct {
@@ -98,15 +122,17 @@ type RefineIdeaResult struct {
 }
 
 type Action struct {
-	Kind        string   `json:"kind"`
-	Version     int      `json:"version"`
-	Chapter     int      `json:"chapter"`
-	ModelCode   string   `json:"modelCode"`
-	Outline     *Outline `json:"outline"`
-	Beats       []Beat   `json:"beats"`
-	Body        string   `json:"body"`
-	Summary     string   `json:"summary"`
-	Instruction string   `json:"instruction"`
+	AuthorGuidance *string  `json:"authorGuidance,omitempty"`
+	Kind           string   `json:"kind"`
+	Version        int      `json:"version"`
+	Title          string   `json:"title"`
+	Chapter        int      `json:"chapter"`
+	ModelCode      string   `json:"modelCode"`
+	Outline        *Outline `json:"outline"`
+	Beats          []Beat   `json:"beats"`
+	Body           string   `json:"body"`
+	Summary        string   `json:"summary"`
+	Instruction    string   `json:"instruction"`
 }
 
 type Repository interface {
@@ -164,13 +190,27 @@ func (s *Service) Get(ctx context.Context, owner Owner, id string) (Project, err
 	if _, err := uuid.Parse(id); err != nil {
 		return Project{}, ErrNotFound
 	}
-	return s.repo.Get(ctx, owner, id)
+	p, err := s.repo.Get(ctx, owner, id)
+	if err != nil {
+		return Project{}, err
+	}
+	p.FinalizedChapterCount = p.finalizedCount()
+	p.OpeningPending = p.StoryMode == StoryModeSerial && p.Outline == nil
+	return p, nil
 }
 
 func (s *Service) Create(ctx context.Context, owner Owner, input CreateInput) (Project, error) {
 	input.Title = strings.TrimSpace(input.Title)
 	input.Brief = strings.TrimSpace(input.Brief)
-	needsTitle := input.SuggestTitle && input.Title == ""
+	if input.StoryMode != "" && input.StoryMode != StoryModeSerial {
+		return Project{}, ErrInvalid
+	}
+	serial := input.StoryMode == StoryModeSerial
+	if serial && input.ChapterCount == 0 {
+		// 项目在大纲生成前需要满足章节数的存储约束，AI 生成后再替换这个占位值。
+		input.ChapterCount = minSerialOpeningChapters
+	}
+	needsTitle := (input.SuggestTitle || serial) && input.Title == ""
 	if needsTitle {
 		input.Title = untitledNovel
 	}
@@ -178,8 +218,9 @@ func (s *Service) Create(ctx context.Context, owner Owner, input CreateInput) (P
 		return Project{}, ErrInvalid
 	}
 	return s.repo.Create(ctx, owner, Project{
-		Book:  Book{ID: uuid.NewString(), Title: input.Title, ChapterCount: input.ChapterCount},
-		Brief: input.Brief, Version: 1, Workspace: Workspace{Chapters: make([]Chapter, input.ChapterCount), NeedsTitle: needsTitle},
+		Book:  Book{ID: uuid.NewString(), Title: input.Title, ChapterCount: input.ChapterCount, OpeningPending: serial},
+		Brief: input.Brief, Version: 1,
+		Workspace: Workspace{StoryMode: input.StoryMode, Chapters: make([]Chapter, input.ChapterCount), NeedsTitle: needsTitle},
 	})
 }
 
@@ -195,11 +236,27 @@ func (s *Service) Apply(ctx context.Context, owner Owner, id string, action Acti
 		return Project{}, ErrConflict
 	}
 	switch action.Kind {
+	case "rename", "suggest_title":
+		var changed bool
+		changed, err = s.applyTitle(ctx, owner, &p, action)
+		if err == nil && !changed {
+			// 拟题期间作品仍可能在其他页面更新。同名结果也不能返回过期版本。
+			current, getErr := s.Get(ctx, owner, id)
+			if getErr != nil {
+				return Project{}, getErr
+			}
+			if current.Version != action.Version {
+				return Project{}, ErrConflict
+			}
+			return current, nil
+		}
 	case "generate_outline", "save_outline", "confirm_outline":
 		err = s.applyOutline(ctx, owner, &p, action)
+	case "save_author_guidance":
+		err = applyAuthorGuidance(&p, action.AuthorGuidance)
 	case "append_chapters":
 		err = appendChapters(&p, action.Beats)
-	case "write", "save_draft", "review", "finalize":
+	case "write", "revise_review", "save_draft", "review", "finalize":
 		err = s.applyChapter(ctx, owner, &p, action)
 	default:
 		err = ErrInvalid
@@ -207,6 +264,8 @@ func (s *Service) Apply(ctx context.Context, owner Owner, id string, action Acti
 	if err != nil {
 		return Project{}, err
 	}
+	p.FinalizedChapterCount = p.finalizedCount()
+	p.OpeningPending = p.StoryMode == StoryModeSerial && p.Outline == nil
 	return s.repo.Save(ctx, owner, p)
 }
 
@@ -235,8 +294,30 @@ func (s *Service) applyOutline(ctx context.Context, owner Owner, p *Project, act
 			return fmt.Errorf("%w，主要人物格式无效: %w", ErrGeneration, err)
 		}
 		outline := Outline{Synopsis: result.Synopsis, World: result.World, Characters: characters, Beats: result.Beats}
-		if !normalizeOutline(&outline, p.ChapterCount) {
+		count := p.ChapterCount
+		if p.StoryMode == StoryModeSerial && p.Outline == nil {
+			count = len(outline.Beats)
+			if count < minSerialOpeningChapters || count > maxSerialOpeningChapters {
+				target := min(max(count, minSerialOpeningChapters), maxSerialOpeningChapters)
+				var repaired struct {
+					Beats []Beat `json:"beats"`
+				}
+				if err := s.generate(ctx, owner, p, action.ModelCode, serialOpeningRepairPrompt(p.Brief, outline, target), &repaired); err != nil {
+					return fmt.Errorf("模型首次给出了 %d 章，调整为 %d 章失败: %w", count, target, err)
+				}
+				if actual := len(repaired.Beats); actual != target {
+					return &SerialOpeningCountError{InitialCount: count, ActualCount: actual, TargetCount: target}
+				}
+				outline.Beats = repaired.Beats
+				count = target
+			}
+		}
+		if !normalizeOutline(&outline, count) {
 			return ErrGeneration
+		}
+		if count != p.ChapterCount {
+			p.ChapterCount = count
+			p.Chapters = make([]Chapter, count)
 		}
 		if p.NeedsTitle {
 			var title string
@@ -269,44 +350,117 @@ func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, act
 	}
 	chapter := &p.Chapters[index]
 	switch action.Kind {
-	case "write":
-		action.Instruction = strings.TrimSpace(action.Instruction)
-		if !validOptional(action.Instruction, 1200) {
+	case "write", "revise_review":
+		instruction := strings.TrimSpace(action.Instruction)
+		if !validOptional(instruction, 1200) {
 			return ErrInvalid
 		}
-		prompt := writePrompt + chapterContext(*p, index, action.Instruction, chapter.Review)
-		var result Chapter
-		if err := s.generate(ctx, owner, p, action.ModelCode, prompt, &result); err != nil {
+		review := chapter.Review
+		var previous *Chapter
+		if action.Kind == "revise_review" {
+			if chapter.Body == "" || chapter.Review == "" || chapter.ReviewFailed || chapter.ReviewPassed {
+				return fmt.Errorf("%w，请先获取本章有效的审稿意见", ErrState)
+			}
+			saved := *chapter
+			previous = &saved
+			instruction = saved.AuthorInstruction
+			review = reviewText(reviewIssuesToVerify(saved.Review))
+			if review == "" {
+				chapter.Review, chapter.ReviewPassed = "", true
+				return nil
+			}
+		}
+		prompt := authorContinuityGuidance + writePrompt + chapterContext(*p, index, instruction, review)
+		if previous != nil {
+			prompt = reviseFromReviewPrompt + prompt
+		}
+		if p.StoryMode == StoryModeSerial {
+			prompt = serialWriteGuidance + prompt
+		}
+		result, err := s.generateChapterDraft(ctx, owner, p, action.ModelCode, prompt)
+		if err != nil {
 			return err
 		}
-		if !validDraft(&result, true) {
-			return ErrGeneration
+		if result.Summary == "" {
+			result.Summary, err = s.generateDraftSummary(ctx, owner, p, action.ModelCode, result.Body)
 		}
-		*chapter = Chapter{Body: result.Body, Summary: result.Summary}
+		*chapter = Chapter{Body: result.Body, Summary: result.Summary, AuthorInstruction: instruction}
+		s.reviewAfterDraftChange(ctx, owner, p, index, action.ModelCode, previous, err)
 	case "save_draft", "finalize":
-		result := Chapter{Body: action.Body, Summary: action.Summary, Final: action.Kind == "finalize"}
+		result := Chapter{Body: action.Body, Summary: action.Summary, Final: action.Kind == "finalize", AuthorInstruction: chapter.AuthorInstruction}
 		if !validDraft(&result, result.Final) {
 			return fmt.Errorf("%w，请填写正文，定稿时需同时填写连续性摘要", ErrInvalid)
 		}
 		if result.Body == chapter.Body && result.Summary == chapter.Summary {
 			result.Review = chapter.Review
+			result.ReviewFailed = chapter.ReviewFailed && !result.Final
+			result.ReviewPassed = chapter.ReviewPassed
 		}
 		*chapter = result
 	case "review":
 		if chapter.Body == "" {
 			return fmt.Errorf("%w，请先保存本章草稿", ErrState)
 		}
-		prompt := reviewPrompt + chapterContext(*p, index, "", "")
+		var previous *Chapter
+		if chapter.ReviewFailed && chapter.Review != "" {
+			pending := *chapter
+			previous = &pending
+		}
+		if chapter.Summary == "" {
+			summary, err := s.generateDraftSummary(ctx, owner, p, action.ModelCode, chapter.Body)
+			if err != nil {
+				return fmt.Errorf("%w: %w", &DraftOutputError{Message: "模型未能补全连续性摘要，已保存的正文仍在。"}, err)
+			}
+			chapter.Summary = summary
+			// 重试时原始改稿前的正文已不可用，补齐摘要后只复核已有意见。
+			if previous != nil {
+				previous.Summary = summary
+			}
+			s.reviewAfterDraftChange(ctx, owner, p, index, action.ModelCode, previous, nil)
+			return nil
+		}
+		return s.reviewChapter(ctx, owner, p, index, action.ModelCode, previous)
+	}
+	return nil
+}
+
+func (s *Service) reviewAfterDraftChange(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter, summaryErr error) {
+	err := summaryErr
+	if err == nil {
+		err = s.reviewChapter(ctx, owner, p, index, modelCode, previous)
+	}
+	if err != nil {
+		chapter := &p.Chapters[index]
+		chapter.ReviewPassed, chapter.ReviewFailed = false, true
+		if previous != nil {
+			chapter.Review = previous.Review
+		} else {
+			chapter.Review = ""
+		}
+		slog.WarnContext(ctx, "AI 小说审稿流程未完成", "project_id", p.ID, "chapter", index+1, "error", err)
+	}
+}
+
+func (s *Service) reviewChapter(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter) error {
+	chapter := &p.Chapters[index]
+	var review string
+	var err error
+	if previous != nil {
+		review, err = s.verifyChapterReview(ctx, owner, p, index, modelCode, *previous)
+	} else {
+		prompt := reviewPrompt + chapterContext(*p, index, chapter.AuthorInstruction, "")
 		var result json.RawMessage
-		if err := s.generate(ctx, owner, p, action.ModelCode, prompt, &result); err != nil {
+		if err := s.generate(ctx, owner, p, modelCode, prompt, &result); err != nil {
 			return err
 		}
-		review, err := parseReview(result)
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrGeneration, err)
-		}
-		chapter.Review = review
+		review, err = parseReview(result)
 	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrGeneration, err)
+	}
+	chapter.Review = review
+	chapter.ReviewFailed = false
+	chapter.ReviewPassed = review == ""
 	return nil
 }
 
@@ -365,7 +519,7 @@ func normalizeBeats(beats []Beat) bool {
 func validDraft(chapter *Chapter, requireSummary bool) bool {
 	chapter.Body = strings.TrimSpace(chapter.Body)
 	chapter.Summary = strings.TrimSpace(chapter.Summary)
-	return valid(chapter.Body, 8000) && validOptional(chapter.Summary, 500) && (!requireSummary || chapter.Summary != "")
+	return valid(chapter.Body, maxDraftBodyRunes) && validOptional(chapter.Summary, maxDraftSummaryRunes) && (!requireSummary || chapter.Summary != "")
 }
 
 func valid(value string, limit int) bool {

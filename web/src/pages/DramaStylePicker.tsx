@@ -1,24 +1,49 @@
-import { CheckOutlined, DownOutlined } from '@ant-design/icons'
+import { DownOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Empty, Modal, Skeleton } from 'antd'
 import { useState } from 'react'
 import { listDramaStyles, type DramaStyleOption } from '../api/drama'
 import './drama-style-picker.css'
 
-export function DramaStylePicker({ value, onChange, disabled = false }: { value?: string; onChange: (style: DramaStyleOption) => void; disabled?: boolean }) {
+function stylePreview(style: DramaStyleOption) {
+  return {
+    backgroundImage: `url(${JSON.stringify(style.previewUrl)})`,
+    backgroundPosition: `${style.previewX * 50}% ${style.previewY * 50}%`,
+  }
+}
+
+export function DramaStylePicker({ value, valueLabel, onChange, disabled = false }: {
+  value?: string
+  valueLabel?: string
+  onChange: (style: DramaStyleOption) => void
+  disabled?: boolean
+}) {
   const [open, setOpen] = useState(false)
-  const [category, setCategory] = useState('全部')
   const query = useQuery({ queryKey: ['drama-styles'], queryFn: listDramaStyles, staleTime: 60000 })
-  const selected = query.data?.find((style) => style.id === value || style.name === value)
-  const categories = ['全部', ...new Set(query.data?.map((style) => style.category) || [])]
-  const visible = query.data?.filter((style) => category === '全部' || style.category === category) || []
-  const preview = (style: DramaStyleOption) => ({ backgroundImage: `url(${JSON.stringify(style.previewUrl)})`, backgroundPosition: `${style.previewX * 50}% ${style.previewY * 50}%` })
-  return <><button type="button" className="drama-style-picker" aria-label={`选择风格：${selected?.name || '请选择'}`} disabled={disabled} onClick={() => setOpen(true)}>
-    {selected && <span className="drama-style-picker-preview" style={preview(selected)} />}<span>{selected?.name || (query.isLoading ? '加载风格…' : '选择风格')}</span><DownOutlined />
-  </button><Modal className="drama-visual-style-modal" title="风格库" open={open} onCancel={() => setOpen(false)} footer={null} width={780} destroyOnHidden>
-    {query.isLoading ? <Skeleton active /> : query.error ? <Alert type="error" showIcon title="读取风格库失败" description={query.error.message} action={<Button onClick={() => void query.refetch()}>重试</Button>} /> : <>
-      <div className="drama-visual-style-tabs" role="tablist" aria-label="风格分类">{categories.map((item) => <button type="button" role="tab" aria-selected={item === category} key={item} className={item === category ? 'active' : ''} onClick={() => setCategory(item)}>{item}</button>)}</div>
-      {visible.length ? <div className="drama-visual-style-grid">{visible.map((style) => <button type="button" key={style.id} aria-pressed={selected?.id === style.id} className={`drama-visual-style-card${selected?.id === style.id ? ' selected' : ''}`} style={preview(style)} onClick={() => { onChange(style); setOpen(false) }}><span>{style.name}</span>{selected?.id === style.id && <CheckOutlined />}</button>)}</div> : <Empty description="暂无可选风格" />}
-    </>}
-  </Modal></>
+  const styles = query.data?.filter((style) => style.category === '2D') ?? []
+  const selected = styles.find((style) => style.id === value || style.name === value)
+  const label = selected?.name || valueLabel || (query.isLoading ? '加载风格…' : value || '选择风格')
+
+  return <>
+    <button type="button" className="drama-style-picker" aria-label={`选择风格（${label}）`} aria-haspopup="dialog"
+      disabled={disabled} onClick={() => setOpen(true)}>
+      {selected && <span className="drama-style-picker-preview" style={stylePreview(selected)} aria-hidden="true" />}
+      <span className="drama-style-picker-label">{label}</span>
+      <DownOutlined aria-hidden="true" />
+    </button>
+    <Modal title="2D 风格库" open={open} onCancel={() => setOpen(false)} footer={null} width={780} destroyOnHidden>
+      {query.isLoading ? <Skeleton active /> : query.error ? (
+        <Alert type="error" showIcon title="读取风格库失败" description={query.error.message}
+          action={<Button onClick={() => void query.refetch()}>重试</Button>} />
+      ) : styles.length > 0 ? (
+        <div className="drama-visual-style-grid">
+          {styles.map((style) => <button type="button" key={style.id} aria-pressed={selected?.id === style.id}
+            className="drama-visual-style-card" onClick={() => { onChange(style); setOpen(false) }}>
+            <span className="drama-visual-style-thumbnail" style={stylePreview(style)} aria-hidden="true" />
+            <span className="drama-visual-style-name">{style.name}</span>
+          </button>)}
+        </div>
+      ) : <Empty description="暂无可选的 2D 风格" />}
+    </Modal>
+  </>
 }

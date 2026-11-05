@@ -8,7 +8,7 @@ export interface DramaSettings {
   updatedAt?: string
 }
 export interface DramaBatchReference { id: string; name: string; number: number }
-export interface DramaAsset { id?: string; name: string; description: string; appearanceDescription?: string; voiceDescription?: string; sourceBatch?: DramaBatchReference | null; usedInBatches?: DramaBatchReference[] }
+export interface DramaAsset { id?: string; name: string; description: string; appearanceDescription?: string; voiceDescription?: string; sourceBatch?: DramaBatchReference | null; usedInBatches?: DramaBatchReference[]; previewImageUrl?: string }
 export interface DramaEpisode { title: string; synopsis: string }
 export interface DramaOverview {
   styleId?: string
@@ -51,6 +51,16 @@ export interface CreateDramaInput {
   aspectRatio: '9:16' | '16:9'
 }
 
+export interface CreateDramaFromNovelInput {
+  novelId: string
+  startChapter: number
+  endChapter: number
+  title?: string
+  styleId?: string
+  style?: string
+  aspectRatio: '9:16' | '16:9'
+}
+
 export const listDramaModels = () => request<DramaModel[]>('/api/v1/ai-drama/models')
 export const getDramaSettings = () => request<DramaSettings>('/api/v1/ai-drama/settings')
 export const saveDramaSettings = (input: DramaSettings) => request<DramaSettings>('/api/v1/ai-drama/settings', {
@@ -66,6 +76,9 @@ export const reanalyzeDramaOverview = (id: string) => request<DramaProject>(`/ap
   method: 'POST', headers: csrfHeaders(),
 })
 export const createDramaProject = (input: CreateDramaInput) => request<DramaProject>('/api/v1/ai-drama/projects', {
+  method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
+})
+export const createDramaProjectFromNovel = (input: CreateDramaFromNovelInput) => request<DramaProject>('/api/v1/ai-drama/projects/from-novel', {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })
 export const updateDramaOverview = (id: string, overview: DramaOverview) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/overview`, {

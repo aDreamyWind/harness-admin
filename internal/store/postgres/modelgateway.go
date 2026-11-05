@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -431,7 +432,7 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 		       COALESCE(p.name, ''),
 		       c.streaming, c.result, c.http_status, c.latency_ms, c.prompt_tokens,
 		       c.completion_tokens, c.total_tokens, c.usage_reported, c.quota_exceeded,
-		       c.error_code, c.source_ip, c.created_at,
+		       c.error_code, c.source_ip, c.created_at, COALESCE(l.operation, ''),
   COALESCE(l.workflow_stage,''),COALESCE(l.reasoning_policy,''),l.requested_at,l.headers_at,l.first_reasoning_at,l.first_content_at,l.finished_at,l.reasoning_tokens
 		FROM model_gateway_calls c
   LEFT JOIN model_call_logs l ON l.call_id=c.id AND l.organization_id=c.organization_id
@@ -461,7 +462,7 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 			&item.RequestID, &item.ModelCode, &item.ModelName, &item.ModelType,
 			&item.UpstreamModelID, &item.ProviderName, &item.Streaming, &item.Result, &item.HTTPStatus, &item.LatencyMS,
 			&item.PromptTokens, &item.CompletionTokens, &item.TotalTokens, &item.UsageReported, &item.QuotaExceeded, &item.ErrorCode,
-			&item.SourceIP, &item.CreatedAt,
+			&item.SourceIP, &item.CreatedAt, &item.Operation,
 			&timing.Stage, &timing.ReasoningPolicy, &requested, &timing.HeadersAt, &timing.FirstReasoningAt, &timing.FirstContentAt, &finished, &timing.ReasoningTokens,
 		); err != nil {
 			return modelgateway.CallPage{}, err
@@ -480,67 +481,191 @@ func (r *ModelGatewayRepository) ListCalls(ctx context.Context, query modelgatew
 }
 
 func (r *ModelGatewayRepository) ListUsage(ctx context.Context, query modelgateway.UsageQuery) (modelgateway.UsagePage, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return modelgateway.UsagePage{}, err
+	}
+	defer tx.Rollback(ctx)
+	page, err := listModelUsage(ctx, tx, query)
+	if err != nil {
+		return modelgateway.UsagePage{}, err
+	}
+	return page, tx.Commit(ctx)
+}
+
+func listModelUsage(ctx context.Context, db pgx.Tx, query modelgateway.UsageQuery) (modelgateway.UsagePage, error) {
 	month, err := time.Parse("2006-01", query.Month)
 	if err != nil {
 		return modelgateway.UsagePage{}, err
 	}
 	end := month.AddDate(0, 1, 0)
-	filter := `WHERE c.organization_id = $1 AND c.created_at >= $2 AND c.created_at < $3`
+	scope := `c.organization_id = $1`
 	if query.GroupBy == "department" || query.GroupBy == "user" {
-		filter += ` AND c.auth_type = 'user'`
+		scope += ` AND c.auth_type = 'user'`
 	}
 	page := modelgateway.UsagePage{
 		Month: query.Month, GroupBy: query.GroupBy, Items: []modelgateway.UsageGroup{},
 		Page: query.Page, PageSize: query.PageSize,
 	}
-	err = r.pool.QueryRow(ctx, `SELECT COUNT(*), COALESCE(SUM(c.total_tokens) FILTER (WHERE c.usage_reported), 0)::BIGINT,
-		COUNT(*) FILTER (WHERE NOT c.usage_reported), COUNT(*) FILTER (WHERE c.quota_exceeded)
-		FROM model_gateway_calls c `+filter, query.OrganizationID, month, end).Scan(
-		&page.CallCount, &page.KnownTokens, &page.UnknownUsageCalls, &page.OverQuotaCalls)
-	if err != nil {
-		return modelgateway.UsagePage{}, err
-	}
 	var groupID, groupName, joins string
 	switch query.GroupBy {
 	case "department":
 		groupID = `COALESCE(c.department_id::TEXT, '')`
-		groupName = `COALESCE(MAX(d.name), '未记录部门')`
-		joins = `LEFT JOIN departments d ON d.organization_id = c.organization_id AND d.id = c.department_id`
+		groupName = `COALESCE(d.name, '未记录部门')`
+		joins = `LEFT JOIN departments d ON d.organization_id = $1 AND d.id = NULLIF(g.id, '')::UUID`
 	case "user":
 		groupID = `COALESCE(c.user_id::TEXT, '')`
-		groupName = `COALESCE(MAX(u.display_name), '已删除用户')`
-		joins = `LEFT JOIN users u ON u.organization_id = c.organization_id AND u.id = c.user_id`
+		groupName = `COALESCE(u.display_name, '已删除用户')`
+		joins = `LEFT JOIN users u ON u.organization_id = $1 AND u.id = NULLIF(g.id, '')::UUID`
 	case "model":
 		groupID = `c.model_code`
-		groupName = `COALESCE(MAX(m.name), MAX(c.model_code))`
-		joins = `LEFT JOIN model_catalog_entries m ON m.organization_id = c.organization_id AND LOWER(m.code) = LOWER(c.model_code)`
+		groupName = `COALESCE(m.name, g.id, '')`
+		joins = `LEFT JOIN LATERAL (SELECT MAX(name) AS name FROM model_catalog_entries
+			WHERE organization_id = $1 AND LOWER(code) = LOWER(g.id)) m ON TRUE`
 	default:
 		return modelgateway.UsagePage{}, modelgateway.ErrInvalidInput
 	}
-	source := ` FROM model_gateway_calls c ` + joins + ` ` + filter
-	err = r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM (SELECT `+groupID+source+` GROUP BY 1) groups`,
-		query.OrganizationID, month, end).Scan(&page.Total)
+	fallbackSuccesses, err := videoSuccessesFromLogs(ctx, db, query.OrganizationID, month, end, scope, groupID)
 	if err != nil {
 		return modelgateway.UsagePage{}, err
 	}
-	rows, err := r.pool.Query(ctx, `SELECT `+groupID+`, `+groupName+`, COUNT(*),
-		COALESCE(SUM(c.total_tokens) FILTER (WHERE c.usage_reported), 0)::BIGINT,
-		COUNT(*) FILTER (WHERE NOT c.usage_reported), COUNT(*) FILTER (WHERE c.quota_exceeded)`+source+`
-		GROUP BY 1 ORDER BY 4 DESC, 3 DESC, 2 ASC LIMIT $4 OFFSET $5`,
-		query.OrganizationID, month, end, query.PageSize, (query.Page-1)*query.PageSize)
+	rows, err := db.Query(ctx, `
+		WITH local_successes AS (
+			SELECT DISTINCT ON (v.id) `+groupID+` AS id
+			FROM drama_segment_videos v
+			JOIN model_call_logs l ON l.segment_video_id = v.id AND l.source = 'ai_drama' AND l.operation = 'video'
+			JOIN model_gateway_calls c ON c.id = l.call_id AND c.organization_id = l.organization_id
+			WHERE `+scope+` AND c.model_type = 'video' AND c.result = 'success'
+			  AND v.status = 'succeeded' AND v.finished_at >= $2 AND v.finished_at < $3
+			ORDER BY v.id, c.created_at, c.id
+		), events AS (
+			SELECT `+groupID+` AS id, TRUE AS is_call, c.total_tokens, c.usage_reported, c.quota_exceeded,
+			       l.operation AS video_operation,
+			       0::BIGINT AS video_successes
+			FROM model_gateway_calls c
+			LEFT JOIN model_call_logs l ON c.model_type = 'video' AND l.call_id = c.id AND l.organization_id = c.organization_id
+			WHERE `+scope+` AND c.created_at >= $2 AND c.created_at < $3
+			UNION ALL
+			SELECT id, FALSE, 0, FALSE, FALSE, NULL, 1 FROM local_successes
+			UNION ALL
+			SELECT key, FALSE, 0, FALSE, FALSE, NULL, value::BIGINT FROM jsonb_each_text($4::JSONB)
+		), grouped AS (
+			SELECT id, GROUPING(id) = 1 AS is_summary, COUNT(*) FILTER (WHERE is_call) AS calls,
+			       COALESCE(SUM(total_tokens) FILTER (WHERE usage_reported), 0)::BIGINT AS tokens,
+			       COUNT(*) FILTER (WHERE is_call AND NOT usage_reported) AS unknown_usage,
+			       COUNT(*) FILTER (WHERE quota_exceeded) AS over_quota,
+			       COUNT(*) FILTER (WHERE video_operation = 'video') AS submits,
+			       COALESCE(SUM(video_successes), 0)::BIGINT AS successes,
+			       COUNT(*) FILTER (WHERE video_operation = 'video_task_query') AS queries
+			FROM events GROUP BY GROUPING SETS ((), (id))
+		), named AS (
+			SELECT g.*, `+groupName+` AS name FROM grouped g `+joins+`
+		), paged AS (
+			SELECT * FROM named WHERE NOT is_summary ORDER BY tokens DESC, calls DESC, name, id LIMIT $5 OFFSET $6
+		)
+		SELECT is_summary, COALESCE(id, '') AS id, name, calls, tokens, unknown_usage, over_quota, submits, successes, queries,
+		       (SELECT COUNT(*) FROM grouped WHERE NOT is_summary) AS group_count
+		FROM named WHERE is_summary
+		UNION ALL
+		SELECT FALSE, id, name, calls, tokens, unknown_usage, over_quota, submits, successes, queries, 0 FROM paged
+		ORDER BY is_summary DESC, tokens DESC, calls DESC, name, id
+	`, query.OrganizationID, month, end, fallbackSuccesses, query.PageSize, (query.Page-1)*query.PageSize)
 	if err != nil {
 		return modelgateway.UsagePage{}, err
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var summary bool
+		var total int64
 		var item modelgateway.UsageGroup
-		if err := rows.Scan(&item.ID, &item.Name, &item.CallCount, &item.KnownTokens,
-			&item.UnknownUsageCalls, &item.OverQuotaCalls); err != nil {
+		if err := rows.Scan(&summary, &item.ID, &item.Name, &item.CallCount, &item.KnownTokens,
+			&item.UnknownUsageCalls, &item.OverQuotaCalls, &item.VideoSubmitCount, &item.VideoSuccessCount,
+			&item.VideoQueryCount, &total); err != nil {
 			return modelgateway.UsagePage{}, err
+		}
+		if summary {
+			page.Total = total
+			page.CallCount, page.KnownTokens = item.CallCount, item.KnownTokens
+			page.UnknownUsageCalls, page.OverQuotaCalls = item.UnknownUsageCalls, item.OverQuotaCalls
+			page.VideoSubmitCount, page.VideoSuccessCount, page.VideoQueryCount = item.VideoSubmitCount, item.VideoSuccessCount, item.VideoQueryCount
+			continue
 		}
 		page.Items = append(page.Items, item)
 	}
 	return page, rows.Err()
+}
+
+// 外部网关与旧漫剧调用没有本地成片状态，只能使用已记录的供应商成功响应。
+func videoSuccessesFromLogs(ctx context.Context, db pgx.Tx, organizationID string, start, end time.Time, scope, groupID string) (map[string]int64, error) {
+	rows, err := db.Query(ctx, `SELECT c.provider_connection_id::TEXT, c.created_at, `+groupID+`, l.operation, l.response_body,
+	       CASE WHEN l.operation = 'video_task_query' THEN l.request_body END
+		FROM model_gateway_calls c
+		JOIN model_call_logs l ON l.call_id = c.id AND l.organization_id = c.organization_id
+		WHERE `+scope+` AND c.created_at < $2 AND c.model_type = 'video' AND c.result = 'success'
+		  AND (l.source = 'model_gateway' OR (l.source = 'ai_drama' AND l.segment_video_id IS NULL))
+		  AND NOT l.response_truncated
+		  AND (l.operation = 'video' OR (l.operation = 'video_task_query'
+		    AND POSITION(convert_to('SUCCEEDED', 'UTF8') IN l.response_body) > 0))
+		ORDER BY c.created_at, c.id`, organizationID, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type taskKey struct{ providerID, taskID string }
+	submittedBy := make(map[taskKey]string)
+	completed := make(map[taskKey]struct{})
+	counts := make(map[string]int64)
+	for rows.Next() {
+		var providerID, group, operation string
+		var createdAt time.Time
+		var body, requestBody []byte
+		if err := rows.Scan(&providerID, &createdAt, &group, &operation, &body, &requestBody); err != nil {
+			return nil, err
+		}
+		var response struct {
+			Output struct {
+				TaskID   string `json:"task_id"`
+				Status   string `json:"task_status"`
+				VideoURL string `json:"video_url"`
+			} `json:"output"`
+		}
+		if json.Unmarshal(body, &response) != nil {
+			continue
+		}
+		id := strings.TrimSpace(response.Output.TaskID)
+		if id == "" && operation == "video_task_query" {
+			var request struct {
+				TaskID string `json:"task_id"`
+				Path   string `json:"path"`
+			}
+			if json.Unmarshal(requestBody, &request) == nil {
+				id = strings.TrimSpace(request.TaskID)
+				if upstreamID, ok := strings.CutPrefix(request.Path, "/api/v1/tasks/"); id == "" && ok {
+					id = strings.TrimSpace(upstreamID)
+				}
+			}
+		}
+		if id == "" {
+			continue
+		}
+		task := taskKey{providerID: providerID, taskID: id}
+		if submitter, ok := submittedBy[task]; ok {
+			group = submitter
+		} else if operation == "video" {
+			submittedBy[task] = group
+		}
+		if response.Output.Status != "SUCCEEDED" || strings.TrimSpace(response.Output.VideoURL) == "" {
+			continue
+		}
+		if _, ok := completed[task]; ok {
+			continue
+		}
+		completed[task] = struct{}{}
+		if !createdAt.Before(start) {
+			counts[group]++
+		}
+	}
+	return counts, rows.Err()
 }
 
 func findGatewayAPIKey(ctx context.Context, queryer interface {

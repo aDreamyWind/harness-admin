@@ -33,6 +33,7 @@ export interface GatewayCall {
   modelCode: string
   modelName: string
   modelType: 'chat' | 'image' | 'video'
+  operation?: string
   upstreamModelId: string
   providerName: string
   streaming: boolean
@@ -51,22 +52,24 @@ export interface GatewayCall {
 
 export type UsageGroupBy = 'department' | 'user' | 'model'
 
-export interface GatewayUsageGroup {
-  id: string
-  name: string
+interface GatewayUsageCounts {
   callCount: number
+  videoSubmitCount: number
+  videoSuccessCount: number
+  videoQueryCount: number
   knownTokens: number
   unknownUsageCalls: number
   overQuotaCalls: number
 }
 
-export interface GatewayUsagePage {
+export interface GatewayUsageGroup extends GatewayUsageCounts {
+  id: string
+  name: string
+}
+
+export interface GatewayUsagePage extends GatewayUsageCounts {
   month: string
   groupBy: UsageGroupBy
-  callCount: number
-  knownTokens: number
-  unknownUsageCalls: number
-  overQuotaCalls: number
   items: GatewayUsageGroup[]
   total: number
   page: number

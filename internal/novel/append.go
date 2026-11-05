@@ -18,8 +18,12 @@ type ChapterPlan struct {
 }
 
 const appendChapterPrompt = `为这部中文小说追加恰好 %d 章的蓝图，从第 %d 章开始。现有章节均已列入作品计划，新增章节应从最后一个已规划章节的章末继续。已定稿摘要是已经发生的事实，其余旧章目标是待写计划，区分两者。尊重已确定的人物、世界规则、时间线、人物所知及关键线索，不回改原计划。如果上一阶段已经收尾，从其结果自然引出后续矛盾，不推翻已经解决的事件。优先遵循作者给出的续写方向，在新章节中明确行动的必要条件、转折和承接任务。
+遵循 AuthorGuidance 中适用于全书的写作约定。称谓、语气等表达遵循当前约定，即使旧章措辞不同，已定稿的剧情事实保持有效。
 只输出 JSON 对象，beats 是按新增章节顺序排列的数组，每项含简体中文字符串 title（最多 120 字）与 goal（最多 1200 字）。仅返回新增章节，不在标题中添加章号。
 作品资料：
+`
+
+const serialAppendGuidance = `这是一部长篇连载。即使作者未填写续写方向，也要结合全书主线、已定稿摘要和已有章节计划，选择一个由前文结果或未解线索引出的具体阶段矛盾。每章推进不同的行动，让人物关系、所知信息或处境发生变化，避免重复前一批的冲突。选择时机成熟的伏笔推进或回收，保留需要后续阶段展开的伏笔。本批末章留下阶段结果和明确下一步，只有作者明确要求终章时才收束全书主线。
 `
 
 func (s *Service) PlanChapters(ctx context.Context, owner Owner, id string, input ChapterPlanInput) (ChapterPlan, error) {
@@ -79,14 +83,20 @@ func chapterPlanPrompt(p Project, input ChapterPlanInput) string {
 	start := max(0, p.ChapterCount-recentPlans)
 	material := struct {
 		Title, Brief, Synopsis, World, Characters string
+		AuthorGuidance                            string `json:",omitempty"`
 		Instruction                               string
 		RecentPlanStart                           int
 		RecentPlans                               []Beat
 		FinalizedChapters                         []priorChapter
 	}{
 		Title: p.Title, Brief: p.Brief, Synopsis: p.Outline.Synopsis, World: p.Outline.World, Characters: p.Outline.Characters,
-		Instruction: strings.TrimSpace(input.Instruction), RecentPlanStart: start + 1,
+		AuthorGuidance: p.AuthorGuidance,
+		Instruction:    strings.TrimSpace(input.Instruction), RecentPlanStart: start + 1,
 		RecentPlans: p.Outline.Beats[start:], FinalizedChapters: priorChapters(p, p.ChapterCount, false),
 	}
-	return fmt.Sprintf(appendChapterPrompt, input.Count, p.ChapterCount+1) + asJSON(material)
+	prompt := fmt.Sprintf(appendChapterPrompt, input.Count, p.ChapterCount+1)
+	if p.StoryMode == StoryModeSerial {
+		prompt = serialAppendGuidance + prompt
+	}
+	return prompt + asJSON(material)
 }

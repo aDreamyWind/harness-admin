@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,6 +43,49 @@ func TestDramaCanvasFormsIsolationAndImageLifecycle(t *testing.T) {
 	if _, err = db.Exec(ctx, `INSERT INTO drama_assets(id,project_id,kind,name,description) VALUES($1,$3,'character','林夏','青年男性'),($2,$3,'scene','城堡','石砌城堡')`, root, scene, project); err != nil {
 		t.Fatal(err)
 	}
+	assertAssetPreview := func(imageID string) {
+		t.Helper()
+		projects, err := repo.List(ctx, org, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		if imageID != "" {
+			want = "/api/v1/ai-drama/projects/" + project + "/images/" + imageID + "/content"
+		}
+		for _, item := range projects {
+			if item.ID != project {
+				continue
+			}
+			var characters, scenes []map[string]json.RawMessage
+			if err := json.Unmarshal(item.Characters, &characters); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(item.Scenes, &scenes); err != nil {
+				t.Fatal(err)
+			}
+			if len(characters) != 1 || len(scenes) != 1 {
+				t.Fatalf("项目资产数量不符: %s %s", item.Characters, item.Scenes)
+			}
+			if _, ok := scenes[0]["previewImageUrl"]; ok {
+				t.Fatalf("没有生成图片的场景返回了预览图: %s", item.Scenes)
+			}
+			preview, hasPreview := characters[0]["previewImageUrl"]
+			if imageID == "" {
+				if hasPreview {
+					t.Fatalf("没有生成图片的角色返回了预览图: %s", item.Characters)
+				}
+			} else {
+				var got string
+				if err := json.Unmarshal(preview, &got); err != nil || got != want {
+					t.Fatalf("角色预览图不符，期望 %q，实际 %q: %v", want, got, err)
+				}
+			}
+			return
+		}
+		t.Fatal("项目列表缺少测试项目")
+	}
+	assertAssetPreview("")
 	board, err := repo.ReadCanvas(ctx, org, user, project)
 	if err != nil || len(board.Forms) != 2 || board.Revision != 1 {
 		t.Fatalf("初始画布异常: %+v %v", board, err)
@@ -144,6 +188,23 @@ func TestDramaCanvasFormsIsolationAndImageLifecycle(t *testing.T) {
 			t.Fatal("生成失败覆盖旧图片或丢失错误")
 		}
 	}
+	assertAssetPreview(job.ID)
+	if ok, err := repo.ClaimImage(ctx, derived.ID); err != nil || !ok {
+		t.Fatalf("领取派生形象任务失败: %v", err)
+	}
+	derived.Status = "succeeded"
+	derived.StorageKey = derived.ID + ".png"
+	derived.MIME = "image/png"
+	derived.ByteSize = 100
+	if err = repo.FinishImage(ctx, derived); err != nil {
+		t.Fatal(err)
+	}
+	// 较新的派生图不替换默认形象的预览，只有默认形象无图时才使用派生图。
+	assertAssetPreview(job.ID)
+	if _, err = db.Exec(ctx, `UPDATE drama_asset_forms SET current_image_id=NULL WHERE id=$1`, root); err != nil {
+		t.Fatal(err)
+	}
+	assertAssetPreview(derived.ID)
 	// 跨资产派生关系必须被数据库本身拒绝。
 	if _, err = db.Exec(ctx, `INSERT INTO drama_asset_forms(id,asset_id,parent_id,name,aspect_ratio) VALUES($1,$2,$3,'非法派生','1:1')`, uuid.NewString(), scene, root); err == nil {
 		t.Fatal("数据库允许跨资产派生")

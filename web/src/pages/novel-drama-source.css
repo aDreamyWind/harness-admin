@@ -1,0 +1,80 @@
+.novel-drama-source { display: grid; gap: 12px; }
+.novel-drama-empty { margin: 12px 0; }
+
+.novel-drama-books.ant-radio-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.novel-drama-books .novel-drama-book {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid #dce4eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.novel-drama-books .novel-drama-book > .ant-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.novel-drama-books .novel-drama-book:not(.ant-radio-wrapper-disabled):hover,
+.novel-drama-books .novel-drama-book.ant-radio-wrapper-checked {
+  border-color: #3265d4;
+  background: #f6f9ff;
+}
+
+.novel-drama-book:has(input:focus-visible) { outline: 2px solid #3265d4; outline-offset: -2px; }
+
+.novel-drama-book > .ant-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding-inline: 0;
+}
+
+.novel-drama-cover {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 46px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #edf3ff;
+  color: #3265d4;
+}
+
+.novel-drama-cover img { width: 100%; height: 100%; object-fit: cover; }
+.novel-drama-book-info { display: grid; gap: 3px; min-width: 0; }
+.novel-drama-book-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.novel-drama-book-info small, .novel-drama-source-note { color: #5c6d83; font-size: 12px; }
+.novel-drama-source-note { margin: 0; }
+.novel-drama-selection-details {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 10px 2px 0;
+  border-top: 1px solid #edf0f4;
+}
+
+.novel-drama-selection-details a { color: #3265d4; font-size: 12px; }
+.novel-drama-selection-details a:hover { text-decoration: underline; }
+.novel-drama-range { display: grid; gap: 8px; position: relative; min-width: 0; padding: 0; margin: 0; border: 0; }
+.novel-drama-range legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.novel-drama-range-fields > div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; flex: 1 1 220px; max-width: 292px; min-width: 0; }
+.novel-drama-range-fields label { color: #435269; font-size: 12px; white-space: nowrap; }

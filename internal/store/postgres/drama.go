@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,13 +49,19 @@ func (r *DramaRepository) SaveSettings(ctx context.Context, item drama.Settings)
 	return item, nil
 }
 
-const dramaColumns = `id, organization_id, owner_id, title, source_name, source_text, source_length, source_mode,
+const omittedDramaSource = "''::text AS source_text"
+
+var dramaColumns = dramaProjectColumns("source_text", dramaAssetJSON)
+
+func dramaProjectColumns(sourceText, assetJSON string) string {
+	return `id, organization_id, owner_id, title, source_name, ` + sourceText + `, source_length, source_mode,
  style, aspect_ratio, model_code, status, phase, error_message, protagonist, genre, synopsis, background, setting,
- COALESCE((SELECT jsonb_agg(` + dramaAssetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='character'), '[]'::jsonb),
- COALESCE((SELECT jsonb_agg(` + dramaAssetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='scene'), '[]'::jsonb),
- COALESCE((SELECT jsonb_agg(` + dramaAssetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='prop'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(` + assetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='character'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(` + assetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='scene'), '[]'::jsonb),
+ COALESCE((SELECT jsonb_agg(` + assetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='prop'), '[]'::jsonb),
  COALESCE((SELECT jsonb_agg(jsonb_build_object('title', e.title, 'synopsis', e.synopsis) ORDER BY b.batch_number NULLS FIRST, e.number, e.created_at) FROM drama_script_episodes e LEFT JOIN drama_batches b ON b.id=e.batch_id WHERE e.project_id=drama_projects.id), '[]'::jsonb),
  created_at, updated_at,COALESCE(style_id,'')`
+}
 
 func scanDrama(row pgx.Row) (drama.Project, error) {
 	var item drama.Project
@@ -95,7 +100,8 @@ func (r *DramaRepository) Create(ctx context.Context, item drama.Project) (drama
 }
 
 func (r *DramaRepository) List(ctx context.Context, organizationID, ownerID string) ([]drama.Project, error) {
-	rows, err := r.db.Query(ctx, `SELECT `+strings.Replace(dramaColumns, "source_text", "''::text AS source_text", 1)+` FROM drama_projects
+	columns := dramaProjectColumns(omittedDramaSource, dramaAssetJSONWithPreview)
+	rows, err := r.db.Query(ctx, `SELECT `+columns+` FROM drama_projects
 		WHERE organization_id=$1 AND owner_id=$2 ORDER BY updated_at DESC`, organizationID, ownerID)
 	if err != nil {
 		return nil, err
@@ -114,7 +120,7 @@ func (r *DramaRepository) List(ctx context.Context, organizationID, ownerID stri
 }
 
 func (r *DramaRepository) Get(ctx context.Context, organizationID, ownerID, id string) (drama.Project, error) {
-	item, err := scanDrama(r.db.QueryRow(ctx, `SELECT `+strings.Replace(dramaColumns, "source_text", "''::text AS source_text", 1)+` FROM drama_projects
+	item, err := scanDrama(r.db.QueryRow(ctx, `SELECT `+dramaProjectColumns(omittedDramaSource, dramaAssetJSON)+` FROM drama_projects
 		WHERE organization_id=$1 AND owner_id=$2 AND id=$3`, organizationID, ownerID, id))
 	item.SourceText = ""
 	return item, err
