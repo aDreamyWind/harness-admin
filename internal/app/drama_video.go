@@ -41,10 +41,26 @@ type dramaVideoOutput struct {
 	Message string `json:"message"`
 }
 
+func isWan27TextVideo(modelID string) bool {
+	switch modelID {
+	case "wan2.7-t2v", "wan2.7-t2v-2026-06-12", "wan2.7-t2v-2026-04-25":
+		return true
+	}
+	return false
+}
+
 func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.SegmentVideoRequest) ([]byte, error) {
 	if len(in.ImageIDs) != len(in.ReferenceImages) {
 		return nil, errors.New("视频参考图与版本记录数量不一致")
 	}
+	loggedImages := make([]string, len(in.ImageIDs))
+	for i, id := range in.ImageIDs {
+		loggedImages[i] = "image-job:" + id
+	}
+	return w.generateVideo(ctx, in, loggedImages, false)
+}
+
+func (w *dramaVideoEngine) generateVideo(ctx context.Context, in drama.SegmentVideoRequest, loggedImages []string, canvas bool) ([]byte, error) {
 	media := make([]map[string]string, 0, len(in.ReferenceImages))
 	for _, image := range in.ReferenceImages {
 		media = append(media, map[string]string{"type": "reference_image", "url": image})
@@ -63,22 +79,37 @@ func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.Se
 	}
 	prepared, err := w.gateway.PrepareForUserOperation(ctx, in.OrganizationID, in.UserID, body, "video")
 	if err != nil {
-		return nil, &drama.SegmentVideoFailure{Message: "视频模型不可用，请检查漫剧设置、模型权限或调用限制", Cause: err}
+		message := "视频模型不可用，请检查漫剧设置、模型权限或调用限制"
+		if canvas {
+			message = "视频模型不可用，请检查模型权限或调用限制"
+		}
+		return nil, &drama.SegmentVideoFailure{Message: message, Cause: err}
 	}
 	route := prepared.Route
-	older := route.UpstreamModelID == "wan2.7-r2v" || route.UpstreamModelID == "wan2.7-r2v-2026-06-12"
-	if route.ProviderKind != "aliyun_bailian" || (!older && route.UpstreamModelID != "wan3.0-video" && route.UpstreamModelID != "wan3.0-video-prime") {
-		return nil, &drama.SegmentVideoFailure{Message: "请在漫剧设置中选择万相 2.7 参考生视频（wan2.7-r2v）或万相 3.0", Cause: drama.ErrModelUnavailable}
+	referenceVideo := route.UpstreamModelID == "wan2.7-r2v" || route.UpstreamModelID == "wan2.7-r2v-2026-06-12"
+	textVideo := canvas && isWan27TextVideo(route.UpstreamModelID)
+	wan3 := route.UpstreamModelID == "wan3.0-video" || route.UpstreamModelID == "wan3.0-video-prime"
+	if route.ProviderKind != "aliyun_bailian" || (!referenceVideo && !textVideo && !wan3) {
+		message := "请在漫剧设置中选择万相 2.7 参考生视频（wan2.7-r2v）或万相 3.0"
+		if canvas {
+			message = "请选择万相 2.7 文生视频、万相 2.7 参考生视频或万相 3.0"
+		}
+		return nil, &drama.SegmentVideoFailure{Message: message, Cause: drama.ErrModelUnavailable}
 	}
-	if older {
+	if referenceVideo || textVideo {
 		var detail string
 		switch {
 		case in.Duration < 2 || in.Duration > 15:
 			detail = fmt.Sprintf("当前片段 %d 秒，万相 2.7 支持 2–15 秒，请缩短或拆成多个片段", in.Duration)
-		case len(media) < 1 || len(media) > 5:
+		case textVideo && len(media) != 0:
+			detail = "万相 2.7 文生视频只支持文字，请移除参考图连线或更换模型"
+		case referenceVideo && (len(media) < 1 || len(media) > 5):
 			detail = fmt.Sprintf("当前片段有 %d 张参考图，万相 2.7 需要 1–5 张，请调整引用", len(media))
 		case utf8.RuneCountInString(in.Prompt) > 5000:
 			detail = fmt.Sprintf("当前视频提示词 %d 字，万相 2.7 最多支持 5000 字，请精简分镜描述", utf8.RuneCountInString(in.Prompt))
+			if canvas {
+				detail = "万相 2.7 的视频提示词最多支持 5000 字，请精简节点提示词"
+			}
 		}
 		if detail != "" {
 			return nil, &drama.SegmentVideoFailure{Message: detail, Cause: drama.ErrInvalidInput}
@@ -92,7 +123,7 @@ func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.Se
 	}
 	// 调用记录保留参数和参考图版本，避免重复存放图片二进制。
 	for i := range media {
-		media[i]["url"] = "image-job:" + in.ImageIDs[i]
+		media[i]["url"] = loggedImages[i]
 	}
 	loggedBody, err := json.Marshal(payload)
 	if err != nil {
@@ -165,12 +196,12 @@ func (w *dramaVideoEngine) videoCall(ctx context.Context, prepared modelgateway.
 				err = fmt.Errorf("视频供应商返回 HTTP %d", status)
 				// HTTP 错误也可能带有可识别的供应商错误码。
 				if json.Unmarshal(raw, &task) == nil {
-					err = videoProviderFailure(task, err)
+					err = videoProviderFailure(task, err, videoID == "")
 				}
 			} else if err = json.Unmarshal(raw, &task); err == nil &&
 				(task.Code != "" || task.Output.Status == "FAILED" || task.Output.Status == "CANCELED" || task.Output.Status == "UNKNOWN") {
 				cause := fmt.Errorf("视频供应商返回错误 %s %s %s", task.Code, task.Output.Status, task.Output.Code)
-				err = videoProviderFailure(task, cause)
+				err = videoProviderFailure(task, cause, videoID == "")
 			}
 		}
 		if err == nil && operation == "video" && task.Output.ID == "" {
@@ -188,7 +219,7 @@ func (w *dramaVideoEngine) videoCall(ctx context.Context, prepared modelgateway.
 	return task, errors.Join(callErr, logErr)
 }
 
-func videoProviderFailure(task dramaVideoOutput, cause error) error {
+func videoProviderFailure(task dramaVideoOutput, cause error, canvas bool) error {
 	code, detail := task.Output.Code, task.Output.Message
 	if code == "" {
 		code, detail = task.Code, task.Message
@@ -196,13 +227,17 @@ func videoProviderFailure(task dramaVideoOutput, cause error) error {
 	if !strings.EqualFold(code, "DataInspectionFailed") && !strings.EqualFold(code, "data_inspection_failed") {
 		return cause
 	}
-	message := "百炼内容审核未通过，请检查当前片段的分镜内容和参考图"
+	prompt, reference := "当前片段的分镜内容", "当前片段的参考图"
+	if canvas {
+		prompt, reference = "节点提示词", "节点参考图"
+	}
+	message := "百炼内容审核未通过，请检查" + prompt + "和参考图"
 	detail = strings.ToLower(detail)
 	switch {
 	case strings.Contains(detail, "rejected image (input)"), strings.HasPrefix(detail, "input image"):
-		message = "输入参考图审核未通过（百炼），请检查或更换当前片段的参考图"
+		message = "输入参考图审核未通过（百炼），请检查或更换" + reference
 	case strings.HasPrefix(detail, "output data"):
-		message = "生成的视频未通过百炼输出审核，请检查当前片段的分镜内容"
+		message = "生成的视频未通过百炼输出审核，请检查" + prompt
 	}
 	return &drama.SegmentVideoFailure{Message: message, Cause: cause}
 }

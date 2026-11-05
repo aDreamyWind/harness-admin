@@ -64,4 +64,11 @@ func TestTryOnEngineReferencesAndRecordedOperations(t *testing.T) {
 	if err := json.Unmarshal(forwarder.payload, &req); err != nil || !slices.Equal(req.Images, []string{person.DataURI(), garment.DataURI(), pose.DataURI()}) {
 		t.Fatalf("上游参考图丢失或顺序不正确: %#v %v", req, err)
 	}
+	for _, operation := range []string{"garment_reconstruct", "pose_standardize", "person_reconstruct"} {
+		_, err := e.Generate(ctx, owner, "edit_only", operation, "根据参考图生成独立素材", []tryon.Image{person})
+		if err != nil || gateway.record.Source != "ai_tryon" || gateway.record.Operation != operation ||
+			len(gateway.record.RequestBody) == 0 || len(gateway.record.ResponseBody) == 0 {
+			t.Fatalf("素材预览 %s 未使用图生图模型和独立的调用记录: %v", operation, err)
+		}
+	}
 }

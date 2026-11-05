@@ -217,6 +217,18 @@ export interface DramaAssetForm {
   imageUrl?: string; imageStatus: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed'; imageError?: string
 }
 export type DramaCanvasCardKind = 'text' | 'image' | 'video' | 'audio'
+export type DramaCanvasGenerationKind = Extract<DramaCanvasCardKind, 'image' | 'video'>
+export interface DramaCanvasGenerationModel {
+  code: string; name: string; kind: DramaCanvasGenerationKind
+  minReferences: number; maxReferences: number; minDuration?: number; maxDuration?: number
+}
+export interface DramaCanvasGenerationInput {
+  modelCode: string; prompt?: string; aspectRatio?: '16:9' | '9:16' | '1:1'; duration?: number
+}
+export interface DramaCanvasGenerationJob {
+  id: string; nodeId: string; kind: DramaCanvasGenerationKind; modelCode: string
+  status: 'running' | 'succeeded' | 'failed'; resultUrl?: string; errorMessage?: string; createdAt: string; finishedAt?: string
+}
 export type DramaCanvasCard = {
   id: string
   kind: DramaCanvasCardKind
@@ -231,6 +243,12 @@ export interface DramaCanvasLayout { x: number; y: number; zoom: number; revisio
 export interface DramaImageJob { id: string; formId: string; projectId: string; status: string; modelCode: string }
 const visualBase = (id: string) => `/api/v1/ai-drama/projects/${id}`
 export const getDramaCanvas = (id: string) => request<DramaCanvas>(`${visualBase(id)}/canvas`)
+export const listDramaCanvasGenerationModels = () => request<DramaCanvasGenerationModel[]>('/api/v1/ai-drama/canvas/generation-models')
+export const listDramaCanvasGenerations = (projectId: string) => request<DramaCanvasGenerationJob[]>(`${visualBase(projectId)}/canvas/generations`)
+export const startDramaCanvasGeneration = (projectId: string, nodeId: string, revision: number, input: DramaCanvasGenerationInput) =>
+  request<DramaCanvasGenerationJob>(`${visualBase(projectId)}/canvas/nodes/${encodeURIComponent(nodeId)}/generation`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ ...input, revision }), keepalive: true,
+  })
 export const saveDramaCanvasLayout = (id: string, input: DramaCanvasLayout) => request<{ revision: number }>(`${visualBase(id)}/canvas/layout`, {
   method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })

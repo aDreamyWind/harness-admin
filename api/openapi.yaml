@@ -8,7 +8,7 @@ servers:
 paths:
   /ai-tryon/models:
     get:
-      summary: 查询当前用户可用于试穿和识别的模型
+      summary: 查询当前用户可用于试穿、素材生成和衣物识别的模型
       operationId: listTryOnModels
       security: [{ sessionCookie: [] }]
       responses:
@@ -66,6 +66,41 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /ai-tryon/assets/preview:
+    post:
+      summary: 根据参考图生成完整的试衣素材预览
+      description: 返回独立衣物图、通用人台姿态图或全身人物图。预览不会自动入库，确认后可将返回的图片提交给素材保存接口。
+      operationId: previewTryOnAsset
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, kind, modelCode]
+              properties:
+                file: { type: string, format: binary, description: '不超过 6 MB 的 JPG、PNG 或 WebP 参考图。' }
+                kind: { $ref: '#/components/schemas/TryOnAssetKind' }
+                modelCode: { type: string, maxLength: 120, description: 来自试衣模型列表 image 分组的图片模型。 }
+                name: { type: string, maxLength: 80, description: 可选衣物名称，用于指定要生成的单品。 }
+                category: { type: string, description: 衣物分类。衣物必填，其他类型留空。 }
+                box: { type: string, description: '可选衣物目标框，以 JSON 字符串表示 [左, 上, 右, 下]，值在 0 到 1 之间。框选仅用于定位目标。' }
+      responses:
+        '200':
+          description: 可用于确认入库的生成图片。
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502': { $ref: '#/components/responses/TryOnInferenceFailure' }
   /ai-tryon/assets/{id}/content:
     get:
       summary: 查看当前用户拥有的试衣素材图片
@@ -788,6 +823,91 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '416': { description: 请求的范围超出文件边界。 }
+  /ai-drama/canvas/generation-models:
+    get:
+      summary: 读取当前用户可用于画布节点生成的模型
+      operationId: listDramaCanvasGenerationModels
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 返回支持的图片和视频模型及其参考图数量和视频时长限制。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DramaCanvasGenerationModel' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /ai-drama/projects/{id}/canvas/generations:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 批量读取项目画布节点的最近一次生成状态
+      operationId: listDramaCanvasGenerations
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 返回各节点已记录的最近一次任务。读取本地任务状态，不提交或查询上游模型。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DramaCanvasGenerationJob' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/canvas/nodes/{nodeId}/generation:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: nodeId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 提交画布图片或视频节点生成任务
+      description: 读取已保存的节点及其直接入边，将连接的文本和图片分别用作提示词及参考图。相同节点已有生成中任务时返回该任务。
+      operationId: startDramaCanvasGeneration
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DramaCanvasGenerationInput' }
+      responses:
+        '202':
+          description: 已接收生成任务，或该节点已有正在执行的任务。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DramaCanvasGenerationJob' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 提交时画布版本已变化，请重新读取画布后提交。 }
+    get:
+      summary: 读取画布节点的最近一次生成状态
+      operationId: getDramaCanvasGeneration
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 返回最近一次任务，尚未生成时 data 为 null。读取本地任务状态，不查询上游模型。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/DramaCanvasGenerationJob'
+                      - { type: 'null' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/forms/{formId}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4780,6 +4900,39 @@ components:
       properties:
         id: { type: string, format: uuid }
         revision: { type: integer, minimum: 1 }
+    DramaCanvasGenerationInput:
+      type: object
+      required: [modelCode, revision]
+      properties:
+        modelCode: { type: string, minLength: 1, maxLength: 160 }
+        revision: { type: integer, minimum: 1, description: 已保存的画布版本，避免其他会话修改连线后用错参考素材。 }
+        prompt: { type: string, maxLength: 10000, description: 在连接的文本之外补充的生成要求。 }
+        aspectRatio: { type: string, enum: ['9:16', '16:9', '1:1'], default: '16:9' }
+        duration: { type: integer, description: 视频时长，单位为秒。省略时视频默认 5 秒，图片须省略或填 0。允许范围由所选模型决定。 }
+    DramaCanvasGenerationModel:
+      type: object
+      required: [code, name, kind, minReferences, maxReferences]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [image, video] }
+        minReferences: { type: integer, minimum: 0 }
+        maxReferences: { type: integer, minimum: 0 }
+        minDuration: { type: integer, minimum: 1, description: 视频模型的最小时长，单位为秒。 }
+        maxDuration: { type: integer, minimum: 1, description: 视频模型的最大时长，单位为秒。 }
+    DramaCanvasGenerationJob:
+      type: object
+      required: [id, nodeId, kind, modelCode, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        nodeId: { type: string, format: uuid }
+        kind: { type: string, enum: [image, video] }
+        modelCode: { type: string }
+        status: { type: string, enum: [running, succeeded, failed] }
+        resultUrl: { type: string, format: uri-reference, description: 最近成功生成的同源素材地址，需要本人项目会话。重试或失败时保留上一份结果。 }
+        errorMessage: { type: string, description: 生成失败时提供的提示。 }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
     DramaCanvasExtras:
       type: object
       required: [hidden, cards, links]
@@ -4799,7 +4952,7 @@ components:
               id: { type: string, format: uuid }
               kind: { type: string, enum: [text, image, video, audio] }
               title: { type: string, minLength: 1, maxLength: 80 }
-              content: { type: string, minLength: 1, maxLength: 10000, description: 文本正文、HTTP(S) 媒体地址，或当前项目的同源画布素材地址。所有素材内容合计不超过 1 MiB。 }
+              content: { type: string, maxLength: 10000, description: 文本正文、HTTP(S) 媒体地址，或当前项目的同源画布素材地址。图片和视频节点允许留空以使用生成结果。所有素材内容合计不超过 1 MiB。 }
               position:
                 type: object
                 required: [x, y]

@@ -131,6 +131,8 @@ type Service struct {
 	images         ImageGenerator
 	files          ImageFiles
 	canvasMedia    CanvasMediaFiles
+	canvasJobs     CanvasGenerationRepository
+	canvasEngine   CanvasGenerationEngine
 	styles         StyleRepository
 	storyboards    StoryboardRepository
 	repairs        RepairRepository

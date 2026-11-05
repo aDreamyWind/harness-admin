@@ -36,7 +36,7 @@ export function DramaCanvasInlineEditor({ kind, title: initialTitle, content: in
   const [content, setContent] = useState(existingFile ? '' : initialContent)
   const [file, setFile] = useState<File>()
   const [validationError, setValidationError] = useState('')
-  const canSave = (!asset || Boolean(title.trim())) && Boolean(content.trim() || file || existingFile)
+  const canSave = (!asset || Boolean(title.trim())) && Boolean(content.trim() || file || existingFile || kind === 'image' || kind === 'video')
   const label = labels[kind]
 
   function selectFile(next?: File) {

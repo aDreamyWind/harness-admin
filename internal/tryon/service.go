@@ -247,9 +247,9 @@ func (s *Service) GeneratePerson(ctx context.Context, owner Owner, in PersonInpu
 	if err != nil {
 		return Asset{}, err
 	}
-	im, err = prepareImage(im.Data, nil)
+	im, err = prepareGeneratedAsset(im.Data)
 	if err != nil {
-		return Asset{}, errors.Join(ErrInference, err)
+		return Asset{}, fmt.Errorf("%w：%v", ErrInference, err)
 	}
 	return s.repo.SaveAsset(ctx, owner, AssetImage{Asset: meta, Image: im})
 }

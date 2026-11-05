@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -97,12 +96,9 @@ func unsafeIP(ip net.IP) bool {
 		return true
 	}
 	if v4 := ip.To4(); v4 != nil {
-		value := v4.String()
-		if value == "169.254.169.254" {
-			return true
-		}
-		first, _ := strconv.Atoi(strings.Split(value, ".")[0])
-		return first == 0 || first >= 224
+		// RFC 6598 共享地址包含部分云平台的实例元数据地址。
+		shared := v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
+		return v4[0] == 0 || v4[0] >= 224 || shared
 	}
 	return false
 }

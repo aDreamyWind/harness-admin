@@ -110,13 +110,21 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	novelService := novel.NewService(pgstore.NewNovelRepository(db), novelModel, novelModel, novelCoverStore).
 		WithCoverStyles(novelModel).WithCoverGeneration(novelCoverStore)
 	dramaMedia := &dramaMediaFiles{directory: cfg.DramaMediaDirectory}
+	dramaImages := &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}
+	dramaVideos := &dramaVideoEngine{gateway: modelGatewayService, forwarder: modelForwarder}
+	canvasGeneration := &dramaCanvasGenerationEngine{
+		catalog: modelGatewayService, image: dramaImages, video: dramaVideos,
+		// 用户提供的参考图链接不能继承模型供应商的私网白名单。
+		referenceDownload: modelprovider.NewGatewayForwarder(nil),
+	}
 	dramaService := drama.NewService(dramaRepository, &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder}).
-		WithVisuals(dramaRepository, &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}, dramaMedia).
+		WithVisuals(dramaRepository, dramaImages, dramaMedia).
 		WithCanvasMedia(dramaMedia).
+		WithCanvasGeneration(dramaRepository, canvasGeneration).
 		WithStyles(dramaRepository).
 		WithStoryboards(dramaRepository).
 		WithRepairCoordinator(dramaRepository).
-		WithSegmentVideos(dramaRepository, &dramaVideoEngine{gateway: modelGatewayService, forwarder: modelForwarder}, dramaMedia)
+		WithSegmentVideos(dramaRepository, dramaVideos, dramaMedia)
 	if err := dramaService.Recover(startupCtx); err != nil {
 		redisClient.Close()
 		db.Close()
@@ -179,6 +187,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		Drama:                 dramaService,
 		DramaVisual:           dramaService,
 		DramaCanvasMedia:      dramaService,
+		DramaCanvasGeneration: dramaService,
 		DramaStoryboards:      dramaService,
 		DramaSegmentVideos:    dramaService,
 		DramaStyles:           dramaService,

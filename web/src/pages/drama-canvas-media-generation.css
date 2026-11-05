@@ -1,0 +1,21 @@
+.drama-canvas-media-generation { display:grid; gap:9px; padding:11px; border-top:1px solid #e9eaf3; color:#33445e; }
+.drama-canvas-media-generation>header, .drama-canvas-media-generation>footer { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.drama-canvas-media-generation>header strong { font-size:13px; }
+.drama-canvas-media-generation .ant-input { font-size:12px; }
+.drama-canvas-media-fields { display:flex; gap:5px; }
+.drama-canvas-media-fields>.ant-select:first-child { flex:1; min-width:0; }
+.drama-canvas-media-fields>.ant-select:nth-child(2) { width:66px; }
+.drama-canvas-media-fields>.ant-input-number { width:68px; }
+.drama-canvas-generation-inputs { display:grid; gap:3px; max-height:105px; overflow:auto; list-style:none; margin:0; padding:0; }
+.drama-canvas-generation-inputs li { display:flex; align-items:center; gap:7px; padding:3px 6px; border-radius:5px; background:#f1f4fa; font-size:11px; }
+.drama-canvas-generation-inputs li span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.drama-canvas-generation-inputs li small { color:#68758b; white-space:nowrap; }
+.drama-canvas-generation-inputs img { width:20px; height:20px; border-radius:3px; object-fit:cover; }
+.drama-canvas-media-hint, .drama-canvas-media-failure { margin:0; font-size:11px; line-height:1.5; }
+.drama-canvas-media-hint { color:#68758b; }
+.drama-canvas-media-failure { color:#a6463c; }
+.drama-canvas-media-result { display:grid; justify-items:end; gap:6px; }
+.drama-canvas-media-result :is(img, video) { width:100%; max-height:170px; object-fit:contain; border-radius:6px; background:#f1f4fa; }
+.drama-canvas-media-empty { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:8px 10px; color:#68758b; font-size:12px; }
+.drama-canvas-node.is-generating .drama-canvas-node-image { height:125px; }
+.drama-canvas-node.is-generating video { max-height:130px; }

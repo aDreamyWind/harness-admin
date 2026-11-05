@@ -34,15 +34,22 @@ type dramaImageEngine struct {
 
 func (w *dramaImageEngine) Generate(ctx context.Context, in drama.ImageRequest) (data []byte, mime string, callErr error) {
 	// 保持目标比例；供应商不支持尺寸时明确返回错误，不静默生成错误比例。
-	size := map[string]string{"9:16": "864x1536", "16:9": "1536x864", "1:1": "1024x1024", "2:3": "1024x1536"}[in.AspectRatio]
-	payload := map[string]any{"model": in.ModelCode, "prompt": in.Prompt, "n": 1, "size": size}
+	payload := map[string]any{"model": in.ModelCode, "prompt": in.Prompt, "n": 1, "size": dramaImageSize(in.AspectRatio)}
 	if in.ReferenceDataURI != "" {
 		payload["image"] = in.ReferenceDataURI
 	}
 	return w.generate(ctx, in.OrganizationID, in.UserID, "image", payload)
 }
 
+func dramaImageSize(ratio string) string {
+	return map[string]string{"9:16": "864x1536", "16:9": "1536x864", "1:1": "1024x1024", "2:3": "1024x1536"}[ratio]
+}
+
 func (w *dramaImageEngine) generate(ctx context.Context, organizationID, userID, operation string, payload map[string]any) (data []byte, mime string, callErr error) {
+	return w.generateRecorded(ctx, organizationID, userID, operation, payload, nil)
+}
+
+func (w *dramaImageEngine) generateRecorded(ctx context.Context, organizationID, userID, operation string, payload map[string]any, loggedBody []byte) (data []byte, mime string, callErr error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, "", err
@@ -59,7 +66,7 @@ func (w *dramaImageEngine) generate(ctx context.Context, organizationID, userID,
 	}
 	status := http.StatusBadGateway
 	logErr := modelgateway.ExecuteRecordedCall(ctx, w.gateway, prepared, modelgateway.CallLogOptions{
-		Source: source, Operation: operation,
+		Source: source, Operation: operation, RequestBody: loggedBody,
 	}, func() modelgateway.CallOutcome {
 		response, err := w.forwarder.Forward(ctx, route, prepared.Body, false)
 		callErr = err

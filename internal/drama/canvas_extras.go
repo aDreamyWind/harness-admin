@@ -98,12 +98,14 @@ func validCanvasCardContent(project string, card CanvasCard) bool {
 	case "text":
 		return validCanvasText(card.Content, 10000)
 	case "image", "video", "audio":
+		if card.Content == "" {
+			return card.Kind == "image" || card.Kind == "video"
+		}
 		if len(card.Content) > 8192 {
 			return false
 		}
-		if relative, ok := strings.CutPrefix(card.Content, "/api/v1/ai-drama/projects/"+project+"/canvas/media/"); ok {
-			id, ok := strings.CutSuffix(relative, "/content")
-			return ok && canonicalCanvasID(id)
+		if _, ok := canvasMediaReferenceID(project, card.Content); ok {
+			return true
 		}
 		parsed, err := url.Parse(card.Content)
 		return err == nil && parsed.Hostname() != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")

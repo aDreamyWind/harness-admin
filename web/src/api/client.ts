@@ -75,8 +75,8 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body.data
 }
 
-export async function requestBlob(path: string, accept: string, fallbackMessage: string): Promise<Blob> {
-  const response = await fetchApi(path, undefined, accept)
+export async function requestBlob(path: string, accept: string, fallbackMessage: string, init?: RequestInit): Promise<Blob> {
+  const response = await fetchApi(path, init, accept)
   if (!response.ok) throw await responseError(path, response, fallbackMessage)
   return response.blob()
 }

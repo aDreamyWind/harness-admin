@@ -28,7 +28,7 @@ import (
 	"harness-admin/internal/tryon"
 )
 
-const expectedMigrationVersion = 66
+const expectedMigrationVersion = 67
 
 // 需要具备 CREATE DATABASE 权限的专用测试实例；绝不能指向生产数据库。
 func TestMigrateBaselineMatchesLegacy(t *testing.T) {

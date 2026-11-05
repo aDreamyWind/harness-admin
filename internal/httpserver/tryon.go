@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,6 +19,7 @@ type TryOnService interface {
 	ListAssets(context.Context, tryon.Owner) ([]tryon.Asset, error)
 	Asset(context.Context, tryon.Owner, string) (tryon.AssetImage, error)
 	SaveAsset(context.Context, tryon.Owner, string, string, string, []byte, *tryon.Box) (tryon.Asset, error)
+	PreviewAsset(context.Context, tryon.Owner, tryon.AssetPreviewInput, []byte) (tryon.Image, error)
 	Detect(context.Context, tryon.Owner, string, []byte) ([]tryon.Candidate, error)
 	GeneratePerson(context.Context, tryon.Owner, tryon.PersonInput) (tryon.Asset, error)
 	ListJobs(context.Context, tryon.Owner) ([]tryon.Job, error)
@@ -61,18 +63,28 @@ func registerTryOnRoutes(router *gin.Engine, deps Dependencies) {
 		if !ok {
 			return
 		}
-		var box *tryon.Box
-		if text := fields["box"]; text != "" {
-			var coords []float64
-			if json.Unmarshal([]byte(text), &coords) != nil || len(coords) != 4 {
-				httpx.Fail(c, http.StatusBadRequest, "invalid_tryon_input", "衣物框选坐标无效")
-				return
-			}
-			value := tryon.Box(coords)
-			box = &value
+		box, ok := readTryOnBox(c, fields["box"])
+		if !ok {
+			return
 		}
 		result, err := service.SaveAsset(c.Request.Context(), tryOnOwner(c), fields["kind"], fields["name"], fields["category"], data, box)
 		write(c, http.StatusCreated, result, err)
+	})
+	group.POST("/assets/preview", requireCSRF(deps), func(c *gin.Context) {
+		data, fields, ok := readTryOnUpload(c)
+		if !ok {
+			return
+		}
+		box, ok := readTryOnBox(c, fields["box"])
+		if !ok {
+			return
+		}
+		input := tryon.AssetPreviewInput{
+			Kind: fields["kind"], Name: fields["name"], Category: fields["category"],
+			ModelCode: fields["modelCode"], Box: box,
+		}
+		result, err := service.PreviewAsset(c.Request.Context(), tryOnOwner(c), input, data)
+		sendImage(c, result, err)
 	})
 	group.POST("/garments/detect", requireCSRF(deps), func(c *gin.Context) {
 		data, fields, ok := readTryOnUpload(c)
@@ -120,6 +132,22 @@ func bindTryOnJSON(c *gin.Context, input any) bool {
 		return false
 	}
 	return true
+}
+
+func readTryOnBox(c *gin.Context, raw string) (*tryon.Box, bool) {
+	if raw == "" {
+		return nil, true
+	}
+	var coords []*float64
+	if json.Unmarshal([]byte(raw), &coords) != nil || len(coords) != 4 || slices.Contains(coords, nil) {
+		httpx.Fail(c, http.StatusBadRequest, "invalid_tryon_input", "衣物框选坐标无效")
+		return nil, false
+	}
+	var box tryon.Box
+	for i, coord := range coords {
+		box[i] = *coord
+	}
+	return &box, true
 }
 
 func readTryOnUpload(c *gin.Context) ([]byte, map[string]string, bool) {

@@ -1,14 +1,15 @@
 import { ArrowLeftOutlined, CopyOutlined, DeleteOutlined, EditOutlined, EllipsisOutlined, EyeOutlined, GiftOutlined, PictureOutlined, PlusOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Dropdown, Empty, Input, Modal, Select, Skeleton, Tag, Tooltip, message } from 'antd'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Background, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, SelectionMode, applyNodeChanges, useNodesInitialized, useReactFlow, type Connection, type OnConnectEnd, type Node, type NodeProps, type Viewport, type NodeChange, type Edge, type XYPosition } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { ApiError } from '../api/client'
-import { createDramaCanvasAsset, deriveDramaForm, editDramaForm, generateDramaImage, getDramaCanvas, saveDramaCanvasLayout, uploadDramaCanvasMedia, type DramaAssetForm, type DramaAssetKind, type DramaCanvas, type DramaCanvasCard as MediaCard, type DramaCanvasCardKind as CardKind, type DramaCanvasExtras as CanvasExtras, type DramaCanvasLayout, type DramaCanvasLink, type DramaProject } from '../api/drama'
+import { createDramaCanvasAsset, deriveDramaForm, editDramaForm, generateDramaImage, getDramaCanvas, listDramaCanvasGenerations, saveDramaCanvasLayout, startDramaCanvasGeneration, uploadDramaCanvasMedia, type DramaAssetForm, type DramaAssetKind, type DramaCanvas, type DramaCanvasCard as MediaCard, type DramaCanvasCardKind as CardKind, type DramaCanvasExtras as CanvasExtras, type DramaCanvasGenerationInput, type DramaCanvasGenerationJob, type DramaCanvasGenerationKind, type DramaCanvasLayout, type DramaCanvasLink, type DramaProject } from '../api/drama'
 import { DramaCanvasCreateMenu, type CanvasCreateKind } from './DramaCanvasCreateMenu'
 import { DramaCanvasInlineEditor, type DramaCanvasInlineInput } from './DramaCanvasInlineEditor'
+import { DramaCanvasMediaGeneration, type CanvasGenerationReference } from './DramaCanvasMediaGeneration'
 import { DramaCanvasNodeToolbar, DramaCanvasToolDock, DramaCanvasViewTools, type DramaCanvasTool } from './DramaCanvasTools'
 import { DramaImageModelSelect, useDramaCanvas } from './DramaImageTools'
 import { DramaStylePicker } from './DramaStylePicker'
@@ -33,12 +34,25 @@ type InlineEdit = { id: string; kind: NodeKind; title: string; content: string }
 )
 type NodeEditorProps = ComponentProps<typeof DramaCanvasInlineEditor>
 const CanvasEditor = createContext<{ id: string; props: NodeEditorProps } | null>(null)
+const CanvasMedia = createContext<{
+  jobs: Map<string, DramaCanvasGenerationJob>
+  active?: { id: string; references: CanvasGenerationReference[]; submitting: boolean; error?: string }
+  open: (id: string) => void
+  close: () => void
+  edit: (id: string) => void
+  generate: (id: string, input: DramaCanvasGenerationInput) => void
+  adopt: (id: string, url: string) => void
+} | null>(null)
 const kindNames = { character: '角色', scene: '场景', prop: '道具' }
 const kindIcons = { character: <UserOutlined />, scene: <PictureOutlined />, prop: <GiftOutlined /> }
 const nodeNames = { ...kindNames, ...cardNames }
 
 function isAssetKind(kind: NodeKind): kind is DramaAssetKind {
   return kind === 'character' || kind === 'scene' || kind === 'prop'
+}
+
+function isGenerationKind(kind: NodeKind): kind is DramaCanvasGenerationKind {
+  return kind === 'image' || kind === 'video'
 }
 
 function useNodeEditor(id: string) {
@@ -84,19 +98,33 @@ function sameConnection(link: DramaCanvasLink, connection: Pick<Connection, 'sou
 
 function MediaCanvasNode({ id, data, selected }: NodeProps<MediaNode>) {
   const [failedURL, setFailedURL] = useState('')
-  const failed = failedURL === data.content
+  const generation = useContext(CanvasMedia)
+  const job = generation?.jobs.get(id)
+  const content = data.content || job?.resultUrl || ''
+  const failed = Boolean(content) && failedURL === content
   const editor = useNodeEditor(id)
-  return <div className={`drama-canvas-node scene media ${data.kind}${selected ? ' selected' : ''}${editor ? ' editing' : ''}`}>
-    <div className="drama-canvas-node-caption"><span>{cardNames[data.kind]} · {data.title}</span></div>
+  const active = generation?.active?.id === id ? generation.active : undefined
+  const showGeneration = !editor && active && isGenerationKind(data.kind)
+  return <div className={`drama-canvas-node scene media ${data.kind}${selected ? ' selected' : ''}${editor ? ' editing' : ''}${showGeneration ? ' is-generating' : ''}`}>
+    <div className="drama-canvas-node-caption"><span>{data.title === cardNames[data.kind] ? data.title : `${cardNames[data.kind]} · ${data.title}`}</span></div>
     <div className="drama-canvas-node-body">
       <Handle type="target" position={Position.Left} />
       {editor ?? <>
       {failed && <div className="drama-canvas-media-error">素材无法读取，可以编辑节点换一份素材。</div>}
-      {!failed && data.kind === 'video' && <video className="nodrag nowheel" controls playsInline preload="metadata" src={data.content} aria-label={data.title} onError={() => setFailedURL(data.content)} />}
-      {!failed && data.kind === 'audio' && <audio className="nodrag nowheel" controls preload="metadata" src={data.content} aria-label={data.title} onError={() => setFailedURL(data.content)} />}
-      {!failed && data.kind === 'image' && <div className="drama-canvas-node-image"><img src={data.content} alt={data.title} loading="lazy" onError={() => setFailedURL(data.content)} /></div>}
+      {!failed && content && data.kind === 'video' && <video className="nodrag nowheel" controls playsInline preload="metadata" src={content} aria-label={data.title} onError={() => setFailedURL(content)} />}
+      {!failed && content && data.kind === 'audio' && <audio className="nodrag nowheel" controls preload="metadata" src={content} aria-label={data.title} onError={() => setFailedURL(content)} />}
+      {!failed && content && data.kind === 'image' && <div className="drama-canvas-node-image"><img src={content} alt={data.title} loading="lazy" onError={() => setFailedURL(content)} /></div>}
       {data.kind === 'text' && <div className="drama-canvas-text nodrag nowheel">{data.content}</div>}
+      {!showGeneration && isGenerationKind(data.kind) && (!content || job?.status === 'running' || job?.status === 'failed' || (job?.resultUrl && job.resultUrl !== content)) &&
+        <div className="drama-canvas-media-empty">
+          <span>{job?.status === 'running' ? '后台生成中' : job?.status === 'failed' ? '生成失败' : job?.resultUrl ? '生成结果待查看' : `暂无${cardNames[data.kind]}`}</span>
+          <Button size="small" type="text" className="nodrag" onClick={() => generation?.open(id)}>{job ? '查看生成' : 'AI 生成'}</Button>
+        </div>}
       </>}
+      {showGeneration && generation && active && isGenerationKind(data.kind) &&
+        <DramaCanvasMediaGeneration kind={data.kind} content={data.content} job={job} references={active.references} busy={active.submitting}
+          error={active.error} onGenerate={(input) => generation.generate(id, input)} onAdopt={(url) => generation.adopt(id, url)}
+          onImport={() => generation.edit(id)} onClose={generation.close} />}
       <Handle type="source" position={Position.Right} />
     </div>
   </div>
@@ -163,6 +191,10 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   const extrasKey = `drama-canvas-extras:${project.id}`
   const [extras, setExtras] = useState(emptyExtras)
   const extrasRef = useRef(emptyExtras)
+  const [mediaGeneratorId, setMediaGeneratorId] = useState('')
+  const mediaSubmitting = useRef(new Set<string>())
+  const [submittingMedia, setSubmittingMedia] = useState<Set<string>>(new Set())
+  const [mediaErrors, setMediaErrors] = useState<Record<string, string>>({})
   const extrasStored = useRef(false)
   const extrasVerified = useRef(false)
   const importingLegacy = useRef(false)
@@ -203,6 +235,14 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const initialized = useRef(false)
   const isPanning = spacePan || tool === 'pan'
+  const generationKey = ['drama-canvas-generations', project.id]
+  const generations = useQuery({
+    queryKey: generationKey,
+    queryFn: () => listDramaCanvasGenerations(project.id),
+    enabled: extras.cards.some((card) => isGenerationKind(card.kind)),
+    refetchInterval: (query) => query.state.data?.some((job) => job.status === 'running') ? 2500 : false,
+  })
+  const generationJobs = useMemo(() => new Map((generations.data ?? []).map((job) => [job.nodeId, job])), [generations.data])
 
   function snapshot(): CanvasSnapshot {
     return { extras: extrasRef.current, formPositions: new Map(formPositions.current) }
@@ -283,6 +323,50 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     setEditor(null)
   }
 
+  function openMediaGenerator(id: string) {
+    if (inlineRef.current) { messageApi.info('请先保存或取消正在编辑的节点'); return }
+    setTool('select')
+    choose(id)
+    setMediaGeneratorId(id)
+    revealEditor.current = id
+  }
+
+  function previewCard(card: MediaCard) {
+    const content = card.content || generationJobs.get(card.id)?.resultUrl
+    if (content) setMediaPreview({ ...card, content })
+  }
+
+  function adoptMediaResult(id: string, url: string) {
+    if (generationJobs.get(id)?.resultUrl !== url) return
+    const graph = extrasRef.current
+    saveExtras({ ...graph, cards: graph.cards.map((card) => card.id === id ? { ...card, content: url } : card) })
+  }
+
+  async function generateMedia(id: string, input: DramaCanvasGenerationInput) {
+    if (mediaSubmitting.current.has(id) || generationJobs.get(id)?.status === 'running') return
+    mediaSubmitting.current.add(id)
+    setSubmittingMedia(new Set(mediaSubmitting.current))
+    setMediaErrors((errors) => ({ ...errors, [id]: '' }))
+    try {
+      if (topologyChanging.current) throw new Error('画布正在更新，请稍后提交')
+      await flush()
+      if (pending.current) throw new Error('请等画布保存完成再提交生成')
+      const job = await startDramaCanvasGeneration(project.id, id, revision.current, input)
+      await cache.cancelQueries({ queryKey: generationKey })
+      cache.setQueryData<DramaCanvasGenerationJob[]>(generationKey, (jobs) => [...(jobs ?? []).filter((item) => item.nodeId !== id), job])
+      void cache.invalidateQueries({ queryKey: generationKey })
+    } catch (error) {
+      const canvasChanged = error instanceof ApiError && error.status === 409
+      setMediaErrors((errors) => ({ ...errors, [id]: canvasChanged ? '画布有更新，请核对连线后再生成。'
+        : error instanceof Error ? error.message : '提交生成任务失败，请重试' }))
+      if (canvasChanged) void query.refetch()
+      void cache.invalidateQueries({ queryKey: generationKey })
+    } finally {
+      mediaSubmitting.current.delete(id)
+      setSubmittingMedia(new Set(mediaSubmitting.current))
+    }
+  }
+
   function withConnection(links: DramaCanvasLink[], target: string, origin?: ConnectionStart) {
     if (!origin || !nodesRef.current.some((node) => node.id === origin.nodeId)) return links
     return [...links, origin.type === 'source'
@@ -300,7 +384,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       const size = canvasNodeSize(node.data.kind, node.measured)
       const anchor = { x: node.position.x + size.width + 36, y: node.position.y }
       const position = findCanvasNodePosition(anchor, size, occupied, visible)
-      const copy = { ...node.data, id: crypto.randomUUID(), position }
+      const copy = { ...node.data, id: crypto.randomUUID(), position, content: node.data.content || generationJobs.get(node.id)?.resultUrl || '' }
       ids.set(node.id, copy.id)
       occupied.push({ id: copy.id, group: copy.kind, position, ...size })
       return copy
@@ -567,9 +651,10 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow, measured, nodes])
   useEffect(() => {
-    if (!inlineEdit || revealEditor.current !== inlineEdit.id) return
-    const node = flow.getNode(inlineEdit.id)
-    const element = shell.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(inlineEdit.id)}"]`)
+    const active = inlineEdit?.id ?? mediaGeneratorId
+    if (!active || revealEditor.current !== active) return
+    const node = flow.getNode(active)
+    const element = shell.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(active)}"]`)
     if (!node || !element?.offsetWidth || !element.offsetHeight) return
     revealEditor.current = ''
     const { position } = node
@@ -583,7 +668,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     const next = revealCanvasNode({ ...position, width, height }, readable, area)
     if (next !== current) void flow.setViewport(next, { duration: 180 })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flow, inlineEdit, measured, nodes])
+  }, [flow, inlineEdit, mediaGeneratorId, measured, nodes])
   useEffect(() => {
     if (initialized.current || !query.data || (!measured && (query.data.forms.some((form) => !extras.hidden.includes(form.id)) || extras.cards.length))) return
     initialized.current = true
@@ -824,6 +909,17 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       openFilePicker(point)
       return
     }
+    if (isGenerationKind(kind)) {
+      if (inlineRef.current) { setContextMenu(null); messageApi.info('请先保存或取消正在编辑的节点'); return }
+      const graph = extrasRef.current
+      const anchor = flow.screenToFlowPosition(point ?? canvasCenter())
+      const position = findCanvasNodePosition(anchor, { ...canvasNodeSize(kind), height: 340 }, nodesRef.current.map(nodeGeometry), point ? undefined : visibleCanvasArea())
+      const card = { id: crypto.randomUUID(), kind, title: cardNames[kind], content: '', position }
+      saveExtras({ ...graph, cards: [...graph.cards, card], links: withConnection(graph.links, card.id, menu.connection) })
+      setContextMenu(null)
+      openMediaGenerator(card.id)
+      return
+    }
     openEditor({ id: crypto.randomUUID(), mode: 'new', kind, title: '', content: '', position: nodePosition(kind, point), connection: menu.connection })
   }
 
@@ -873,6 +969,31 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       : { source: id, target: connection.nodeId, targetHandle: connection.handleId }
     return [...edges, { ...endpoints, id: `draft-link-${id}`, className: 'drama-canvas-draft-link', selectable: false, deletable: false, reconnectable: false }]
   }, [edges, inlineEdit, nodes])
+
+  const activeMediaReferences = useMemo(() => {
+    if (!mediaGeneratorId) return []
+    const cards = new Map(extras.cards.map((card) => [card.id, card]))
+    const forms = new Map((query.data?.forms ?? []).filter((form) => !extras.hidden.includes(form.id)).map((form) => [form.id, form]))
+    const seen = new Set<string>()
+    return extras.links.flatMap((link): CanvasGenerationReference[] => {
+      if (link.target !== mediaGeneratorId || seen.has(link.source)) return []
+      seen.add(link.source)
+      const card = cards.get(link.source)
+      if (card?.kind === 'text') return [{ id: card.id, title: card.title, kind: 'text', content: card.content }]
+      if (card?.kind === 'image') return [{ id: card.id, title: card.title, kind: 'image', url: card.content || generationJobs.get(card.id)?.resultUrl }]
+      const form = forms.get(link.source)
+      return form?.imageUrl ? [{ id: form.id, title: `${form.assetName} · ${form.name}`, kind: 'image', url: form.imageUrl }] : []
+    })
+  }, [extras, generationJobs, mediaGeneratorId, query.data?.forms])
+  const mediaActions = useRef({ open: openMediaGenerator, edit: startEditing, generate: generateMedia, adopt: adoptMediaResult })
+  mediaActions.current = { open: openMediaGenerator, edit: startEditing, generate: generateMedia, adopt: adoptMediaResult }
+  const mediaContext = useMemo(() => ({
+    jobs: generationJobs,
+    active: mediaGeneratorId ? { id: mediaGeneratorId, references: activeMediaReferences, submitting: submittingMedia.has(mediaGeneratorId), error: mediaErrors[mediaGeneratorId] } : undefined,
+    open: (id: string) => mediaActions.current.open(id), edit: (id: string) => mediaActions.current.edit(id),
+    close: () => setMediaGeneratorId(''), generate: (id: string, input: DramaCanvasGenerationInput) => void mediaActions.current.generate(id, input),
+    adopt: (id: string, url: string) => mediaActions.current.adopt(id, url),
+  }), [activeMediaReferences, generationJobs, mediaErrors, mediaGeneratorId, submittingMedia])
 
   const modalOpen = Boolean(preview || mediaPreview || modelSettingsOpen)
   const historyDisabled = Boolean(inlineEdit) || working || uploading || !!saveError || nodes.some((node) => node.dragging)
@@ -933,7 +1054,10 @@ function AssetCanvas({ project }: { project: DramaProject }) {
         onClick={() => setGenerationForId((id) => id === selected.id ? '' : selected.id)}>生图设置</Button>
     </>}
     {selectedCard && <Button size="small" icon={<EditOutlined />} onClick={() => startEditing(selectedCard.id)}>编辑节点</Button>}
-    {selectedCard && selectedCard.data.kind !== 'text' && <Button size="small" icon={<EyeOutlined />} onClick={() => setMediaPreview(selectedCard.data)}>预览</Button>}
+    {selectedCard && isGenerationKind(selectedCard.data.kind) && <Button size="small" icon={<PictureOutlined />}
+      aria-pressed={mediaGeneratorId === selectedCard.id} onClick={() => mediaGeneratorId === selectedCard.id ? setMediaGeneratorId('') : openMediaGenerator(selectedCard.id)}>AI 生成</Button>}
+    {selectedCard && selectedCard.data.kind !== 'text' && (selectedCard.data.content || generationJobs.get(selectedCard.id)?.resultUrl) &&
+      <Button size="small" icon={<EyeOutlined />} onClick={() => previewCard(selectedCard.data)}>预览</Button>}
     {selectedMedia.length > 0 && <Button size="small" icon={<CopyOutlined />} onClick={() => duplicateCards(selectedMedia)}>{selectedMedia.length < selectedNodes.length ? '复制素材节点' : '复制节点'}</Button>}
     {selectedNodes.length > 1 && <span>{selectedNodes.length} 个节点</span>}
     <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeNodes(selectedNodes, selectedLinks)}>
@@ -989,7 +1113,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     {query.error && query.data && !saveError && <Alert className="drama-canvas-save-alert" type="warning" showIcon title="暂时无法刷新资产状态"
       action={<Button size="small" onClick={() => void query.refetch()}>重试</Button>} />}
     {!query.data ? <div className="drama-canvas-loading">{query.error ? <Alert type="error" title="读取画布失败" description={query.error.message} action={<Button onClick={() => void query.refetch()}>重试</Button>} /> : <Skeleton active />}</div> : <>
-      <CanvasEditor.Provider value={editor}>
+      <CanvasMedia.Provider value={mediaContext}><CanvasEditor.Provider value={editor}>
       <ReactFlow<FlowNode> className={`drama-canvas-flow${isPanning ? ' is-panning' : ''}`} nodes={renderedNodes} edges={renderedEdges} nodeTypes={nodeTypes} onNodesChange={changeFlowNodes}
         onNodeClick={() => setContextMenu(null)} onPaneClick={() => {
           if (isPanning) return
@@ -1050,7 +1174,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
         {!isPanning && !selecting && !inlineEdit && !nodes.some((node) => node.dragging) && selectedNodes.length > 0 &&
           <DramaCanvasNodeToolbar nodes={selectedNodes}>{selectionTools}</DramaCanvasNodeToolbar>}
       </ReactFlow>
-      </CanvasEditor.Provider>
+      </CanvasEditor.Provider></CanvasMedia.Provider>
       {!isPanning && !selectedNodes.length && selectedLinks.size > 0 && <div className="drama-canvas-edge-tools">{selectionTools}</div>}
       <DramaCanvasToolDock tool={isPanning ? 'pan' : tool} onTool={setTool}
         canUndo={history.canUndo && !historyDisabled} canRedo={history.canRedo && !historyDisabled}

@@ -14,11 +14,16 @@ import (
 )
 
 type dramaVideoGatewayStub struct {
-	records []modelgateway.RecordCallInput
+	records         []modelgateway.RecordCallInput
+	upstreamModelID string
 }
 
 func (s *dramaVideoGatewayStub) PrepareForUserOperation(_ context.Context, org, user string, body []byte, operation string) (modelgateway.PreparedRequest, error) {
-	return modelgateway.PreparedRequest{Route: modelgateway.Route{ProviderKind: "aliyun_bailian", UpstreamModelID: "wan3.0-video"}, Caller: modelgateway.Caller{OrganizationID: org, UserID: user}, Body: body}, nil
+	upstreamID := s.upstreamModelID
+	if upstreamID == "" {
+		upstreamID = "wan3.0-video"
+	}
+	return modelgateway.PreparedRequest{Route: modelgateway.Route{ProviderKind: "aliyun_bailian", UpstreamModelID: upstreamID}, Caller: modelgateway.Caller{OrganizationID: org, UserID: user}, Body: body}, nil
 }
 func (s *dramaVideoGatewayStub) RecordCall(_ context.Context, in modelgateway.RecordCallInput) error {
 	s.records = append(s.records, in)
