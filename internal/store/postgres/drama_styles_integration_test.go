@@ -38,6 +38,15 @@ func TestDramaStylesPersistIDsAndKeepTemplatesServerSide(t *testing.T) {
 	if err != nil || private.ImagePrompt == "" || private.VideoPrompt == "" {
 		t.Fatal("风格模板未保存", err)
 	}
+	style, err := repo.ResolveCatalogStyle(ctx, private.ID)
+	if err != nil || style != private {
+		t.Fatal("目录查询未读取已选风格及模板", err)
+	}
+	for _, unavailable := range []string{private.Name, "cinematic-realism"} {
+		if _, err = repo.ResolveCatalogStyle(ctx, unavailable); !errors.Is(err, drama.ErrStyleUnavailable) {
+			t.Fatalf("目录查询应拒绝显示名称和历史风格 %q: %v", unavailable, err)
+		}
+	}
 	raw, _ := json.Marshal(options)
 	if strings.Contains(string(raw), private.ImagePrompt) || strings.Contains(string(raw), "imagePrompt") {
 		t.Fatal("公开目录泄露模板")

@@ -15,12 +15,14 @@ RUN apk add --no-cache ca-certificates \
     && chown harness:harness /app/data
 WORKDIR /app
 COPY --from=backend-build /out/ /usr/local/bin/
+COPY LICENSE /usr/share/doc/harness-admin/LICENSE
 USER harness
 CMD ["server"]
 
-FROM node:24-alpine AS frontend-build
+FROM node:22-alpine AS frontend-build
 WORKDIR /src
-RUN npm install --global pnpm@12.10.1
+ARG npm_config_registry=https://registry.npmjs.org
+RUN npm install --global pnpm@10.34.0
 COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/package.json ./web/
 RUN pnpm install --frozen-lockfile
@@ -30,3 +32,4 @@ RUN pnpm --filter harness-admin-web run build
 FROM nginx:1.28-alpine AS frontend
 COPY deploy/demo/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=frontend-build /src/web/dist/ /usr/share/nginx/html/
+COPY LICENSE /usr/share/doc/harness-admin/LICENSE

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"harness-admin/internal/drama"
 	"harness-admin/internal/modelgateway"
@@ -12,6 +13,9 @@ import (
 type novelWriter struct {
 	completion dramaWriter
 	image      *dramaImageEngine
+	styles     interface {
+		ResolveCatalogStyle(context.Context, string) (drama.VisualStyle, error)
+	}
 }
 
 func (w *novelWriter) Models(ctx context.Context, owner novel.Owner) ([]novel.Model, error) {
@@ -20,6 +24,17 @@ func (w *novelWriter) Models(ctx context.Context, owner novel.Owner) ([]novel.Mo
 
 func (w *novelWriter) CoverModels(ctx context.Context, owner novel.Owner) ([]novel.Model, error) {
 	return w.modelsByType(ctx, owner, "image")
+}
+
+func (w *novelWriter) ResolveCoverStyle(ctx context.Context, id string) (novel.CoverStyle, error) {
+	style, err := w.styles.ResolveCatalogStyle(ctx, id)
+	if errors.Is(err, drama.ErrStyleUnavailable) {
+		return novel.CoverStyle{}, novel.ErrCoverStyle
+	}
+	if err != nil {
+		return novel.CoverStyle{}, fmt.Errorf("读取小说封面风格失败: %w", err)
+	}
+	return novel.CoverStyle{Name: style.Name, ImagePrompt: style.ImagePrompt}, nil
 }
 
 func (w *novelWriter) modelsByType(ctx context.Context, owner novel.Owner, modelType string) ([]novel.Model, error) {

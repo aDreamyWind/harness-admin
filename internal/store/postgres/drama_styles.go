@@ -9,9 +9,11 @@ import (
 	"harness-admin/internal/drama"
 )
 
+const dramaStyleCatalogFilter = `enabled AND category='2D' AND catalog_name IS NOT NULL`
+
 func (r *DramaRepository) ListStyles(ctx context.Context) ([]drama.StyleOption, error) {
 	rows, err := r.db.Query(ctx, `SELECT id,catalog_name,category,preview_url,preview_x,preview_y
-		FROM drama_visual_styles WHERE enabled AND category='2D' AND catalog_name IS NOT NULL ORDER BY sort_order,id`)
+		FROM drama_visual_styles WHERE `+dramaStyleCatalogFilter+` ORDER BY sort_order,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -26,6 +28,12 @@ func (r *DramaRepository) ListStyles(ctx context.Context) ([]drama.StyleOption, 
 	}
 	return out, rows.Err()
 }
+
+func (r *DramaRepository) ResolveCatalogStyle(ctx context.Context, id string) (drama.VisualStyle, error) {
+	return readVisualStyle(r.db.QueryRow(ctx, `SELECT id,catalog_name,category,preview_url,preview_x,preview_y,image_prompt,video_prompt
+		FROM drama_visual_styles WHERE `+dramaStyleCatalogFilter+` AND id=$1`, id))
+}
+
 func (r *DramaRepository) ResolveStyle(ctx context.Context, key string) (drama.VisualStyle, error) {
 	return readVisualStyle(r.db.QueryRow(ctx, `SELECT id,COALESCE(catalog_name,name),category,preview_url,preview_x,preview_y,image_prompt,video_prompt
 		FROM drama_visual_styles WHERE enabled AND (id=$1 OR name=$1 OR catalog_name=$1)

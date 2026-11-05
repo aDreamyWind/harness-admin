@@ -116,8 +116,14 @@ export function uploadNovelCover(id: string, file: File) {
   })
 }
 
-export const generateNovelCover = (id: string, modelCode: string, instruction: string) =>
-  post<NovelCoverPreview>(`/projects/${encodeURIComponent(id)}/cover/generate`, { modelCode, instruction })
+export interface NovelCoverGenerationInput {
+  modelCode: string
+  instruction: string
+  styleId?: string
+}
+
+export const generateNovelCover = (id: string, input: NovelCoverGenerationInput) =>
+  post<NovelCoverPreview>(`/projects/${encodeURIComponent(id)}/cover/generate`, input)
 
 export const applyNovelCover = (id: string, token: string) =>
   post<NovelCover>(`/projects/${encodeURIComponent(id)}/cover/apply`, { token })

@@ -413,7 +413,7 @@ paths:
     post:
       summary: 根据故事内容生成本人小说的封面预览
       operationId: generateNovelCover
-      description: 图片模型依据书名、故事灵感、可用的大纲资料和可选封面要求绘制竖版插画。每部作品保留最新成功的预览 30 分钟，作者可在预览期间确认设为正式封面。
+      description: 图片模型依据书名、故事灵感、可用的大纲资料和可选封面要求绘制竖版插画。可从漫剧风格库选用画面风格。每部作品保留最新成功的预览 30 分钟，作者可在预览期间确认设为正式封面。
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
         required: true
@@ -424,6 +424,7 @@ paths:
               required: [modelCode]
               properties:
                 modelCode: { type: string, minLength: 1, maxLength: 160 }
+                styleId: { type: string, maxLength: 80, description: 可选的画面风格编号，来自漫剧风格目录。省略或传空字符串时由模型根据故事选择画风。 }
                 instruction: { type: string, maxLength: 1200, description: 可选的构图、题材或风格要求。 }
       responses:
         '200':

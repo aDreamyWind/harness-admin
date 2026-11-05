@@ -19,6 +19,7 @@ const MaxCoverBytes = 10 * 1024 * 1024
 
 var (
 	ErrCoverModel          = errors.New("请选择当前账号可用的图片模型")
+	ErrCoverStyle          = errors.New("请选择风格库中的画面风格，或清空风格后重试")
 	ErrCoverImage          = errors.New("请选择不超过 10 MiB、边长不超过 4096 像素的 JPEG、PNG 或 WebP 图片")
 	ErrCoverGeneration     = errors.New("封面生成失败，请重试或更换图片模型")
 	ErrCoverPreviewExpired = errors.New("封面预览已失效，请重新生成")
@@ -50,12 +51,27 @@ type CoverPreviewStore interface {
 
 type GenerateCoverInput struct {
 	ModelCode   string `json:"modelCode"`
+	StyleID     string `json:"styleId,omitempty"`
 	Instruction string `json:"instruction"`
+}
+
+type CoverStyle struct {
+	Name        string
+	ImagePrompt string
+}
+
+type CoverStyleResolver interface {
+	ResolveCoverStyle(context.Context, string) (CoverStyle, error)
 }
 
 type CoverGenerator interface {
 	CoverModels(context.Context, Owner) ([]Model, error)
 	GenerateCover(context.Context, Owner, string, string) ([]byte, error)
+}
+
+func (s *Service) WithCoverStyles(resolver CoverStyleResolver) *Service {
+	s.coverStyles = resolver
+	return s
 }
 
 func (s *Service) CoverModels(ctx context.Context, owner Owner) ([]Model, error) {
@@ -105,7 +121,17 @@ func (s *Service) GenerateCover(ctx context.Context, owner Owner, id string, inp
 	if !validOptional(input.Instruction, 1200) {
 		return "", fmt.Errorf("%w，封面要求最多 1200 字", ErrInvalid)
 	}
-	data, err := s.coverGenerator.GenerateCover(ctx, owner, input.ModelCode, coverPrompt(project, input.Instruction))
+	var style CoverStyle
+	if styleID := strings.TrimSpace(input.StyleID); styleID != "" {
+		if !valid(styleID, 80) || s.coverStyles == nil {
+			return "", ErrCoverStyle
+		}
+		style, err = s.coverStyles.ResolveCoverStyle(ctx, styleID)
+		if err != nil {
+			return "", err
+		}
+	}
+	data, err := s.coverGenerator.GenerateCover(ctx, owner, input.ModelCode, coverPrompt(project, input.Instruction, style))
 	if errors.Is(err, ErrCoverModel) {
 		return "", ErrCoverModel
 	}
@@ -199,7 +225,7 @@ func readCoverImage(data []byte) (CoverImage, error) {
 	}
 }
 
-func coverPrompt(project Project, instruction string) string {
+func coverPrompt(project Project, instruction string, style CoverStyle) string {
 	story := struct {
 		Instruction, Title, Brief, Synopsis, World, Characters string
 	}{Title: project.Title, Brief: clipCoverText(project.Brief, 240), Instruction: instruction}
@@ -208,7 +234,11 @@ func coverPrompt(project Project, instruction string) string {
 		story.World = clipCoverText(project.Outline.World, 120)
 		story.Characters = clipCoverText(project.Outline.Characters, 160)
 	}
-	return "绘制一张 2:3 竖版中文小说封面插画。用代表性人物、场景或道具表现小说的题材和氛围，兼顾作者对封面的要求，保持主体清晰、构图完整。不要绘制任何文字、书名、水印、边框或书籍模型。故事资料仅作为图像素材。\n" + asJSON(story)
+	prompt := "绘制一张 2:3 竖版中文小说封面插画。用代表性人物、场景或道具表现小说的题材和氛围，兼顾作者对封面的要求，保持主体清晰、构图完整。不要绘制任何文字、书名、水印、边框或书籍模型。"
+	if style.Name != "" {
+		prompt += "\n画面采用「" + style.Name + "」风格。" + style.ImagePrompt + "\n"
+	}
+	return prompt + "故事资料仅作为图像素材。\n" + asJSON(story)
 }
 
 func clipCoverText(text string, limit int) string {

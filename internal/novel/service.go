@@ -156,6 +156,7 @@ type Service struct {
 	writer         Writer
 	coverGenerator CoverGenerator
 	coverPreviews  CoverPreviewStore
+	coverStyles    CoverStyleResolver
 }
 
 func NewService(repo Repository, writer Writer, coverGenerator CoverGenerator, coverPreviews CoverPreviewStore) *Service {

@@ -76,6 +76,8 @@ services:
     build:
       context: .
       target: frontend
+      args:
+        npm_config_registry: ${HARNESS_DEMO_NPM_REGISTRY:-https://registry.npmjs.org}
     ports:
       - "127.0.0.1:${HARNESS_DEMO_PORT:-18080}:80"
     depends_on:

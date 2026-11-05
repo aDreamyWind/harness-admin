@@ -4,8 +4,9 @@ import { Alert, Button, Form, Image, Input, Modal, Select, Space, Tabs, Upload }
 import { useEffect, useState } from 'react'
 
 import { ApiError } from '../api/client'
-import { applyNovelCover, generateNovelCover, listNovelCoverModels, uploadNovelCover, type NovelBook, type NovelCoverPreview, type NovelProject } from '../api/novel'
+import { applyNovelCover, generateNovelCover, listNovelCoverModels, uploadNovelCover, type NovelBook, type NovelCoverGenerationInput, type NovelCoverPreview, type NovelProject } from '../api/novel'
 import { useAuth } from '../auth/AuthContext'
+import { DramaStylePicker } from './DramaStylePicker'
 import './novel-cover-editor.css'
 
 const maxCoverBytes = 10 * 1024 * 1024
@@ -19,6 +20,7 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
   const scope = [user?.organizationId, user?.id]
   const [tab, setTab] = useState('ai')
   const [model, setModel] = useState<string>()
+  const [styleId, setStyleId] = useState<string>()
   const [instruction, setInstruction] = useState('')
   const [candidate, setCandidate] = useState<CoverCandidate>()
   const [candidateImage, setCandidateImage] = useState<{ token: string; status: 'loaded' | 'failed' }>()
@@ -29,8 +31,7 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
   const availableModels = models.data ?? []
   const activeModel = availableModels.find((item) => item.code === model) ?? availableModels[0]
   const generation = useMutation({
-    mutationFn: (input: { modelCode: string; instruction: string }) =>
-      generateNovelCover(book.id, input.modelCode, input.instruction),
+    mutationFn: (input: NovelCoverGenerationInput) => generateNovelCover(book.id, input),
     onSuccess: setCandidate,
   })
   const change = useMutation({
@@ -84,7 +85,7 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
   function generatePreview() {
     if (!activeModel || busy) return
     change.reset()
-    generation.mutate({ modelCode: activeModel.code, instruction: instruction.trim() })
+    generation.mutate({ modelCode: activeModel.code, instruction: instruction.trim(), styleId })
   }
 
   function applyPreview() {
@@ -105,7 +106,7 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
   const error = (tab === 'ai' ? generation.error?.message ?? candidate?.applyError ?? imageError : undefined) ?? change.error?.message
 
   return <>
-    <Modal title={`设置封面 · ${book.title}`} open footer={null} onCancel={closeEditor} width={shownCandidate ? 720 : undefined}
+    <Modal title={`设置封面 · ${book.title}`} open footer={null} onCancel={closeEditor} width={shownCandidate ? 820 : 620}
       closable={!busy} keyboard={!busy} mask={{ closable: !busy && !candidate }}>
       <div className={`novel-cover-editor${shownCandidate ? ' novel-cover-editor--comparison' : ''}`}>
         <div className="novel-cover-previews">
@@ -144,10 +145,17 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
                   placeholder="暂无可用图片模型" loading={models.isPending}
                   options={availableModels.map((item) => ({ value: item.code, label: item.name }))} />
               </Form.Item>
+              <Form.Item label="画面风格（选填）" htmlFor="novel-cover-style">
+                <div className="novel-cover-style">
+                  <DramaStylePicker id="novel-cover-style" value={styleId} valueLabel={styleId ? undefined : '不限风格'}
+                    onChange={(style) => setStyleId(style.id)} disabled={busy} />
+                  {styleId && <Button type="link" size="small" aria-label="清除画面风格" onClick={() => setStyleId(undefined)}>清除</Button>}
+                </div>
+              </Form.Item>
               <Form.Item label={candidate ? '画面要求与修改意见（选填）' : '画面要求（选填）'} htmlFor="novel-cover-instruction">
                 <Input.TextArea id="novel-cover-instruction" rows={candidate ? 3 : 2} maxLength={1200} value={instruction}
                   onChange={(event) => setInstruction(event.target.value)}
-                  placeholder={candidate ? '补充想调整的地方，例如把雨夜改成清晨' : '例如：水墨风，突出雨夜里的孤舟'} />
+                  placeholder={candidate ? '补充想调整的地方，例如把雨夜改成清晨' : '例如突出雨夜里的孤舟'} />
               </Form.Item>
             </Form>
             {models.isError && <Alert type="error" title={models.error.message}

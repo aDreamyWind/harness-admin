@@ -107,7 +107,7 @@ func writeNovelResponse(c *gin.Context, deps Dependencies, success int, data any
 	switch {
 	case err == nil:
 		httpx.OK(c, success, data)
-	case errors.Is(err, novel.ErrInvalid), errors.Is(err, novel.ErrModel), errors.Is(err, novel.ErrCoverModel), errors.Is(err, novel.ErrCoverImage):
+	case errors.Is(err, novel.ErrInvalid), errors.Is(err, novel.ErrModel), errors.Is(err, novel.ErrCoverModel), errors.Is(err, novel.ErrCoverStyle), errors.Is(err, novel.ErrCoverImage):
 		httpx.Fail(c, http.StatusBadRequest, "invalid_novel_input", err.Error())
 	case errors.Is(err, novel.ErrNotFound):
 		httpx.Fail(c, http.StatusNotFound, "novel_not_found", novel.ErrNotFound.Error())

@@ -363,7 +363,7 @@ func TestNovelCoverRoutesProtectAndVersionImages(t *testing.T) {
 		response.Header().Get("X-Content-Type-Options") != "nosniff" || response.Body.String() != "封面数据" {
 		t.Fatalf("下载内容或响应头错误: %d %+v %q", response.Code, response.Header(), response.Body)
 	}
-	input := `{"modelCode":"art","instruction":"夜晚的灯塔","ownerId":"other"}`
+	input := `{"modelCode":"art","styleId":"ink-wash","instruction":"夜晚的灯塔","ownerId":"other"}`
 	if response := send("POST", path+"/generate", strings.NewReader(input), "application/json", true, false); response.Code != http.StatusForbidden {
 		t.Fatalf("未拒绝缺少 CSRF 的生成请求: %d", response.Code)
 	}
@@ -373,7 +373,7 @@ func TestNovelCoverRoutesProtectAndVersionImages(t *testing.T) {
 		response.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("生成请求未返回新预览: %d %s", response.Code, response.Body)
 	}
-	if stub.coverInput != (novel.GenerateCoverInput{ModelCode: "art", Instruction: "夜晚的灯塔"}) ||
+	if stub.coverInput != (novel.GenerateCoverInput{ModelCode: "art", StyleID: "ink-wash", Instruction: "夜晚的灯塔"}) ||
 		stub.owner != (novel.Owner{OrganizationID: "org-1", UserID: "user-1"}) {
 		t.Fatalf("生成参数或会话身份错误: %+v %+v", stub.coverInput, stub.owner)
 	}

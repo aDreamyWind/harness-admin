@@ -12,7 +12,8 @@ function stylePreview(style: DramaStyleOption) {
   }
 }
 
-export function DramaStylePicker({ value, valueLabel, onChange, disabled = false }: {
+export function DramaStylePicker({ id, value, valueLabel, onChange, disabled = false }: {
+  id?: string
   value?: string
   valueLabel?: string
   onChange: (style: DramaStyleOption) => void
@@ -25,7 +26,7 @@ export function DramaStylePicker({ value, valueLabel, onChange, disabled = false
   const label = selected?.name || valueLabel || (query.isLoading ? '加载风格…' : value || '选择风格')
 
   return <>
-    <button type="button" className="drama-style-picker" aria-label={`选择风格（${label}）`} aria-haspopup="dialog"
+    <button id={id} type="button" className="drama-style-picker" aria-label={`选择风格（${label}）`} aria-haspopup="dialog"
       disabled={disabled} onClick={() => setOpen(true)}>
       {selected && <span className="drama-style-picker-preview" style={stylePreview(selected)} aria-hidden="true" />}
       <span className="drama-style-picker-label">{label}</span>

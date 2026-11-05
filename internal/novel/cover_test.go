@@ -48,6 +48,50 @@ func (g *testCoverGenerator) GenerateCover(_ context.Context, owner Owner, model
 	return g.data, nil
 }
 
+type testCoverStyleResolver func(context.Context, string) (CoverStyle, error)
+
+func (resolve testCoverStyleResolver) ResolveCoverStyle(ctx context.Context, id string) (CoverStyle, error) {
+	return resolve(ctx, id)
+}
+
+func TestCoverUsesOptionalCatalogStyle(t *testing.T) {
+	ctx := context.Background()
+	owner := Owner{OrganizationID: "org", UserID: "author"}
+	var pngBytes bytes.Buffer
+	if err := png.Encode(&pngBytes, image.NewNRGBA(image.Rect(0, 0, 8, 12))); err != nil {
+		t.Fatal(err)
+	}
+	generator := &testCoverGenerator{data: pngBytes.Bytes()}
+	style := CoverStyle{Name: "东方水墨画风", ImagePrompt: "宣纸质地，墨色渗化"}
+	var resolved []string
+	resolver := testCoverStyleResolver(func(_ context.Context, id string) (CoverStyle, error) {
+		resolved = append(resolved, id)
+		if id == "ink-wash" {
+			return style, nil
+		}
+		return CoverStyle{}, ErrCoverStyle
+	})
+	s := NewService(&memoryRepository{}, nil, generator, &testCoverPreviews{}).WithCoverStyles(resolver)
+	p, err := s.Create(ctx, owner, CreateInput{Title: "潮汐档案", Brief: "守塔人听到呼救", ChapterCount: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := GenerateCoverInput{ModelCode: "art", Instruction: "突出雨夜里的灯塔"}
+	if _, err = s.GenerateCover(ctx, owner, p.ID, input); err != nil || len(resolved) != 0 || strings.Contains(generator.prompt, style.ImagePrompt) {
+		t.Fatalf("留空风格应直接生成: %q %v", generator.prompt, err)
+	}
+	input.StyleID = "ink-wash"
+	if _, err = s.GenerateCover(ctx, owner, p.ID, input); err != nil || len(resolved) != 1 || resolved[0] != input.StyleID ||
+		!strings.Contains(generator.prompt, style.Name) || !strings.Contains(generator.prompt, style.ImagePrompt) || !strings.Contains(generator.prompt, input.Instruction) {
+		t.Fatalf("封面未同时使用目录模板和画面要求: %q %v", generator.prompt, err)
+	}
+	generator.prompt = ""
+	input.StyleID = "missing-style"
+	if _, err = s.GenerateCover(ctx, owner, p.ID, input); !errors.Is(err, ErrCoverStyle) || generator.prompt != "" {
+		t.Fatalf("不可用风格未拒绝或仍调用模型: %v", err)
+	}
+}
+
 func TestCoverUploadGenerationAndReplacement(t *testing.T) {
 	ctx := context.Background()
 	owner := Owner{OrganizationID: "org", UserID: "author"}
