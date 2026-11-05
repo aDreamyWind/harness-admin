@@ -1,24 +1,55 @@
-import { ArrowLeftOutlined, CopyOutlined, DeleteOutlined, EditOutlined, EyeOutlined, GiftOutlined, PictureOutlined, PlusOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, CopyOutlined, DeleteOutlined, EditOutlined, EllipsisOutlined, EyeOutlined, GiftOutlined, PictureOutlined, PlusOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
 import { useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Dropdown, Empty, Input, Modal, Select, Skeleton, Tag, Tooltip, message } from 'antd'
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, SelectionMode, applyNodeChanges, useNodesInitialized, useReactFlow, type Connection, type OnConnectEnd, type Node, type NodeProps, type Viewport, type NodeChange, type Edge, type XYPosition } from '@xyflow/react'
+import { Background, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, SelectionMode, applyNodeChanges, useNodesInitialized, useReactFlow, type Connection, type OnConnectEnd, type Node, type NodeProps, type Viewport, type NodeChange, type Edge, type XYPosition } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { ApiError } from '../api/client'
 import { createDramaCanvasAsset, deriveDramaForm, editDramaForm, generateDramaImage, getDramaCanvas, saveDramaCanvasLayout, uploadDramaCanvasMedia, type DramaAssetForm, type DramaAssetKind, type DramaCanvas, type DramaCanvasCard as MediaCard, type DramaCanvasCardKind as CardKind, type DramaCanvasExtras as CanvasExtras, type DramaCanvasLayout, type DramaCanvasLink, type DramaProject } from '../api/drama'
-import { DramaCanvasCardEditor } from './DramaCanvasCardEditor'
+import { DramaCanvasCreateMenu, type CanvasCreateKind } from './DramaCanvasCreateMenu'
+import { DramaCanvasInlineEditor, type DramaCanvasInlineInput } from './DramaCanvasInlineEditor'
+import { DramaCanvasNodeToolbar, DramaCanvasToolDock, DramaCanvasViewTools, type DramaCanvasTool } from './DramaCanvasTools'
 import { DramaImageModelSelect, useDramaCanvas } from './DramaImageTools'
 import { DramaStylePicker } from './DramaStylePicker'
+import { arrangeCanvasNodes, canvasNodeSize, findCanvasNodePosition, revealCanvasNode } from './drama-canvas-geometry'
+import { useCanvasHistory } from './drama-canvas-history'
 import './drama-canvas.css'
 
 type AssetNode = Node<{ form: DramaAssetForm; edit: (id: string) => void; derive: (id: string) => void; preview: (id: string) => void }, 'asset'>
 const cardNames = { text: '文本', image: '图片', video: '视频', audio: '音频' } as const
 type MediaNode = Node<MediaCard, 'media'>
 type CanvasNode = AssetNode | MediaNode
+type NodeKind = DramaAssetKind | CardKind
+type DraftNode = Node<{ kind: NodeKind }, 'draft'>
+type FlowNode = CanvasNode | DraftNode
 const emptyExtras: CanvasExtras = { hidden: [], cards: [], links: [] }
 type ConnectionStart = { nodeId: string; type: 'source' | 'target'; handleId?: string | null }
-type CanvasMenu = { point: XYPosition; node?: CanvasNode; edge?: Edge; connection?: ConnectionStart }
+type CanvasMenu = { point: XYPosition; node?: CanvasNode; edge?: Edge; connection?: ConnectionStart; toolbar?: boolean }
+type CanvasSnapshot = { extras: CanvasExtras; formPositions: Map<string, XYPosition> }
+type InlineEdit = { id: string; kind: NodeKind; title: string; content: string } & (
+  { mode: 'new'; position: XYPosition; connection?: ConnectionStart; measured?: { width: number; height: number }; dragging?: boolean }
+  | { mode: 'media' } | { mode: 'asset'; form: DramaAssetForm }
+)
+type NodeEditorProps = ComponentProps<typeof DramaCanvasInlineEditor>
+const CanvasEditor = createContext<{ id: string; props: NodeEditorProps } | null>(null)
+const kindNames = { character: '角色', scene: '场景', prop: '道具' }
+const kindIcons = { character: <UserOutlined />, scene: <PictureOutlined />, prop: <GiftOutlined /> }
+const nodeNames = { ...kindNames, ...cardNames }
+
+function isAssetKind(kind: NodeKind): kind is DramaAssetKind {
+  return kind === 'character' || kind === 'scene' || kind === 'prop'
+}
+
+function useNodeEditor(id: string) {
+  const editor = useContext(CanvasEditor)
+  return editor?.id === id ? <DramaCanvasInlineEditor key={id} {...editor.props} /> : null
+}
+
+function nodeGeometry(node: FlowNode) {
+  const group = node.type === 'asset' ? node.data.form.kind : node.data.kind
+  return { id: node.id, group, position: node.position, ...canvasNodeSize(group, node.measured) }
+}
 
 function readExtras(key: string): CanvasExtras {
   try {
@@ -51,81 +82,113 @@ function sameConnection(link: DramaCanvasLink, connection: Pick<Connection, 'sou
   return link.source === connection.source && link.target === connection.target
 }
 
-function MediaCanvasNode({ data, selected }: NodeProps<MediaNode>) {
+function MediaCanvasNode({ id, data, selected }: NodeProps<MediaNode>) {
   const [failedURL, setFailedURL] = useState('')
   const failed = failedURL === data.content
-  return <div className={`drama-canvas-node scene media ${data.kind}${selected ? ' selected' : ''}`}>
+  const editor = useNodeEditor(id)
+  return <div className={`drama-canvas-node scene media ${data.kind}${selected ? ' selected' : ''}${editor ? ' editing' : ''}`}>
     <div className="drama-canvas-node-caption"><span>{cardNames[data.kind]} · {data.title}</span></div>
     <div className="drama-canvas-node-body">
       <Handle type="target" position={Position.Left} />
+      {editor ?? <>
       {failed && <div className="drama-canvas-media-error">素材无法读取，可以编辑节点换一份素材。</div>}
       {!failed && data.kind === 'video' && <video className="nodrag nowheel" controls playsInline preload="metadata" src={data.content} aria-label={data.title} onError={() => setFailedURL(data.content)} />}
       {!failed && data.kind === 'audio' && <audio className="nodrag nowheel" controls preload="metadata" src={data.content} aria-label={data.title} onError={() => setFailedURL(data.content)} />}
       {!failed && data.kind === 'image' && <div className="drama-canvas-node-image"><img src={data.content} alt={data.title} loading="lazy" onError={() => setFailedURL(data.content)} /></div>}
       {data.kind === 'text' && <div className="drama-canvas-text nodrag nowheel">{data.content}</div>}
+      </>}
       <Handle type="source" position={Position.Right} />
     </div>
   </div>
 }
 
-const kindNames = { character: '角色', scene: '场景', prop: '道具' }
-const kindIcons = { character: <UserOutlined />, scene: <PictureOutlined />, prop: <GiftOutlined /> }
 const busy = (form?: DramaAssetForm) => form?.imageStatus === 'queued' || form?.imageStatus === 'running'
 function AssetCanvasNode({ data, selected }: NodeProps<AssetNode>) {
   const f = data.form
-  return <div className={`drama-canvas-node ${f.kind}${selected ? ' selected' : ''}`}>
+  const editor = useNodeEditor(f.id)
+  return <div className={`drama-canvas-node ${f.kind}${selected ? ' selected' : ''}${editor ? ' editing' : ''}`}>
     <div className="drama-canvas-node-caption">{kindIcons[f.kind]}<span>{f.assetName} · {f.name}</span></div>
     <div className="drama-canvas-node-body">
       <Handle type="target" position={Position.Left} />
-      <div className="drama-canvas-node-image" onDoubleClick={() => data.preview(f.id)}>
+      {editor ?? <>
+      <div className="drama-canvas-node-image">
         {f.imageUrl ? <img src={f.imageUrl} alt={`${f.assetName} · ${f.name}`} loading="lazy" /> : <div className="drama-canvas-node-placeholder">{kindIcons[f.kind]}<span>{busy(f) ? '图片生成中…' : '尚未生成图片'}</span></div>}
         {busy(f) && f.imageUrl && <Tag color="processing">图片生成中</Tag>}
         <button className="drama-canvas-preview nodrag" aria-label={`预览${f.assetName}${f.name}`} onClick={() => data.preview(f.id)}><EyeOutlined /></button>
       </div>
       <div className="drama-canvas-node-copy"><strong>{f.name}</strong><Button type="text" size="small" className="nodrag" aria-label={`编辑${f.assetName}${f.name}`} icon={<EditOutlined />} onClick={() => data.edit(f.id)} /><p title={f.description}>{f.description || '请编辑形象描述'}</p><small>{f.parentId ? '派生形象' : '原始形象'} · {f.aspectRatio}</small>{f.imageError && <Tooltip title={f.imageError}><span className="drama-canvas-node-error">生成失败，选中后可重试</span></Tooltip>}</div>
-      <Handle type="source" position={Position.Right} />
       <Tooltip title="添加基于此形象的派生形象"><button className="drama-canvas-derive nodrag" aria-label={`为${f.assetName}${f.name}添加派生形象`} onClick={() => data.derive(f.id)}><PlusOutlined /></button></Tooltip>
+      </>}
+      <Handle type="source" position={Position.Right} />
     </div>
   </div>
 }
-const nodeTypes = { asset: AssetCanvasNode, media: MediaCanvasNode }
+
+function DraftCanvasNode({ id, data }: NodeProps<DraftNode>) {
+  const editor = useNodeEditor(id)
+  return <div className={`drama-canvas-node drama-canvas-draft ${isAssetKind(data.kind) ? data.kind : 'scene media'}`}>
+    <div className="drama-canvas-node-caption"><span>{nodeNames[data.kind]}节点</span><small>待保存</small></div>
+    <div className="drama-canvas-node-body">
+      <Handle type="target" position={Position.Left} isConnectable={false} />
+      {editor}
+      <Handle type="source" position={Position.Right} isConnectable={false} />
+    </div>
+  </div>
+}
+
+const nodeTypes = { asset: AssetCanvasNode, media: MediaCanvasNode, draft: DraftCanvasNode }
 
 export function DramaAssetCanvas({ project }: { project: DramaProject }) { return <ReactFlowProvider><AssetCanvas key={project.id} project={project} /></ReactFlowProvider> }
 function AssetCanvas({ project }: { project: DramaProject }) {
   const [params, setParams] = useSearchParams()
   const query = useDramaCanvas(project.id)
   const cache = useQueryClient()
-  const flow = useReactFlow<CanvasNode>()
+  const flow = useReactFlow<FlowNode>()
   const measured = useNodesInitialized()
   const [messageApi, holder] = message.useMessage()
   const [modal, modalHolder] = Modal.useModal()
   const [nodes, setNodes] = useState<CanvasNode[]>([])
   const nodesRef = useRef(nodes)
+  const formPositions = useRef(new Map<string, XYPosition>())
+  const history = useCanvasHistory<CanvasSnapshot>()
+  const revealAfterAdd = useRef('')
+  const revealEditor = useRef('')
+  const [tool, setTool] = useState<DramaCanvasTool>(() => window.matchMedia('(pointer: coarse)').matches ? 'pan' : 'select')
+  const [spacePan, setSpacePan] = useState(false)
+  const [showMinimap, setShowMinimap] = useState(() => window.innerWidth > 1050)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [selecting, setSelecting] = useState(false)
+  const selectingRef = useRef(false)
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false)
   const extrasKey = `drama-canvas-extras:${project.id}`
   const [extras, setExtras] = useState(emptyExtras)
   const extrasRef = useRef(emptyExtras)
   const extrasStored = useRef(false)
   const extrasVerified = useRef(false)
   const importingLegacy = useRef(false)
-  const [cardDraft, setCardDraft] = useState<{ card: MediaCard; connection?: ConnectionStart } | null>(null)
+  const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null)
+  const inlineRef = useRef<InlineEdit | null>(null)
+  const [inlineError, setInlineError] = useState('')
+  const [inlineSaving, setInlineSaving] = useState(false)
+  const inlineSavingRef = useRef(false)
   const [contextMenu, setContextMenu] = useState<CanvasMenu | null>(null)
   const [selectedId, setSelectedId] = useState('')
   const selectionURL = useRef('')
-  const selectWhenAdded = useRef('')
+  const selectWhenAdded = useRef(new Set<string>())
   const [selectedLinks, setSelectedLinks] = useState<Set<string>>(new Set())
-  const [editing, setEditing] = useState<DramaAssetForm | null>(null)
-  const [assetDraft, setAssetDraft] = useState<{ kind: DramaAssetKind; name: string; description: string; position: XYPosition; connection?: ConnectionStart } | null>(null)
   const [preview, setPreview] = useState<DramaAssetForm | null>(null)
   const [mediaPreview, setMediaPreview] = useState<MediaCard | null>(null)
   const [working, setWorking] = useState(false)
   const [uploading, setUploading] = useState(false)
   const uploadInProgress = useRef(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const addButton = useRef<HTMLButtonElement>(null)
   const filePickerPoint = useRef<XYPosition | undefined>(undefined)
   const [dragOver, setDragOver] = useState(false)
   const dragDepth = useRef(0)
   const shell = useRef<HTMLDivElement>(null)
   const [prompt, setPrompt] = useState('')
+  const [generationForId, setGenerationForId] = useState('')
   const [style, setStyle] = useState({ id: '', name: '' })
   const [ratio, setRatio] = useState<DramaAssetForm['aspectRatio']>('9:16')
   const [saveStatus, setSaveStatus] = useState('加载中…')
@@ -139,16 +202,14 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   const topologyChanging = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const initialized = useRef(false)
-  useEffect(() => {
-    if (!contextMenu) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setContextMenu(null)
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [contextMenu])
+  const isPanning = spacePan || tool === 'pan'
 
-  function saveExtras(next: CanvasExtras) {
+  function snapshot(): CanvasSnapshot {
+    return { extras: extrasRef.current, formPositions: new Map(formPositions.current) }
+  }
+
+  function saveExtras(next: CanvasExtras, remember = true) {
+    if (remember) history.push(snapshot())
     extrasStored.current = true
     extrasRef.current = next
     setExtras(next)
@@ -160,16 +221,22 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     return bounds ? { x: bounds.left + bounds.width / 2 - 90, y: bounds.top + bounds.height / 2 - 55 } : { x: 200, y: 200 }
   }
 
-  function nodePosition(point?: XYPosition) {
+  function viewSafeArea() {
+    const bounds = shell.current?.getBoundingClientRect()
+    const width = bounds?.width ?? window.innerWidth
+    const height = bounds?.height ?? window.innerHeight
+    return { x: 75, y: 112, width: Math.max(1, width - 100), height: Math.max(1, height - (generationForId ? 270 : 180)) }
+  }
+
+  function visibleCanvasArea() {
+    const safe = viewSafeArea()
+    const { x, y, zoom } = flow.getViewport()
+    return { x: (safe.x - x) / zoom, y: (safe.y - y) / zoom, width: safe.width / zoom, height: safe.height / zoom }
+  }
+
+  function nodePosition(kind: string, point?: XYPosition) {
     const origin = flow.screenToFlowPosition(point ?? canvasCenter())
-    if (point) return origin
-    const occupied = nodesRef.current
-    for (let step = 0; step <= occupied.length; step++) {
-      const position = { x: origin.x + (step % 3) * 440, y: origin.y + Math.floor(step / 3) * 620 }
-      if (occupied.every((node) => position.x + 400 <= node.position.x || position.x >= node.position.x + (node.measured?.width ?? 400) ||
-        position.y + 560 <= node.position.y || position.y >= node.position.y + (node.measured?.height ?? 560))) return position
-    }
-    return { ...origin, y: Math.max(origin.y, ...occupied.map((node) => node.position.y + (node.measured?.height ?? 560))) + 24 }
+    return point ? origin : findCanvasNodePosition(origin, canvasNodeSize(kind), nodesRef.current.map(nodeGeometry), visibleCanvasArea())
   }
 
   function openFilePicker(point?: XYPosition) {
@@ -177,14 +244,43 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     fileInput.current?.click()
   }
 
-  function openCard(kind: CardKind, point?: XYPosition, connection?: ConnectionStart) {
-    setContextMenu(null)
-    setCardDraft({ card: { id: crypto.randomUUID(), kind, title: '', content: '', position: nodePosition(point) }, connection })
+  function setEditor(next: InlineEdit | null) {
+    inlineRef.current = next
+    setInlineEdit(next)
   }
 
-  function openAsset(kind: DramaAssetKind, point?: XYPosition, connection?: ConnectionStart) {
+  function openEditor(next: InlineEdit) {
     setContextMenu(null)
-    setAssetDraft({ kind, name: '', description: '', position: nodePosition(point), connection })
+    const current = inlineRef.current
+    if (current) {
+      if (current.id !== next.id) messageApi.info('请先保存或取消正在编辑的节点')
+      revealEditor.current = current.id
+      setInlineEdit({ ...current })
+      return
+    }
+    setInlineError('')
+    setGenerationForId('')
+    setTool('select')
+    revealEditor.current = next.id
+    choose(next.mode === 'new' ? '' : next.id)
+    setEditor(next)
+  }
+
+  function startEditing(id: string) {
+    const node = nodesRef.current.find((item) => item.id === id)
+    if (!node) return
+    if (node.type === 'media') {
+      openEditor({ id, mode: 'media', kind: node.data.kind, title: node.data.title, content: node.data.content })
+    } else if (!busy(node.data.form)) {
+      const form = node.data.form
+      openEditor({ id, mode: 'asset', kind: form.kind, title: form.name, content: form.description, form })
+    }
+  }
+
+  function cancelEditor() {
+    if (inlineSavingRef.current) return
+    revealEditor.current = ''
+    setEditor(null)
   }
 
   function withConnection(links: DramaCanvasLink[], target: string, origin?: ConnectionStart) {
@@ -194,45 +290,36 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       : { id: crypto.randomUUID(), source: target, target: origin.nodeId, targetHandle: origin.handleId }]
   }
 
-  function duplicateCard(card: MediaCard, position: XYPosition) {
-    const copy = { ...card, id: crypto.randomUUID(), position: { x: position.x + 36, y: position.y + 36 } }
+  function duplicateCards(source: MediaNode[]) {
+    if (!source.length) return
     const current = extrasRef.current
-    saveExtras({ ...current, cards: [...current.cards, copy] })
-    choose(copy.id)
+    const occupied = nodesRef.current.map(nodeGeometry)
+    const ids = new Map<string, string>()
+    const visible = visibleCanvasArea()
+    const copies = source.map((node) => {
+      const size = canvasNodeSize(node.data.kind, node.measured)
+      const anchor = { x: node.position.x + size.width + 36, y: node.position.y }
+      const position = findCanvasNodePosition(anchor, size, occupied, visible)
+      const copy = { ...node.data, id: crypto.randomUUID(), position }
+      ids.set(node.id, copy.id)
+      occupied.push({ id: copy.id, group: copy.kind, position, ...size })
+      return copy
+    })
+    const links = current.links.flatMap((link) => {
+      const target = ids.get(link.target)
+      return target ? [{ ...link, id: crypto.randomUUID(), source: ids.get(link.source) ?? link.source, target }] : []
+    })
+    saveExtras({ ...current, cards: [...current.cards, ...copies], links: [...current.links, ...links] })
+    revealAfterAdd.current = copies[0].id
+    chooseNodes(copies.map((card) => card.id))
     setContextMenu(null)
-  }
-
-  async function saveCard(draft: MediaCard, file?: File) {
-    if (!cardDraft) return
-    let card = draft
-    if (file) {
-      if (uploadInProgress.current) return
-      uploadInProgress.current = true
-      setUploading(true)
-      try {
-        const media = await uploadDramaCanvasMedia(project.id, file)
-        if (media.kind !== draft.kind) throw new Error(`请选择${cardNames[draft.kind]}文件`)
-        card = { ...draft, content: media.url }
-      } catch (error) {
-        messageApi.error(error instanceof Error ? error.message : '素材上传失败')
-        return
-      } finally {
-        uploadInProgress.current = false
-        setUploading(false)
-      }
-    }
-    const current = extrasRef.current
-    const exists = current.cards.some((item) => item.id === card.id)
-    const cards = exists ? current.cards.map((item) => item.id === card.id ? card : item) : [...current.cards, card]
-    saveExtras({ ...current, cards, links: withConnection(current.links, card.id, cardDraft.connection) })
-    setCardDraft(null)
-    choose(card.id)
   }
 
   function rememberSelection(id: string) {
     if (selectionURL.current === id) return
     selectionURL.current = id
     setSelectedId(id)
+    setGenerationForId('')
     setParams((current) => {
       const next = new URLSearchParams(current)
       next.delete('focus')
@@ -242,15 +329,31 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     }, { replace: true })
   }
 
-  function choose(id: string) {
-    const next = nodesRef.current.map((node) => node.selected === (node.id === id) ? node : { ...node, selected: node.id === id })
-    selectWhenAdded.current = id && !next.some((node) => node.id === id) ? id : ''
+  function chooseNodes(ids: string[]) {
+    const picked = new Set(ids)
+    const next = nodesRef.current.map((node) => node.selected === picked.has(node.id) ? node : { ...node, selected: picked.has(node.id) })
+    selectWhenAdded.current = new Set(picked)
+    for (const node of next) selectWhenAdded.current.delete(node.id)
     nodesRef.current = next
     setNodes(next)
     setSelectedLinks(new Set())
-    rememberSelection(id)
+    rememberSelection(ids.length === 1 ? ids[0] : '')
   }
-  const selected = query.data?.forms.find((f) => f.id === selectedId)
+
+  function choose(id: string) { chooseNodes(id ? [id] : []) }
+
+  function restoreHistory(direction: 'undo' | 'redo') {
+    if (inlineRef.current || working || uploadInProgress.current || nodesRef.current.some((node) => node.dragging) || blocked.current) return
+    const state = history[direction](snapshot())
+    if (!state) return
+    formPositions.current = new Map([...formPositions.current, ...state.formPositions])
+    const cards = new Map(state.extras.cards.map((card) => [card.id, card.position]))
+    nodesRef.current = nodesRef.current.map((node) => ({ ...node, position: (node.type === 'asset' ? formPositions.current : cards).get(node.id) ?? node.position }))
+    choose('')
+    saveExtras(state.extras, false)
+  }
+
+  const selected = nodes.some((node) => node.id === selectedId && node.selected) ? query.data?.forms.find((f) => f.id === selectedId) : undefined
   const selectedRef = useRef(selected)
   selectedRef.current = selected
   const drain = useCallback(async () => {
@@ -304,12 +407,12 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     const positions = new Map(nextNodes.map((node) => [node.id, node.position]))
     pending.current = { ...viewport.current, positions: forms.map((form) => ({
       id: form.id,
-      ...(positions.get(form.id) || { x: form.x, y: form.y }),
+      ...(formPositions.current.get(form.id) ?? positions.get(form.id) ?? { x: form.x, y: form.y }),
     })), ...(extrasStored.current ? { extras: extrasRef.current } : {}) }
     setSaveStatus('待保存'); clearTimeout(timer.current); timer.current = setTimeout(() => void drain(), 650)
   }
   async function derive(id: string) {
-    if (working || topologyChanging.current) return
+    if (working || topologyChanging.current || inlineSavingRef.current) return
     setWorking(true)
     try {
       await flush()
@@ -325,8 +428,8 @@ function AssetCanvas({ project }: { project: DramaProject }) {
         return
       }
       revision.current = expected
+      revealAfterAdd.current = result.id
       choose(result.id)
-      setTimeout(() => void flow.fitView({ nodes: [{ id: result.id }], maxZoom: 0.9, duration: 300, padding: 0.5 }), 100)
       messageApi.success('已添加派生形象，请修改描述后生成图片')
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : '添加派生形象失败')
@@ -336,29 +439,67 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       void drain()
     }
   }
-  async function saveAsset() {
-    if (!assetDraft || working) return
-    setWorking(true)
-    try {
-      await flush()
-      topologyChanging.current = true
-      const { kind, name, description, position, connection } = assetDraft
-      const result = await createDramaCanvasAsset(project.id, { kind, name: name.trim(), description: description.trim(), ...position, revision: revision.current })
-      revision.current = result.revision
-      setAssetDraft(null)
-      choose(result.id)
-      if (connection) {
-        const graph = extrasRef.current
-        saveExtras({ ...graph, links: withConnection(graph.links, result.id, connection) })
+  async function saveInlineCard(edit: InlineEdit, kind: CardKind, input: DramaCanvasInlineInput) {
+    let content = input.content
+    if (input.file) {
+      if (uploadInProgress.current) throw new Error('请等本次素材上传完成')
+      uploadInProgress.current = true
+      try {
+        const media = await uploadDramaCanvasMedia(project.id, input.file)
+        if (media.kind !== kind) throw new Error(`请选择${cardNames[kind]}文件`)
+        content = media.url
+      } finally {
+        uploadInProgress.current = false
       }
-      await query.refetch()
-      messageApi.success(`已添加${kindNames[kind]}`)
+    }
+    const graph = extrasRef.current
+    const saved = graph.cards.find((card) => card.id === edit.id)
+    const position = edit.mode === 'new' ? edit.position : nodesRef.current.find((node) => node.id === edit.id)?.position ?? saved?.position
+    if (!position || (edit.mode !== 'new' && !saved)) throw new Error('当前节点已经移除')
+    const card = { id: edit.id, kind, title: input.title, content, position }
+    const cards = saved ? graph.cards.map((item) => item.id === edit.id ? card : item) : [...graph.cards, card]
+    saveExtras({ ...graph, cards, links: withConnection(graph.links, card.id, edit.mode === 'new' ? edit.connection : undefined) })
+  }
+
+  async function saveInline(input: DramaCanvasInlineInput) {
+    const edit = inlineRef.current
+    if (!edit || inlineSavingRef.current) return
+    inlineSavingRef.current = true
+    setInlineSaving(true)
+    setInlineError('')
+    let ownsTopology = false
+    try {
+      let id = edit.id
+      if (edit.mode === 'asset') {
+        await editDramaForm(project.id, { ...edit.form, name: input.title, description: input.content })
+        await query.refetch()
+      } else if (edit.mode === 'new' && isAssetKind(edit.kind)) {
+        if (topologyChanging.current) throw new Error('画布正在添加形象，请稍后保存')
+        await flush()
+        if (topologyChanging.current) throw new Error('画布正在添加形象，请稍后保存')
+        topologyChanging.current = ownsTopology = true
+        const result = await createDramaCanvasAsset(project.id, { kind: edit.kind, name: input.title, description: input.content, ...edit.position, revision: revision.current })
+        revision.current = result.revision
+        id = result.id
+        if (edit.connection) {
+          const graph = extrasRef.current
+          saveExtras({ ...graph, links: withConnection(graph.links, id, edit.connection) })
+        }
+        await query.refetch()
+      } else if (!isAssetKind(edit.kind)) {
+        await saveInlineCard(edit, edit.kind, input)
+      }
+      setEditor(null)
+      choose(id)
     } catch (error) {
-      messageApi.error(error instanceof Error ? error.message : '添加资产失败')
+      setInlineError(error instanceof Error ? error.message : '节点保存失败，请重试')
     } finally {
-      topologyChanging.current = false
-      setWorking(false)
-      void drain()
+      if (ownsTopology) {
+        topologyChanging.current = false
+        void drain()
+      }
+      inlineSavingRef.current = false
+      setInlineSaving(false)
     }
   }
   useEffect(() => {
@@ -372,7 +513,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       const local = readExtras(extrasKey)
       if (local.cards.length || local.links.length || local.hidden.length) {
         importingLegacy.current = true
-        saveExtras(mergeLegacyExtras(data.extras ?? emptyExtras, local, data.forms))
+        saveExtras(mergeLegacyExtras(data.extras ?? emptyExtras, local, data.forms), false)
       } else {
         extrasStored.current = Boolean(data.extras)
         extrasRef.current = data.extras ?? emptyExtras
@@ -385,21 +526,64 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       extrasStored.current = Boolean(data.extras)
       extrasRef.current = data.extras ?? emptyExtras
       setExtras(extrasRef.current)
+      history.clear()
       replacePositions = true
       if (initialized.current) void flow.setViewport(viewport.current)
     }
+    if (replacePositions) formPositions.current.clear()
+    for (const form of data.forms) {
+      if (!formPositions.current.has(form.id)) formPositions.current.set(form.id, { x: form.x, y: form.y })
+    }
     const old = new Map(nodesRef.current.map((node) => [node.id, node]))
     const graph = extrasRef.current
-    const next: CanvasNode[] = data.forms.filter((form) => !graph.hidden.includes(form.id)).map((form): AssetNode => ({ ...old.get(form.id), id: form.id, type: 'asset', position: (replacePositions ? undefined : old.get(form.id)?.position) ?? { x: form.x, y: form.y }, selected: form.id === selectWhenAdded.current || old.get(form.id)?.selected, data: { form, edit: (id) => setEditing(data.forms.find((f) => f.id === id) || null), preview: (id) => setPreview(data.forms.find((f) => f.id === id) || null), derive: (id) => void derive(id) } }))
+    const next: CanvasNode[] = data.forms.filter((form) => !graph.hidden.includes(form.id)).map((form): AssetNode => ({ ...old.get(form.id), id: form.id, type: 'asset', position: (replacePositions ? undefined : old.get(form.id)?.position) ?? formPositions.current.get(form.id)!, selected: selectWhenAdded.current.has(form.id) || old.get(form.id)?.selected, data: { form, edit: startEditing, preview: (id) => setPreview(data.forms.find((f) => f.id === id) || null), derive: (id) => void derive(id) } }))
     for (const card of graph.cards) {
-      next.push({ ...old.get(card.id), id: card.id, type: 'media', position: (replacePositions ? undefined : old.get(card.id)?.position) ?? card.position, selected: card.id === selectWhenAdded.current || old.get(card.id)?.selected, data: card })
+      next.push({ ...old.get(card.id), id: card.id, type: 'media', position: (replacePositions ? undefined : old.get(card.id)?.position) ?? card.position, selected: selectWhenAdded.current.has(card.id) || old.get(card.id)?.selected, data: card })
     }
-    if (next.some((node) => node.id === selectWhenAdded.current)) selectWhenAdded.current = ''
+    const visible = new Set(next.map((node) => node.id))
+    for (const id of visible) selectWhenAdded.current.delete(id)
+    if (selectedId && !visible.has(selectedId) && !selectWhenAdded.current.has(selectedId)) rememberSelection('')
+    const editor = inlineRef.current
+    if (editor && editor.mode !== 'new' && !visible.has(editor.id) && !inlineSavingRef.current) cancelEditor()
+    const validLinks = new Set(graph.links.filter((link) => visible.has(link.source) && visible.has(link.target)).map((link) => link.id))
+    setSelectedLinks((current) => {
+      const kept = [...current].filter((id) => validLinks.has(id))
+      return kept.length === current.size ? current : new Set(kept)
+    })
     nodesRef.current = next
     setNodes(next)
     // 轮询只更新形象内容和生成状态，不覆盖尚未保存的拖动位置。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.data, extras.hidden, extras.cards])
+  useEffect(() => {
+    if (!measured || !revealAfterAdd.current) return
+    const node = nodes.find((item) => item.id === revealAfterAdd.current)
+    if (!node) return
+    revealAfterAdd.current = ''
+    const { position, width, height } = nodeGeometry(node)
+    const current = flow.getViewport()
+    const next = revealCanvasNode({ ...position, width, height }, current, viewSafeArea())
+    if (next !== current) void flow.setViewport(next, { duration: 180 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow, measured, nodes])
+  useEffect(() => {
+    if (!inlineEdit || revealEditor.current !== inlineEdit.id) return
+    const node = flow.getNode(inlineEdit.id)
+    const element = shell.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(inlineEdit.id)}"]`)
+    if (!node || !element?.offsetWidth || !element.offsetHeight) return
+    revealEditor.current = ''
+    const { position } = node
+    const { offsetWidth: width, offsetHeight: height } = element
+    const current = flow.getViewport()
+    const area = viewSafeArea()
+    const zoom = Math.max(current.zoom, Math.min(0.9, area.width / width))
+    const readable = zoom === current.zoom ? current : {
+      x: current.x + position.x * (current.zoom - zoom), y: current.y + position.y * (current.zoom - zoom), zoom,
+    }
+    const next = revealCanvasNode({ ...position, width, height }, readable, area)
+    if (next !== current) void flow.setViewport(next, { duration: 180 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow, inlineEdit, measured, nodes])
   useEffect(() => {
     if (initialized.current || !query.data || (!measured && (query.data.forms.some((form) => !extras.hidden.includes(form.id)) || extras.cards.length))) return
     initialized.current = true
@@ -411,7 +595,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   }, [measured, flow, params, query.data, nodes, extras.hidden, extras.cards.length])
   useEffect(() => { setPrompt(selected?.description || ''); setStyle({ id: selected?.styleId || '', name: selected?.style || '' }); setRatio(selected?.aspectRatio || '9:16') }, [selectedId, selected?.revision])
   useEffect(() => {
-    function beforeUnload(event: BeforeUnloadEvent) { if (pending.current || saving.current || uploadInProgress.current) { event.preventDefault(); event.returnValue = '' } }
+    function beforeUnload(event: BeforeUnloadEvent) { if (pending.current || saving.current || uploadInProgress.current || inlineRef.current) { event.preventDefault(); event.returnValue = '' } }
     window.addEventListener('beforeunload', beforeUnload)
     return () => { window.removeEventListener('beforeunload', beforeUnload); clearTimeout(timer.current); void drain() }
   }, [drain])
@@ -440,6 +624,11 @@ function AssetCanvas({ project }: { project: DramaProject }) {
 
   function removeNodes(removed: CanvasNode[], linkIds = new Set<string>()) {
     if (!removed.length && !linkIds.size) return
+    const edit = inlineRef.current
+    if (removed.some((node) => node.id === edit?.id || (edit?.mode === 'new' && node.id === edit.connection?.nodeId))) {
+      messageApi.info('请先保存或取消正在编辑的节点')
+      return
+    }
     const remove = () => {
       const current = extrasRef.current
       const cards = new Set(removed.filter((node) => node.type === 'media').map((node) => node.id))
@@ -483,18 +672,60 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     }
     const moved = new Set(changes.flatMap((change) => change.type === 'position' && change.position && !change.dragging ? [change.id] : []))
     if (!moved.size) return
-    const current = extrasRef.current
-    if (current.cards.some((card) => moved.has(card.id))) {
-      const positions = new Map(next.filter((node) => moved.has(node.id)).map((node) => [node.id, node.position]))
-      saveExtras({ ...current, cards: current.cards.map((card) => positions.has(card.id) ? { ...card, position: positions.get(card.id)! } : card) })
-    } else if (next.some((node) => moved.has(node.id))) {
-      schedule(next)
+    commitPositions(next, moved, snapshot())
+  }
+
+  function changeFlowNodes(changes: NodeChange<FlowNode>[]) {
+    const draft = inlineRef.current
+    if (draft?.mode !== 'new') {
+      changeNodes(changes as NodeChange<CanvasNode>[])
+      return
     }
+    const committed: NodeChange<CanvasNode>[] = []
+    let nextDraft = draft
+    for (const change of changes) {
+      if (change.type === 'add' || change.type === 'replace') {
+        if (change.item.type !== 'draft') committed.push(change as NodeChange<CanvasNode>)
+      } else if (change.id !== draft.id) {
+        committed.push(change)
+      } else if (change.type === 'position' && change.position && !inlineSavingRef.current) {
+        nextDraft = { ...nextDraft, position: change.position, dragging: change.dragging }
+      } else if (change.type === 'dimensions' && change.dimensions) {
+        nextDraft = { ...nextDraft, measured: change.dimensions }
+      }
+    }
+    if (committed.length) changeNodes(committed)
+    if (nextDraft !== draft) setEditor(nextDraft)
+  }
+
+  function commitPositions(next: CanvasNode[], candidates: Set<string>, before: CanvasSnapshot) {
+    const current = extrasRef.current
+    const previousCards = new Map(before.extras.cards.map((card) => [card.id, card.position]))
+    const movedCards = new Map<string, XYPosition>()
+    let movedForm = false
+    for (const node of next) {
+      if (!candidates.has(node.id)) continue
+      const prior = (node.type === 'asset' ? before.formPositions : previousCards).get(node.id)
+      if (prior?.x === node.position.x && prior.y === node.position.y) continue
+      if (node.type === 'asset') {
+        formPositions.current.set(node.id, node.position)
+        movedForm = true
+      } else movedCards.set(node.id, node.position)
+    }
+    if (!movedForm && !movedCards.size) return
+    history.push(before)
+    if (movedCards.size) saveExtras({ ...current, cards: current.cards.map((card) => {
+      const position = movedCards.get(card.id)
+      return position ? { ...card, position } : card
+    }) }, false)
+    else schedule(next)
   }
 
   async function importFiles(files: File[], point?: XYPosition) {
     if (!files.length || !revision.current || uploadInProgress.current) return
-    const position = nodePosition(point)
+    const anchor = flow.screenToFlowPosition(point ?? canvasCenter())
+    const occupied = nodesRef.current.map(nodeGeometry)
+    const visible = visibleCanvasArea()
     uploadInProgress.current = true
     setUploading(true)
     const cards: MediaCard[] = []
@@ -502,9 +733,12 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       for (const file of files) {
         try {
           const media = await uploadDramaCanvasMedia(project.id, file)
-          const offset = cards.length * 430
-          cards.push({ id: crypto.randomUUID(), kind: media.kind, content: media.url,
-            title: Array.from(file.name).slice(0, 80).join('') || cardNames[media.kind], position: { x: position.x + offset, y: position.y } })
+          const size = canvasNodeSize(media.kind)
+          const position = point && !cards.length ? anchor : findCanvasNodePosition(anchor, size, occupied, visible)
+          const card = { id: crypto.randomUUID(), kind: media.kind, content: media.url,
+            title: Array.from(file.name).slice(0, 80).join('') || cardNames[media.kind], position }
+          cards.push(card)
+          occupied.push({ id: card.id, group: card.kind, position, ...size })
         } catch (error) {
           messageApi.error(error instanceof Error ? `${file.name}：${error.message}` : '素材上传失败')
         }
@@ -512,7 +746,8 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       if (cards.length) {
         const graph = extrasRef.current
         saveExtras({ ...graph, cards: [...graph.cards, ...cards] })
-        choose(cards[0].id)
+        revealAfterAdd.current = cards[0].id
+        chooseNodes(cards.map((card) => card.id))
         messageApi.success(`已添加 ${cards.length} 个素材`)
       }
     } finally {
@@ -522,7 +757,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   }
 
   const pasteFiles = useRef<(files: File[]) => void>(() => {})
-  pasteFiles.current = (files) => { if (!cardDraft && !assetDraft && !editing && !preview && !mediaPreview) void importFiles(files) }
+  pasteFiles.current = (files) => { if (!inlineRef.current && !preview && !mediaPreview) void importFiles(files) }
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
       if (event.target instanceof Element && event.target.closest('input,textarea,[contenteditable],.ant-modal')) return
@@ -546,6 +781,8 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   async function leave() {
     if (uploadInProgress.current) { messageApi.info('素材正在上传，请稍后返回'); return }
     if (topologyChanging.current) { messageApi.info('画布正在添加形象，请稍后返回'); return }
+    if (inlineSavingRef.current) { messageApi.info('节点正在保存，请稍后返回'); return }
+    if (inlineRef.current && !window.confirm('当前节点尚未保存，确定返回吗？')) return
     try { await flush(); setParams((current) => { const next = new URLSearchParams(current); next.delete('canvas'); next.delete('focus'); next.delete('selected'); return next }) }
     catch (error) { messageApi.error(error instanceof Error ? error.message : '保存失败') }
   }
@@ -560,24 +797,156 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       await generateDramaImage(project.id, current.id, generationPrompt); await query.refetch(); messageApi.success('图片生成任务已开始，可以继续操作画布')
     } catch (error) { await query.refetch(); messageApi.error(error instanceof Error ? error.message : '图片生成失败') } finally { setWorking(false) }
   }
-  async function saveForm() { if (!editing) return; setWorking(true); try { await editDramaForm(project.id, editing); await query.refetch(); setEditing(null); messageApi.success('形象已保存') } catch (error) { messageApi.error(error instanceof Error ? error.message : '保存形象失败') } finally { setWorking(false) } }
-  function arrange() {
-    const indexes: Record<string, number> = { character: 0, scene: 0, prop: 0 }
-    const next = nodesRef.current.map((node) => { if (node.type !== 'asset') return node; const k = node.data.form.kind; const index = indexes[k]++; return { ...node, position: { x: { character: 0, scene: 1250, prop: 2200 }[k] + (index % 3) * (k === 'scene' ? 420 : 320), y: Math.floor(index / 3) * (k === 'character' ? 660 : 470) } } })
-    nodesRef.current = next; setNodes(next); schedule(next); setTimeout(() => void flow.fitView({ duration: 300, padding: 0.15 }), 50)
-  }
-  const addItems = [
-    { key: 'assets', type: 'group' as const, label: '项目资产', children: Object.entries(kindNames).map(([key, label]) => ({ key, label })) },
-    { key: 'media', type: 'group' as const, label: '素材节点', children: Object.entries(cardNames).map(([key, label]) => ({ key, label })) },
-    { key: 'upload', label: '上传本地素材', icon: <UploadOutlined /> },
-  ]
-  function addItem(key: string) {
-    if (key === 'upload') openFilePicker()
-    else if (key in kindNames) openAsset(key as DramaAssetKind)
-    else openCard(key as CardKind)
+  function fitNodes(ids?: string[]) {
+    void flow.fitView({ duration: 250, padding: 0.2, ...(ids ? { nodes: ids.map((id) => ({ id })), maxZoom: 1 } : {}) })
   }
 
+  function focusNode(id: string) {
+    setSearchOpen(false)
+    setTool('select')
+    choose(id)
+    fitNodes([id])
+  }
+
+  function arrange() {
+    const before = snapshot()
+    const positions = arrangeCanvasNodes(nodesRef.current.map(nodeGeometry))
+    const next = nodesRef.current.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }))
+    nodesRef.current = next
+    setNodes(next)
+    commitPositions(next, new Set(positions.keys()), before)
+    requestAnimationFrame(() => fitNodes())
+  }
+  function addItem(kind: CanvasCreateKind, menu: CanvasMenu) {
+    const point = menu.toolbar ? undefined : menu.point
+    if (kind === 'upload') {
+      setContextMenu(null)
+      openFilePicker(point)
+      return
+    }
+    openEditor({ id: crypto.randomUUID(), mode: 'new', kind, title: '', content: '', position: nodePosition(kind, point), connection: menu.connection })
+  }
+
+  function updateAssetOptions(update: Partial<DramaAssetForm>) {
+    const current = inlineRef.current
+    if (current?.mode === 'asset') setEditor({ ...current, form: { ...current.form, ...update } })
+  }
+
+  const editorActions = useRef({ save: saveInline, cancel: cancelEditor, options: updateAssetOptions })
+  editorActions.current = { save: saveInline, cancel: cancelEditor, options: updateAssetOptions }
+  const editId = inlineEdit?.id
+  const editKind = inlineEdit?.kind
+  const editTitle = inlineEdit?.title
+  const editContent = inlineEdit?.content
+  const editIsNew = inlineEdit?.mode === 'new'
+  const formOptions = inlineEdit?.mode === 'asset' ? inlineEdit.form : undefined
+  const editor = useMemo(() => {
+    if (!editId || !editKind) return null
+    const props: NodeEditorProps = { kind: editKind, title: editTitle ?? '', content: editContent ?? '', isNew: editIsNew,
+      saving: inlineSaving, error: inlineError, onSave: (input) => void editorActions.current.save(input), onCancel: () => editorActions.current.cancel() }
+    if (formOptions) props.children = <details className="drama-canvas-inline-settings">
+      <summary>形象设置</summary>
+      <div>
+        {formOptions.kind === 'character' && <label>性别<Select size="small" aria-label="形象性别" disabled={inlineSaving}
+          value={formOptions.gender} onChange={(gender) => editorActions.current.options({ gender })}
+          options={[{ value: 'unspecified', label: '未指定' }, { value: 'male', label: '男' }, { value: 'female', label: '女' }, { value: 'other', label: '其他' }]} /></label>}
+        <label>风格<DramaStylePicker value={formOptions.styleId || formOptions.style} valueLabel={formOptions.style} disabled={inlineSaving}
+          onChange={(style) => editorActions.current.options({ styleId: style.id, style: style.name })} /></label>
+        <label>比例<Select size="small" aria-label="形象比例" disabled={inlineSaving} value={formOptions.aspectRatio}
+          onChange={(aspectRatio) => editorActions.current.options({ aspectRatio })}
+          options={['9:16', '16:9', '1:1'].map((value) => ({ value, label: value }))} /></label>
+      </div>
+    </details>
+    return { id: editId, props }
+  }, [editId, editKind, editTitle, editContent, editIsNew, formOptions, inlineError, inlineSaving])
+
+  const renderedNodes = useMemo<FlowNode[]>(() => {
+    if (inlineEdit?.mode !== 'new') return nodes
+    return [...nodes, { id: inlineEdit.id, type: 'draft', data: { kind: inlineEdit.kind }, position: inlineEdit.position,
+      measured: inlineEdit.measured, dragging: inlineEdit.dragging, draggable: !inlineSaving, dragHandle: '.drama-canvas-node-caption',
+      selectable: false, connectable: false, deletable: false, focusable: false, zIndex: 8 }]
+  }, [inlineEdit, inlineSaving, nodes])
+  const renderedEdges = useMemo(() => {
+    if (inlineEdit?.mode !== 'new' || !inlineEdit.connection || !nodes.some((node) => node.id === inlineEdit.connection?.nodeId)) return edges
+    const { id, connection } = inlineEdit
+    const endpoints = connection.type === 'source' ? { source: connection.nodeId, target: id, sourceHandle: connection.handleId }
+      : { source: id, target: connection.nodeId, targetHandle: connection.handleId }
+    return [...edges, { ...endpoints, id: `draft-link-${id}`, className: 'drama-canvas-draft-link', selectable: false, deletable: false, reconnectable: false }]
+  }, [edges, inlineEdit, nodes])
+
+  const modalOpen = Boolean(preview || mediaPreview || modelSettingsOpen)
+  const historyDisabled = Boolean(inlineEdit) || working || uploading || !!saveError || nodes.some((node) => node.dragging)
+  const keyboard = useRef<(event: KeyboardEvent) => void>(() => {})
+  keyboard.current = (event) => {
+    if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || modalOpen) return
+    const target = event.target instanceof Element ? event.target : null
+    if (target?.closest('[role="dialog"],.drama-canvas-inline-editor')) return
+    if (event.key === 'Escape') {
+      if (searchOpen) setSearchOpen(false)
+      else if (contextMenu) setContextMenu(null)
+      else choose('')
+      return
+    }
+    if (!query.data || target?.closest('input,textarea,select,[contenteditable],[role="combobox"]')) return
+    const key = event.key.toLowerCase()
+    const modifier = event.ctrlKey || event.metaKey
+    if (modifier && !event.altKey) {
+      if (key === 'z') { event.preventDefault(); restoreHistory(event.shiftKey ? 'redo' : 'undo') }
+      else if (key === 'y' && !event.shiftKey) { event.preventDefault(); restoreHistory('redo') }
+      else if (key === 'k') { event.preventDefault(); setSearchOpen((open) => !open) }
+      else if (key === 'a' && !event.shiftKey && !window.getSelection()?.toString()) {
+        event.preventDefault()
+        setTool('select')
+        chooseNodes(nodesRef.current.map((node) => node.id))
+      } else if (key === 'd' && !event.shiftKey) {
+        const picked = nodesRef.current.filter((node): node is MediaNode => node.type === 'media' && node.selected === true)
+        if (picked.length && !historyDisabled) { event.preventDefault(); duplicateCards(picked) }
+      }
+      return
+    }
+    if (event.altKey || event.shiftKey || searchOpen || contextMenu) return
+    if (key === 'v' || key === 'h') { event.preventDefault(); setTool(key === 'v' ? 'select' : 'pan') }
+    if (event.code === 'Space' && !target?.closest('button:focus-visible,[role="button"]:focus-visible')) {
+      event.preventDefault()
+      setSpacePan(true)
+    }
+  }
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => keyboard.current(event)
+    const release = () => setSpacePan(false)
+    const keyup = (event: KeyboardEvent) => { if (event.code === 'Space') release() }
+    window.addEventListener('keydown', keydown)
+    window.addEventListener('keyup', keyup)
+    window.addEventListener('blur', release)
+    return () => {
+      window.removeEventListener('keydown', keydown)
+      window.removeEventListener('keyup', keyup)
+      window.removeEventListener('blur', release)
+    }
+  }, [])
+
+  const selectedMedia = selectedNodes.filter((node): node is MediaNode => node.type === 'media')
+  const selectionTools = <div className="drama-canvas-selection-tools" role="toolbar" aria-label="所选节点操作">
+    {selected && <>
+      <Button size="small" icon={<EditOutlined />} disabled={busy(selected)} onClick={() => startEditing(selected.id)}>编辑形象</Button>
+      <Button size="small" icon={<PictureOutlined />} aria-pressed={generationForId === selected.id}
+        onClick={() => setGenerationForId((id) => id === selected.id ? '' : selected.id)}>生图设置</Button>
+    </>}
+    {selectedCard && <Button size="small" icon={<EditOutlined />} onClick={() => startEditing(selectedCard.id)}>编辑节点</Button>}
+    {selectedCard && selectedCard.data.kind !== 'text' && <Button size="small" icon={<EyeOutlined />} onClick={() => setMediaPreview(selectedCard.data)}>预览</Button>}
+    {selectedMedia.length > 0 && <Button size="small" icon={<CopyOutlined />} onClick={() => duplicateCards(selectedMedia)}>{selectedMedia.length < selectedNodes.length ? '复制素材节点' : '复制节点'}</Button>}
+    {selectedNodes.length > 1 && <span>{selectedNodes.length} 个节点</span>}
+    <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeNodes(selectedNodes, selectedLinks)}>
+      {selectedNodes.length === 1 && selectedNodes[0].type === 'asset' && !selectedLinks.size ? '隐藏形象' : selectedNodes.length ? '移除所选' : '断开连线'}
+    </Button>
+  </div>
+
   return <div className="drama-canvas-shell" ref={shell}
+    onDoubleClick={(event) => {
+      if (!isPanning && event.target instanceof Element && event.target.classList.contains('react-flow__pane')) {
+        setContextMenu({ point: { x: event.clientX, y: event.clientY } })
+      }
+    }}
     onDragEnter={(event) => {
       if (!event.dataTransfer.types.includes('Files')) return
       event.preventDefault(); dragDepth.current++; setDragOver(true)
@@ -597,31 +966,46 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     <header className="drama-canvas-header">
       <div><Button icon={<ArrowLeftOutlined />} type="text" onClick={() => void leave()} aria-label="返回资产列表" />
         <strong>{project.title}</strong><span className={saveError ? 'save-error' : ''} role="status">{saveStatus}</span></div>
-      <div><DramaImageModelSelect />
-        <Dropdown trigger={['click']} menu={{ items: addItems, onClick: ({ key }) => addItem(key) }}>
-          <Button icon={<PlusOutlined />} loading={uploading} disabled={!query.data || working}>添加节点</Button>
-        </Dropdown>
-        {extras.hidden.length > 0 && <Button onClick={() => saveExtras({ ...extrasRef.current, hidden: [] })}>恢复隐藏的形象</Button>}
-        <Button onClick={arrange} disabled={!nodes.length || working || !!saveError}>整理画布</Button>
-        <Button onClick={() => void flow.fitView({ duration: 300, padding: 0.15 })}>适应画布</Button>
+      <div><div className="drama-canvas-wide-action"><DramaImageModelSelect /></div>
+        <Button ref={addButton} icon={<PlusOutlined />} loading={uploading} disabled={!query.data || working} aria-expanded={!!contextMenu?.toolbar}
+          onClick={(event) => {
+            const anchor = event.currentTarget.getBoundingClientRect()
+            setContextMenu({ toolbar: true, point: { x: anchor.right - 292, y: anchor.bottom + 8 } })
+          }}>添加节点</Button>
+        {extras.hidden.length > 0 && <Button className="drama-canvas-wide-action" onClick={() => saveExtras({ ...extrasRef.current, hidden: [] })}>恢复隐藏的形象</Button>}
+        <Button className="drama-canvas-wide-action" onClick={arrange} disabled={!nodes.length || working || !!saveError}>整理画布</Button>
+        <Dropdown trigger={['click']} menu={{ items: [
+          { key: 'model', label: '图片模型设置' },
+          { key: 'arrange', label: '整理画布', disabled: !nodes.length || working || !!saveError },
+          { key: 'restore', label: '恢复隐藏的形象', disabled: !extras.hidden.length },
+        ], onClick: ({ key }) => {
+          if (key === 'model') setModelSettingsOpen(true)
+          else if (key === 'arrange') arrange()
+          else saveExtras({ ...extrasRef.current, hidden: [] })
+        } }}><Button className="drama-canvas-project-more" icon={<EllipsisOutlined />} aria-label="更多画布操作" /></Dropdown>
       </div>
     </header>
     {saveError && <Alert className="drama-canvas-save-alert" type="error" showIcon title={saveError} action={<Button onClick={() => { if (conflict) window.location.reload(); else { blocked.current = false; void drain() } }}>{conflict ? '重新加载' : '重试保存'}</Button>} />}
     {query.error && query.data && !saveError && <Alert className="drama-canvas-save-alert" type="warning" showIcon title="暂时无法刷新资产状态"
       action={<Button size="small" onClick={() => void query.refetch()}>重试</Button>} />}
     {!query.data ? <div className="drama-canvas-loading">{query.error ? <Alert type="error" title="读取画布失败" description={query.error.message} action={<Button onClick={() => void query.refetch()}>重试</Button>} /> : <Skeleton active />}</div> : <>
-      <ReactFlow<CanvasNode> nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes}
-        onNodeClick={() => setContextMenu(null)} onPaneClick={() => { setContextMenu(null); choose('') }}
+      <CanvasEditor.Provider value={editor}>
+      <ReactFlow<FlowNode> className={`drama-canvas-flow${isPanning ? ' is-panning' : ''}`} nodes={renderedNodes} edges={renderedEdges} nodeTypes={nodeTypes} onNodesChange={changeFlowNodes}
+        onNodeClick={() => setContextMenu(null)} onPaneClick={() => {
+          if (isPanning) return
+          choose('')
+          setContextMenu(null)
+        }}
         onNodeDoubleClick={(event, node) => {
-          if (node.type !== 'media' || (event.target instanceof Element && event.target.closest('video,audio,button'))) return
-          if (node.data.kind === 'text') setCardDraft({ card: { ...node.data, position: node.position } })
-          else setMediaPreview(node.data)
+          if (node.type === 'draft' || (event.target instanceof Element && event.target.closest('video,audio,button,input,textarea,.drama-canvas-inline-editor'))) return
+          startEditing(node.id)
         }}
         onPaneContextMenu={(event) => {
           event.preventDefault()
           setContextMenu({ point: { x: event.clientX, y: event.clientY } })
         }}
         onNodeContextMenu={(event, node) => {
+          if (node.type === 'draft' || (event.target instanceof Element && event.target.closest('.drama-canvas-inline-editor'))) return
           event.preventDefault()
           choose(node.id)
           setContextMenu({ point: { x: event.clientX, y: event.clientY }, node })
@@ -635,14 +1019,15 @@ function AssetCanvas({ project }: { project: DramaProject }) {
           viewport.current = next
           schedule()
         }} onBeforeDelete={async ({ nodes: removed, edges: removedEdges }) => {
-          removeNodes(removed, new Set(removedEdges.filter((edge) => edge.selected && edge.deletable !== false).map((edge) => edge.id)))
+          removeNodes(removed.filter((node): node is CanvasNode => node.type !== 'draft'), new Set(removedEdges.filter((edge) => edge.selected && edge.deletable !== false).map((edge) => edge.id)))
           return false
         }}
         onEdgesChange={(changes) => {
+          const duringBoxSelection = selectingRef.current
           setSelectedLinks((current) => {
             const next = new Set(current)
             for (const change of changes) {
-              if (change.type === 'select' && change.selected) next.add(change.id)
+              if (change.type === 'select' && change.selected && !duringBoxSelection) next.add(change.id)
               else if (change.type === 'select' || change.type === 'remove') next.delete(change.id)
             }
             return next
@@ -651,46 +1036,55 @@ function AssetCanvas({ project }: { project: DramaProject }) {
         onConnect={(connection) => connect(connection)} onConnectEnd={finishConnection}
         onReconnect={(edge, connection) => connect(connection, edge.id)}
         isValidConnection={(connection) => connection.source !== connection.target}
-        selectionMode={SelectionMode.Partial} selectionKeyCode="Shift" multiSelectionKeyCode={['Meta', 'Control']}
-        deleteKeyCode={['Backspace', 'Delete']} defaultEdgeOptions={{ type: 'default', interactionWidth: 22 }} minZoom={0.05} maxZoom={2} defaultViewport={viewport.current} proOptions={{ hideAttribution: false }} ariaLabelConfig={{ 'controls.ariaLabel': '画布控制', 'controls.zoomIn.ariaLabel': '放大', 'controls.zoomOut.ariaLabel': '缩小', 'controls.fitView.ariaLabel': '适应画布', 'minimap.ariaLabel': '画布缩略图' }}>
+        panOnDrag={isPanning ? true : [1]} panActivationKeyCode={null} selectionOnDrag={!isPanning}
+        selectionMode={SelectionMode.Partial} selectionKeyCode={isPanning ? null : 'Shift'} multiSelectionKeyCode={['Meta', 'Control']}
+        onSelectionStart={() => { selectingRef.current = true; setSelecting(true); setSelectedLinks(new Set()) }}
+        onSelectionEnd={() => { selectingRef.current = false; setSelecting(false) }}
+        nodesDraggable={!isPanning} nodesConnectable={!isPanning} elementsSelectable={!isPanning}
+        panOnScroll zoomOnScroll={false} zoomActivationKeyCode={['Control', 'Meta']} zoomOnDoubleClick={false}
+        deleteKeyCode={modalOpen || searchOpen || isPanning ? null : ['Backspace', 'Delete']}
+        defaultEdgeOptions={{ type: 'default', interactionWidth: 22 }} minZoom={0.05} maxZoom={2} defaultViewport={viewport.current}
+        proOptions={{ hideAttribution: false }} ariaLabelConfig={{ 'minimap.ariaLabel': '画布缩略图' }}>
         <Background gap={22} size={1} color="#d5dce8" />
-        <Controls showInteractive={false} />
-        <MiniMap<CanvasNode> pannable zoomable nodeColor={(node) => node.type === 'media' ? '#e2a467' : ({ character: '#b9afe9', scene: '#a2c9be', prop: '#aec6e7' }[node.data.form.kind])} />
+        {showMinimap && <MiniMap<FlowNode> pannable zoomable nodeColor={(node) => node.type === 'draft' ? '#8067d8' : node.type === 'media' ? '#e2a467' : ({ character: '#b9afe9', scene: '#a2c9be', prop: '#aec6e7' }[node.data.form.kind])} />}
+        {!isPanning && !selecting && !inlineEdit && !nodes.some((node) => node.dragging) && selectedNodes.length > 0 &&
+          <DramaCanvasNodeToolbar nodes={selectedNodes}>{selectionTools}</DramaCanvasNodeToolbar>}
       </ReactFlow>
-      {(selectedNodes.length > 0 || selectedLinks.size > 0) && <div className="drama-canvas-selection-tools">
-        {selectedCard && <><Button size="small" icon={<EditOutlined />} onClick={() => setCardDraft({ card: { ...selectedCard.data, position: selectedCard.position } })}>编辑节点</Button>
-          {selectedCard.data.kind !== 'text' && <Button size="small" icon={<EyeOutlined />} onClick={() => setMediaPreview(selectedCard.data)}>预览</Button>}
-          <Button size="small" icon={<CopyOutlined />} onClick={() => duplicateCard(selectedCard.data, selectedCard.position)}>复制节点</Button></>}
-        {selectedNodes.length > 1 && <span>{selectedNodes.length} 个节点</span>}
-        <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeNodes(selectedNodes, selectedLinks)}>
-          {selectedNodes.length === 1 && selectedNodes[0].type === 'asset' && !selectedLinks.size ? '隐藏形象' : selectedNodes.length ? '移除所选' : '断开连线'}
-        </Button>
-      </div>}
-      {!nodes.length && <div className="drama-canvas-empty"><Empty description="添加节点、拖入文件或右键空白处开始" /></div>}
-      <span className="drama-canvas-gesture-hint">拖动平移 · Shift 框选 · 滚轮缩放</span>
-      {selected && <div className="drama-canvas-generation" aria-label="当前形象图片生成">
-        <div className="drama-canvas-generation-heading"><span>{kindIcons[selected.kind]} {selected.assetName} · {selected.name}</span><Button type="text" size="small" icon={<EditOutlined />} disabled={busy(selected)} onClick={() => setEditing({ ...selected })}>编辑形象</Button></div>
+      </CanvasEditor.Provider>
+      {!isPanning && !selectedNodes.length && selectedLinks.size > 0 && <div className="drama-canvas-edge-tools">{selectionTools}</div>}
+      <DramaCanvasToolDock tool={isPanning ? 'pan' : tool} onTool={setTool}
+        canUndo={history.canUndo && !historyDisabled} canRedo={history.canRedo && !historyDisabled}
+        onUndo={() => restoreHistory('undo')} onRedo={() => restoreHistory('redo')}
+        items={nodes.map((node) => node.type === 'asset'
+          ? { id: node.id, name: `${node.data.form.assetName} · ${node.data.form.name}`, category: kindNames[node.data.form.kind] }
+          : { id: node.id, name: node.data.title, category: cardNames[node.data.kind] })}
+        searchOpen={searchOpen} onSearchOpen={setSearchOpen} onFocusNode={focusNode} />
+      <DramaCanvasViewTools hasNodes={nodes.length > 0} hasSelection={selectedNodes.length > 0} minimap={showMinimap}
+        onMinimap={() => setShowMinimap((shown) => !shown)} onFit={() => fitNodes()} onFocusSelection={() => fitNodes(selectedNodes.map((node) => node.id))} />
+      {!renderedNodes.length && <div className="drama-canvas-empty"><Empty description="添加节点、拖入文件或右键空白处开始" /></div>}
+      <span className="drama-canvas-gesture-hint">{isPanning ? '拖动平移' : '拖动空白框选 · 空格临时抓手'} · 滚轮平移 · Ctrl / ⌘ + 滚轮缩放</span>
+      {selected && generationForId === selected.id && !inlineEdit && <div className="drama-canvas-generation" aria-label="当前形象图片生成">
+        <div className="drama-canvas-generation-heading"><span>{kindIcons[selected.kind]} {selected.assetName} · {selected.name}</span><Button type="text" size="small" onClick={() => setGenerationForId('')}>收起</Button></div>
         {selected.imageError && <div className="drama-canvas-generation-error">{selected.imageError}</div>}
         <Input.TextArea aria-label="本次生成描述" value={prompt} onChange={(event) => setPrompt(event.target.value)} autoSize={{ minRows: 2, maxRows: 4 }} placeholder="描述当前形象。本次修改只用于生成，编辑形象可保存长期描述。" maxLength={10000} disabled={busy(selected)} />
         <div className="drama-canvas-generation-toolbar"><DramaStylePicker value={style.id || style.name} valueLabel={style.name} onChange={(value) => setStyle({ id: value.id, name: value.name })} disabled={busy(selected)} /><Select aria-label="生成比例" value={ratio} onChange={setRatio} disabled={busy(selected)} options={[{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }, { value: '1:1', label: '方图 1:1' }]} /><span>{selected.parentId ? '使用原始形象作为参考图' : '生成原始形象'}{connectedText.length > 0 && ` · 引用 ${connectedText.length} 条文案`}</span><Button type="primary" icon={<PictureOutlined />} loading={working || busy(selected)} disabled={!generationPrompt || !!saveError} onClick={() => void generate()}>{selected.imageUrl ? '重新生成图片' : '生成图片'}</Button></div>
       </div>}
     </>}
     {dragOver && <div className="drama-canvas-drop"><UploadOutlined /><strong>松开后将文件添加到画布</strong></div>}
+    <Modal title="图片模型设置" open={modelSettingsOpen} footer={null} onCancel={() => setModelSettingsOpen(false)}><DramaImageModelSelect /></Modal>
     {contextMenu && <div className="drama-canvas-menu-layer" onClick={() => setContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null) }}>
-      <div className="drama-canvas-menu" aria-label="画布操作"
-        style={{ left: Math.max(4, Math.min(contextMenu.point.x, window.innerWidth - 182)), top: Math.max(4, Math.min(contextMenu.point.y, window.innerHeight - (contextMenu.node || contextMenu.edge ? 132 : 328))) }}
+      {contextMenu.node || contextMenu.edge ? <div className="drama-canvas-menu" aria-label="画布操作"
+        style={{ left: Math.max(4, Math.min(contextMenu.point.x, window.innerWidth - 182)), top: Math.max(4, Math.min(contextMenu.point.y, window.innerHeight - 132)) }}
         onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setContextMenu(null) }}>
         {contextMenu.node?.type === 'asset' && <Button type="text" onClick={() => {
-          if (contextMenu.node?.type === 'asset') setEditing(contextMenu.node.data.form)
-          setContextMenu(null)
+          if (contextMenu.node?.type === 'asset') startEditing(contextMenu.node.id)
         }}>编辑形象</Button>}
         {contextMenu.node?.type === 'media' && <Button type="text" onClick={() => {
-          if (contextMenu.node?.type === 'media') setCardDraft({ card: { ...contextMenu.node.data, position: contextMenu.node.position } })
-          setContextMenu(null)
+          if (contextMenu.node?.type === 'media') startEditing(contextMenu.node.id)
         }}>编辑节点</Button>}
         {contextMenu.node?.type === 'media' && <Button type="text" onClick={() => {
           const node = contextMenu.node
-          if (node?.type === 'media') duplicateCard(node.data, node.position)
+          if (node?.type === 'media') duplicateCards([node])
         }}>复制节点</Button>}
         {contextMenu.node && <Button type="text" danger onClick={() => {
           if (contextMenu.node) removeNodes([contextMenu.node])
@@ -700,29 +1094,14 @@ function AssetCanvas({ project }: { project: DramaProject }) {
           if (contextMenu.edge) removeNodes([], new Set([contextMenu.edge.id]))
           setContextMenu(null)
         }}>断开连线</Button>}
-        {!contextMenu.node && !contextMenu.edge && <>
-          {contextMenu.connection && <small>创建节点并连线</small>}
-          {Object.entries(kindNames).map(([kind, label]) =>
-            <Button key={kind} type="text" onClick={() => openAsset(kind as DramaAssetKind, contextMenu.point, contextMenu.connection)}>添加{label}</Button>)}
-          {Object.entries(cardNames).map(([kind, label]) =>
-            <Button key={kind} type="text" onClick={() => openCard(kind as CardKind, contextMenu.point, contextMenu.connection)}>添加{label}</Button>)}
-          {!contextMenu.connection && <Button type="text" icon={<UploadOutlined />} onClick={() => { setContextMenu(null); openFilePicker(contextMenu.point) }}>上传本地素材</Button>}
-        </>}
-      </div>
-    </div>}
-    {cardDraft && <DramaCanvasCardEditor key={cardDraft.card.id} draft={cardDraft.card}
-      editing={extras.cards.some((card) => card.id === cardDraft.card.id)} busy={uploading} onCancel={() => setCardDraft(null)} onSave={(card, file) => void saveCard(card, file)} />}
-    <Modal title={assetDraft ? `添加${kindNames[assetDraft.kind]}` : '添加资产'} open={!!assetDraft}
-      onCancel={() => { if (!working) setAssetDraft(null) }} onOk={() => void saveAsset()} confirmLoading={working}
-      okText="添加" cancelText="取消" okButtonProps={{ disabled: !assetDraft?.name.trim() || !assetDraft.description.trim() }} destroyOnHidden>
-      {assetDraft && <div className="drama-canvas-edit-form">
-        <label>名称<Input maxLength={80} value={assetDraft.name} onChange={(event) => setAssetDraft({ ...assetDraft, name: event.target.value })} /></label>
-        <label>形象描述<Input.TextArea rows={5} maxLength={10000} value={assetDraft.description} onChange={(event) => setAssetDraft({ ...assetDraft, description: event.target.value })} /></label>
+      </div> : <div className="drama-canvas-create-popover" onClick={(event) => event.stopPropagation()}
+        style={{ left: Math.max(8, Math.min(contextMenu.point.x, window.innerWidth - 300)), top: Math.max(8, Math.min(contextMenu.point.y, window.innerHeight - (contextMenu.connection ? 232 : 280))) }}>
+        <DramaCanvasCreateMenu connected={!!contextMenu.connection} onChoose={(kind) => addItem(kind, contextMenu)} onClose={() => {
+          setContextMenu(null)
+          if (contextMenu.toolbar) addButton.current?.focus()
+        }} />
       </div>}
-    </Modal>
-    <Modal title={editing ? `编辑${kindNames[editing.kind]}形象` : '编辑形象'} open={!!editing} onCancel={() => setEditing(null)} onOk={() => void saveForm()} confirmLoading={working} okText="保存" cancelText="取消" destroyOnHidden>
-      {editing && <div className="drama-canvas-edit-form"><label>形象名称<Input value={editing.name} maxLength={80} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label><label>形象描述<Input.TextArea value={editing.description} maxLength={10000} showCount rows={7} onChange={(event) => setEditing({ ...editing, description: event.target.value })} /></label><div>{editing.kind === 'character' && <label>性别<Select value={editing.gender} onChange={(value) => setEditing({ ...editing, gender: value })} options={[{ value: 'unspecified', label: '未指定' }, { value: 'male', label: '男' }, { value: 'female', label: '女' }, { value: 'other', label: '其他' }]} /></label>}<label>风格<DramaStylePicker value={editing.styleId || editing.style} valueLabel={editing.style} onChange={(style) => setEditing({ ...editing, styleId: style.id, style: style.name })} /></label><label>比例<Select value={editing.aspectRatio} onChange={(value) => setEditing({ ...editing, aspectRatio: value })} options={['9:16', '16:9', '1:1'].map((value) => ({ value, label: value }))} /></label></div></div>}
-    </Modal>
+    </div>}
     <Modal title={preview ? `${preview.assetName} · ${preview.name}` : '图片预览'} open={!!preview} footer={null} width={850} onCancel={() => setPreview(null)}>{preview?.imageUrl ? <img className="drama-canvas-preview-image" src={preview.imageUrl} alt={`${preview.assetName} · ${preview.name}`} /> : <Empty description="尚未生成图片" />}</Modal>
     <Modal title={mediaPreview?.title} open={!!mediaPreview} footer={null} width={850} onCancel={() => setMediaPreview(null)} destroyOnHidden>
       {mediaPreview?.kind === 'image' && <img className="drama-canvas-preview-image" src={mediaPreview.content} alt={mediaPreview.title} />}

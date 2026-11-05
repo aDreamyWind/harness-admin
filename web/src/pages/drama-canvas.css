@@ -1,9 +1,10 @@
-.drama-canvas-shell { position:fixed; inset:0; z-index:100; background:#f5f7fc; color:#243149; }
+.drama-canvas-shell { --canvas-gutter:18px; --canvas-view-bottom:calc(18px + env(safe-area-inset-bottom, 0px)); --canvas-panel-bottom:calc(var(--canvas-view-bottom) + 58px); position:fixed; inset:0; z-index:100; background:#f5f7fc; color:#243149; }
 .drama-canvas-header { position:absolute; inset:0 0 auto; height:68px; z-index:10; padding:12px 22px; display:flex; align-items:center; justify-content:space-between; gap:16px; pointer-events:none; }
 .drama-canvas-header>div {display:flex; gap:12px; align-items:center; padding:7px 12px; border:1px solid #e7ebf4; border-radius:14px; background:rgba(255,255,255,.95); box-shadow:0 4px 20px #27355006; pointer-events:auto;}
 .drama-canvas-header strong {font-size:14px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .drama-canvas-header span.save-error {color:#ce5548;}
 .drama-canvas-header>div>span {font-size:12px; color:#7f8ba0;}
+.drama-canvas-header .drama-canvas-project-more { display:none; }
 .drama-canvas-node {position:relative; width:280px; padding-top:38px; color:#29364b;}
 .drama-canvas-node.scene {width:400px;}
 .drama-canvas-node-caption {position:absolute; top:0; left:0; display:flex; align-items:center; gap:8px; max-width:100%; height:30px; background:#ffffffed; border:1px solid #e9eaf3; border-radius:9px; padding:0 12px; font-size:12px;}
@@ -13,6 +14,15 @@
 .drama-canvas-node.prop .drama-canvas-node-caption .anticon {color:#5e86bb;}
 .drama-canvas-node-body {border:1px solid #e0e5ef; border-radius:14px; background:#fff; box-shadow:0 4px 12px #27355005; position:relative;}
 .drama-canvas-node.selected .drama-canvas-node-body {border-color:#8067d8; box-shadow:0 0 0 1px #8067d8;}
+.drama-canvas-node.editing .drama-canvas-node-body,
+.drama-canvas-draft .drama-canvas-node-body {border-color:#8067d8; box-shadow:0 0 0 1px #8067d822;}
+.drama-canvas-draft .drama-canvas-node-caption {border-color:#e0d8f3;}
+.drama-canvas-draft .drama-canvas-node-caption>small {color:#73618f; font-size:11px; white-space:nowrap;}
+.drama-canvas-inline-settings {color:#5d6a80; font-size:12px;}
+.drama-canvas-inline-settings>summary {cursor:pointer;}
+.drama-canvas-inline-settings>div {display:grid; gap:6px; padding-top:7px;}
+.drama-canvas-inline-settings label {display:grid; grid-template-columns:30px minmax(0,1fr); align-items:center; gap:6px;}
+.drama-canvas-inline-settings .drama-style-picker {width:100%;}
 .drama-canvas-node-image {position:relative; height:400px; margin:6px; overflow:hidden; border-radius:10px; background:linear-gradient(140deg,#f8f7ff,#edf3fc);}
 .drama-canvas-node.scene .drama-canvas-node-image {height:218px;}
 .drama-canvas-node.prop .drama-canvas-node-image {height:268px;}
@@ -32,7 +42,7 @@
 .drama-canvas-preview {position:absolute; top:10px; right:10px; border:0; border-radius:6px; padding:5px 7px; background:#ffffffd9; color:#66758b; opacity:0; cursor:pointer;}
 .drama-canvas-node:hover .drama-canvas-preview {opacity:1;}
 .drama-canvas-node .react-flow__handle {border:0; background:#b7a8e4; width:6px; height:6px;}
-.drama-canvas-generation {position:absolute; z-index:8; bottom:25px; left:50%; transform:translateX(-50%); width:min(920px,calc(100% - 420px)); padding:12px 18px 16px; background:#fffffff5; border:1px solid #e4e8f4; border-radius:18px; box-shadow:0 8px 32px #29345f12;}
+.drama-canvas-generation {position:absolute; z-index:8; bottom:var(--canvas-panel-bottom); left:50%; transform:translateX(-50%); width:min(920px,calc(100% - 430px)); padding:12px 18px 16px; background:#fffffff5; border:1px solid #e4e8f4; border-radius:18px; box-shadow:0 8px 32px #29345f12;}
 .drama-canvas-generation-heading {display:flex; align-items:center; justify-content:space-between; font-size:12px; color:#68758b; margin-bottom:6px;}
 .drama-canvas-generation .ant-input {border:0; background:transparent; box-shadow:none; font-size:13px;}
 .drama-canvas-generation-toolbar {display:flex; align-items:center; gap:10px; margin-top:10px;}
@@ -40,22 +50,71 @@
 .drama-canvas-generation-toolbar>.ant-select {width:130px;}
 .drama-canvas-generation-toolbar>span {font-size:11px; color:#8995a8; flex:1;}
 .drama-canvas-generation-error {color:#c45346; font-size:12px; margin-bottom:6px; max-height:50px; overflow:auto;}
-.drama-canvas-edit-form {display:flex; flex-direction:column; gap:20px; padding:12px 0;}
-.drama-canvas-edit-form label {display:flex; flex-direction:column; gap:8px; font-size:13px; color:#4e5c73;}
-.drama-canvas-edit-form>div {display:flex; gap:14px;}
-.drama-canvas-edit-form>div>label {flex:1; min-width:0;}
 .drama-canvas-preview-image {display:block; width:100%; max-height:75vh; object-fit:contain;}
 .drama-canvas-save-alert {position:absolute; top:80px; left:50%; transform:translateX(-50%); z-index:20; width:min(800px,90%);}
 .drama-canvas-loading {margin:120px auto; padding:32px; width:min(700px,90%); background:white; border-radius:16px;}
 .drama-canvas-empty {position:absolute; top:45%; left:50%; transform:translate(-50%,-50%); pointer-events:none;}
-.drama-canvas-shell .react-flow__controls {left:20px; bottom:25px; box-shadow:0 2px 14px #29345f0c;}
-.drama-canvas-shell .react-flow__minimap {bottom:20px; right:20px; border:1px solid #e4e8f1; border-radius:12px; overflow:hidden;}
-@media(max-width:1050px) {.drama-canvas-generation {width:calc(100% - 90px); left:55%; max-width:800px;}.drama-canvas-shell .react-flow__minimap {display:none;}.drama-canvas-header {padding-inline:10px; gap:8px;}.drama-canvas-header>div {gap:6px;}.drama-canvas-header strong {max-width:140px;}}
-@media(max-width:650px) {.drama-canvas-generation {left:50%; width:calc(100% - 30px); bottom:70px; padding:10px;}.drama-canvas-generation-toolbar {flex-wrap:wrap;}.drama-canvas-generation-toolbar>span {display:none;}.drama-canvas-header>div:first-child>span {display:none;}.drama-canvas-header>div:last-child>.ant-btn {display:none;}.drama-canvas-header .ant-select {min-width:140px!important;}.drama-canvas-header strong {max-width:90px;}}
+.drama-canvas-shell .react-flow__minimap { bottom:var(--canvas-panel-bottom); right:var(--canvas-gutter); margin:0; border:1px solid #e4e8f1; border-radius:12px; overflow:hidden; }
+.drama-canvas-shell .react-flow__minimap-svg { display:block; width:100%; height:100%; }
+
+.drama-canvas-tool-dock, .drama-canvas-view-tools {
+  position:absolute; z-index:10; display:flex; align-items:center; gap:3px; padding:5px;
+  background:#fff; border:1px solid #e4e8f4; border-radius:12px; box-shadow:0 3px 16px #29345f0b;
+}
+.drama-canvas-tool-dock { top:82px; left:var(--canvas-gutter); flex-direction:column; }
+.drama-canvas-view-tools { bottom:var(--canvas-view-bottom); right:var(--canvas-gutter); }
+.drama-canvas-tool-dock hr { width:22px; height:0; margin:3px 0; border:0; border-top:1px solid #e4e8f1; }
+.drama-canvas-tool-dock .ant-btn, .drama-canvas-view-tools .ant-btn { width:34px; height:34px; padding:0; color:#52617a; }
+.drama-canvas-tool-dock .ant-btn:disabled, .drama-canvas-view-tools .ant-btn:disabled { color:#9da8ba; }
+.drama-canvas-tool-dock .ant-btn[aria-pressed="true"], .drama-canvas-view-tools .ant-btn[aria-pressed="true"] { color:#6552b4; background:#f0ebfa; }
+.drama-canvas-view-tools .drama-canvas-zoom { width:56px; font-size:12px; font-variant-numeric:tabular-nums; }
+.drama-canvas-tool-dock .ant-btn:focus-visible, .drama-canvas-view-tools .ant-btn:focus-visible,
+.drama-canvas-search-results button:focus-visible { outline:2px solid #8067d8; outline-offset:1px; }
+
+.drama-canvas-search { width:min(260px,calc(100vw - 108px)); }
+.drama-canvas-search-results { display:grid; gap:3px; max-height:min(280px,45dvh); overflow:auto; margin-top:8px; padding:3px; }
+.drama-canvas-search-results button {
+  display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; padding:7px 9px;
+  border:0; border-radius:6px; background:transparent; color:#29364b; font:inherit; text-align:left; cursor:pointer;
+}
+.drama-canvas-search-results button:hover, .drama-canvas-search-results button.active { background:#f0ebfa; }
+.drama-canvas-search-results button span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.drama-canvas-search-results small { flex:none; color:#68758b; }
+
+.drama-canvas-flow.is-panning .react-flow__pane { cursor:grab; }
+.drama-canvas-flow.is-panning .react-flow__pane.dragging { cursor:grabbing; }
+.drama-canvas-flow.is-panning :is(.react-flow__node, .react-flow__node *, .react-flow__edge, .react-flow__edge-textwrapper,
+  .react-flow__edgeupdater, .react-flow__nodesselection-rect) { pointer-events:none!important; }
+
+@media(max-width:1050px) {
+  .drama-canvas-generation { width:min(800px,calc(100% - 104px)); }
+  .drama-canvas-header { padding-inline:10px; gap:8px; }
+  .drama-canvas-header>div { gap:6px; }
+  .drama-canvas-header strong { max-width:140px; }
+  .drama-canvas-shell .react-flow__minimap { width:154px; height:116px; }
+  .drama-canvas-shell:has(.drama-canvas-generation) .react-flow__minimap { bottom:calc(var(--canvas-panel-bottom) + 174px); }
+}
+@media(max-width:650px) {
+  .drama-canvas-shell { --canvas-gutter:10px; --canvas-view-bottom:calc(10px + env(safe-area-inset-bottom, 0px)); --canvas-panel-bottom:calc(var(--canvas-view-bottom) + 51px); }
+  .drama-canvas-tool-dock { top:76px; }
+  .drama-canvas-tool-dock .ant-btn, .drama-canvas-view-tools .ant-btn { width:30px; height:32px; }
+  .drama-canvas-view-tools .drama-canvas-zoom { width:48px; }
+  .drama-canvas-generation { width:calc(100% - 20px); padding:10px; }
+  .drama-canvas-generation-toolbar { flex-wrap:wrap; }
+  .drama-canvas-generation-toolbar>span { display:none; }
+  .drama-canvas-header strong { max-width:90px; }
+  .drama-canvas-header .drama-canvas-wide-action { display:none; }
+  .drama-canvas-header .drama-canvas-project-more { display:inline-flex; }
+  .drama-canvas-shell:has(.drama-canvas-generation) .react-flow__minimap { bottom:calc(var(--canvas-panel-bottom) + 204px); }
+}
+@media(max-width:440px) {
+  .drama-canvas-header>div:first-child>span { display:none; }
+}
 
 /* 图钉与细线保留在素材边缘，悬停和选择时才强调操作。 */
 .drama-canvas-shell .react-flow__edge-path { stroke:#8798b4; stroke-width:1.6; }
 .drama-canvas-shell .drama-canvas-lineage .react-flow__edge-path { stroke:#a396bf; stroke-dasharray:5 4; }
+.drama-canvas-shell .drama-canvas-draft-link .react-flow__edge-path {stroke:#8067d8; stroke-dasharray:5 5;}
 .drama-canvas-shell .react-flow__edge:not(.drama-canvas-lineage):hover .react-flow__edge-path,
 .drama-canvas-shell .react-flow__edge.selected .react-flow__edge-path,
 .drama-canvas-shell .react-flow__connection-path { stroke:#7255cd; stroke-width:2.2; }
@@ -69,21 +128,21 @@
 .drama-canvas-preview:focus-visible { opacity:1; }
 .drama-canvas-node.video video { display:block; width:calc(100% - 12px); margin:6px; border-radius:9px; aspect-ratio:16 / 9; background:#1b2332; }
 .drama-canvas-node.video .drama-canvas-node-caption .anticon { color:#a66328; }
-.drama-canvas-selection-tools { position:absolute; top:76px; right:22px; z-index:8; display:flex; align-items:center; flex-wrap:wrap; gap:6px; max-width:calc(100% - 44px); padding:6px; border:1px solid #e4e8f4; border-radius:10px; background:#fff; }
+.drama-canvas-selection-tools { display:flex; align-items:center; flex-wrap:wrap; gap:6px; width:max-content; max-width:calc(100vw - 24px); padding:6px; border:1px solid #e4e8f4; border-radius:10px; background:#fff; box-shadow:0 3px 12px #29345f0b; }
+.drama-canvas-edge-tools { position:absolute; top:76px; right:var(--canvas-gutter); z-index:8; }
 .drama-canvas-selection-tools>span { color:#68758b; padding-inline:6px; font-size:12px; }
-.drama-canvas-gesture-hint { position:absolute; left:20px; bottom:151px; pointer-events:none; color:#68758b; font-size:12px; }
+.drama-canvas-gesture-hint { position:absolute; left:var(--canvas-gutter); bottom:var(--canvas-view-bottom); pointer-events:none; color:#68758b; font-size:12px; }
 .drama-canvas-drop { position:absolute; inset:76px 18px 18px; z-index:16; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; border:2px dashed #8067d8; border-radius:16px; background:#f5f2fff0; color:#524281; pointer-events:none; }
 .drama-canvas-drop>.anticon { font-size:30px; }
 .drama-canvas-reference .react-flow__edge-path { stroke:#6552b4; }
 .drama-canvas-media-error { padding:20px 14px; color:#875750; font-size:12px; }
 .drama-canvas-preview-audio { width:100%; }
 @media(max-width:650px) {
-  .drama-canvas-header>div:last-child>.ant-btn:has(.anticon-plus) { display:inline-flex; }
-  .drama-canvas-header>div:last-child>.ant-select { display:none; }
   .drama-canvas-gesture-hint { display:none; }
 }
 
 .drama-canvas-menu-layer { position:fixed; inset:0; z-index:24; }
+.drama-canvas-create-popover {position:fixed;}
 .drama-canvas-menu { position:fixed; width:172px; max-height:calc(100dvh - 8px); overflow:auto; display:grid; padding:5px; border:1px solid #e4e8f1; border-radius:8px; background:#fff; box-shadow:0 8px 24px #27355020; }
 .drama-canvas-menu .ant-btn { justify-content:flex-start; }
 .drama-canvas-menu>small { padding:5px 10px; color:#68758b; }

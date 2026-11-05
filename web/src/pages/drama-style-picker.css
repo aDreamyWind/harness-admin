@@ -37,7 +37,6 @@
 .drama-visual-style-card:hover {border-color:#7295e9;}
 .drama-visual-style-card[aria-pressed="true"] {border-color:#3969da; background:#eef4ff; color:#234ba5; box-shadow:0 0 0 1px #3969da;}
 .drama-canvas-generation-toolbar>.drama-style-picker {max-width:230px;}
-.drama-canvas-edit-form .drama-style-picker {width:100%;}
 @media (max-width:520px) {
   .drama-visual-style-grid {grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;}
 }

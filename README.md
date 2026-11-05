@@ -12,7 +12,7 @@ Harness Admin 是一个可自托管的企业 AI 管理平台，也是一个 Go �
 
 ## DeepSeek Harness 企业接入
 
-Harness Admin 可以和独立维护的 Harness Enterprise Plugins 配合使用。管理员在 Harness Admin 配置企业账号、模型和工具的使用权限，员工在安装插件的 DeepSeek Harness 中用企业账号登录，使用获授权的模型、MCP 工具和企业 Skills。
+要在 DeepSeek Harness 中使用企业账号和 AI 资源，需要安装独立插件 `dsh-enterprise-bundle`。管理员在 Harness Admin 配置账号和资源权限，员工在 DeepSeek Harness 登录后，可以使用获授权的模型、MCP 工具和企业 Skills。[插件源码与安装指南](https://github.com/aDreamyWind/dsh-enterprise-bundle)
 
 | 企业资源 | 管理员可以配置什么 |
 | --- | --- |
@@ -21,7 +21,26 @@ Harness Admin 可以和独立维护的 Harness Enterprise Plugins 配合使用�
 | MCP 服务 | 登记远程服务、发现和测试工具，再为员工或开发者分配连接。也可在隔离的 Docker 环境中托管受信任的 Node.js 或 Python Stdio 服务。 |
 | 企业 Skills | 从压缩包或公开 GitHub 仓库导入 Skill，审阅文件、发布版本，并按部门或员工授权。 |
 
-接入时，先在管理端「AI 资源管理 → 应用接入」登记客户端，再按插件仓库的说明为兼容版本的 DeepSeek Harness 构建和安装插件。[Harness Enterprise Plugins](https://github.com/aDreamyWind/Harness-Enterprise-Plugins) · [OIDC 应用接入说明](docs/development.md#oidc-应用接入)
+1. **配置 Harness Admin。** 在「AI 资源管理 → 模型目录」启用至少一个对话模型，记录模型编码。再到「应用接入」登记客户端。Desktop 选「桌面应用」，回调填 `http://127.0.0.1/oauth/callback`。Web 选「服务端应用」，回调填 Web Host 的完整回调地址。插件默认申请 `openid`、`profile`、`model.invoke`、`mcp.invoke` 和 `offline_access`。如需员工 MCP 工具，再把相应连接授权给员工或部门。[OIDC 应用接入说明](docs/development.md#oidc-应用接入)
+
+2. **从 npm 安装插件。** 以下命令使用插件 `0.2.2`，适配 DeepSeek Harness `0.2.2-alpha.2`。[npm 安装包](https://www.npmjs.com/package/dsh-enterprise-bundle) · [宿主版本兼容记录](https://github.com/aDreamyWind/dsh-enterprise-bundle/blob/main/compatibility.json)
+
+   **Desktop** 先启动桌面应用一次以初始化 profile，退出后使用安装包附带的 `dsh`：
+
+   ```bash
+   dsh plugin --profile desktop add dsh-enterprise-bundle@0.2.2
+   ```
+
+   **Web** 在已构建的兼容 Harness 源码目录执行。第一条命令仅用于首次创建 `enterprise-web` profile：
+
+   ```bash
+   pnpm dsh --profile enterprise-web --from-default-profile web --dump-config
+   pnpm dsh plugin --profile enterprise-web add dsh-enterprise-bundle@0.2.2
+   ```
+
+3. **连接到 Harness Admin。** Desktop 将安装包里的 `desktop.patch.example.yml` 合入桌面 profile 的 `cordis.patch.yml`，Web 则在启动 Harness Web 的工作目录按安装包里的 `.env.example` 配置，客户端密钥保存在 Web Host。两端都要填写 OIDC 签发者、客户端 ID、网关地址和模型编码。配置完成后启动 Harness，用企业账号登录并选择获授权的模型。本机使用 `make demo-up` 时，默认签发者是 `http://127.0.0.1:18080`，网关是 `http://127.0.0.1:18080/v1`。[桌面端配置](https://github.com/aDreamyWind/dsh-enterprise-bundle#desktop) · [Web 配置](https://github.com/aDreamyWind/dsh-enterprise-bundle#web)
+
+需要单独下载配置示例或安装包时，可运行 `npm pack dsh-enterprise-bundle@0.2.2` 获取 `.tgz`。用本地文件安装时，将 `dsh plugin add` 命令中的包名和版本换成该文件的绝对路径。也可以按插件仓库的说明自行构建。[源码构建说明](https://github.com/aDreamyWind/dsh-enterprise-bundle#从源码构建)
 
 ## AI 创作工作台
 
@@ -39,14 +58,25 @@ Harness Admin 可以和独立维护的 Harness Enterprise Plugins 配合使用�
 
 以下截图使用演示数据。
 
+### 企业首页
+
 ![企业首页，展示资源概况、待处理事项和常用入口](docs/screenshots/dashboard.png)
 
-<details>
-<summary>查看模型目录</summary>
+### 模型目录
 
 ![模型目录，展示模型类型、调用入口、能力和启用状态](docs/screenshots/model-catalog.png)
 
-</details>
+### AI 小说 · 章节写作与审稿
+
+![AI 小说工作台，展示示例作品《雾港来信》的章节目录、正文草稿、连续性摘要和审稿状态](docs/screenshots/ai-novel.png)
+
+### AI 漫剧 · 选章改编与项目管理
+
+![AI 漫剧工作台，展示从示例小说选取已定稿章节、设置视觉风格与画幅，以及已有漫剧项目](docs/screenshots/ai-drama.png)
+
+### AI 试衣 · 参考素材与效果对比
+
+![AI 试衣台，展示示例人物原图与换装插画对比，以及人物、衣物和姿态参考设置](docs/screenshots/ai-tryon.png)
 
 ## 快速启动
 

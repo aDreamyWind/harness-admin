@@ -1,0 +1,78 @@
+.drama-canvas-inline-editor {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 13px 14px 10px;
+  color: #263754;
+  font-size: 12px;
+}
+
+.drama-canvas-inline-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: #43536e;
+}
+
+.drama-canvas-inline-field > span {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.drama-canvas-inline-field small,
+.drama-canvas-inline-upload small {
+  color: #738199;
+  font-size: 11px;
+}
+
+.drama-canvas-inline-editor .ant-input {
+  min-width: 0;
+  border-color: #dce3ef;
+  background: #f8f9fd;
+  font-size: 12px;
+}
+
+.drama-canvas-inline-editor .ant-input:focus {
+  border-color: #8067d8;
+  box-shadow: 0 0 0 2px #8067d81a;
+  background: #fff;
+}
+
+.drama-canvas-inline-upload,
+.drama-canvas-inline-file {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.drama-canvas-inline-file {
+  justify-content: space-between;
+  padding: 4px 7px;
+  border: 1px solid #e6eaf4;
+  border-radius: 6px;
+  background: #f8f9fd;
+}
+
+.drama-canvas-inline-file > span {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drama-canvas-inline-error {
+  color: #ae3340;
+  overflow-wrap: anywhere;
+}
+
+.drama-canvas-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+  padding-top: 8px;
+  border-top: 1px solid #e6eaf4;
+}
