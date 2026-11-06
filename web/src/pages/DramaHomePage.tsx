@@ -18,9 +18,8 @@ import { NovelDramaSource, type NovelDramaSelection } from './NovelDramaSource'
 import './drama-home.css'
 
 const emptySettings: DramaSettings = { textModelCode: '', imageModelCode: '', videoModelCode: '' }
-const phaseNames: Record<string, string> = {
-  waiting: '等待解析', script: '编剧正在生成剧本', story: '编剧正在梳理故事',
-  assets: '美术正在整理资产', episodes: '导演正在规划分集', complete: '解析完成', overview_done: '概览已完成', failed: '解析失败',
+const analysisProgress: Record<string, string> = {
+  script: '正在生成剧本', story: '正在梳理故事', assets: '正在整理角色、场景和道具', episodes: '正在规划分集',
 }
 const assetKindLabels: Record<DramaAssetKind, string> = { character: '角色', scene: '场景', prop: '道具' }
 type LibraryAsset = DramaAsset & { kind: DramaAssetKind; projectId: string; projectTitle: string }
@@ -32,14 +31,14 @@ const assetFilters: { value: AssetFilter; label: string }[] = [
   { value: 'prop', label: assetKindLabels.prop },
 ]
 
-function statusTag(project: DramaProject) {
-  if (project.status === 'ready') return <Tag color="success">概览已完成</Tag>
-  if (project.status === 'failed') return <Tag color="error">解析失败</Tag>
-  return <Tag color="processing">{phaseNames[project.phase] ?? '解析中'}</Tag>
-}
+type ActiveDramaTask = { kind: 'analysis' | 'cover'; label: string; detail?: string }
 
-function hasActiveTask(project: DramaProject) {
-  return project.status === 'queued' || project.status === 'running' || project.coverGenerationStatus === 'running'
+function activeProjectTasks(project: DramaProject): ActiveDramaTask[] {
+  const tasks: ActiveDramaTask[] = []
+  if (project.status === 'queued') tasks.push({ kind: 'analysis', label: '等待解析' })
+  if (project.status === 'running') tasks.push({ kind: 'analysis', label: '解析中', detail: analysisProgress[project.phase] })
+  if (project.coverGenerationStatus === 'running') tasks.push({ kind: 'cover', label: '封面生成中' })
+  return tasks
 }
 
 function DramaProjectCard({ project }: { project: DramaProject }) {
@@ -101,7 +100,8 @@ export function DramaHomePage() {
   const [settings, setSettings] = useState<DramaSettings>(emptySettings)
   const [settingsDraft, setSettingsDraft] = useState<DramaSettings>(emptySettings)
   const [projects, setProjects] = useState<DramaProject[]>([])
-  const hasActiveProjects = projects.some(hasActiveTask)
+  const activeTasks = useMemo(() => projects.flatMap((project) => activeProjectTasks(project).map((task) => ({ ...task, project }))), [projects])
+  const hasActiveTasks = activeTasks.length > 0
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
@@ -166,13 +166,13 @@ export function DramaHomePage() {
   }, [messageApi])
 
   useEffect(() => {
-    if (!hasActiveProjects) return
+    if (!hasActiveTasks) return
     let active = true
     const timer = window.setInterval(() => {
       void listDramaProjects().then((items) => { if (active) setProjects(items) }).catch(() => {})
     }, 4000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [hasActiveProjects])
+  }, [hasActiveTasks])
 
   async function readFile(file: File) {
     if (!/\.(txt|md)$/i.test(file.name)) { messageApi.error('当前支持 TXT、MD 文本文件，也可以直接粘贴原文'); return }
@@ -241,13 +241,11 @@ export function DramaHomePage() {
       ...project.props.map((item) => ({ ...item, ...info, kind: 'prop' as const })),
     ]
   }), [projects])
-  const activeTasks = projects.filter(hasActiveTask).length
-
   return <main className="drama-home">
     {contextHolder}
     <div className="drama-home-tools">
       <Button icon={<SettingOutlined />} onClick={openSettings}>模型设置</Button>
-      <Button icon={<ClockCircleOutlined />} onClick={() => setTasksOpen(true)}>生成任务{activeTasks > 0 ? ` ${activeTasks}` : ''}</Button>
+      <Button icon={<ClockCircleOutlined />} onClick={() => setTasksOpen(true)}>生成任务{hasActiveTasks ? ` ${activeTasks.length}` : ''}</Button>
     </div>
 
     <section className="drama-composer" aria-label="创建漫剧项目">
@@ -295,6 +293,14 @@ export function DramaHomePage() {
       ] as const).map((field) => <div className="drama-settings-field" key={field.key}><label htmlFor={`drama-${field.key}`}>{field.label}</label><p>{field.help}</p><Select id={`drama-${field.key}`} value={settingsDraft[field.key] || undefined} allowClear placeholder={`选择已启用的${field.label}`} options={models.filter((item) => item.modelType === field.kind).map((item) => ({ label: item.name, value: item.code }))} onChange={(value) => setSettingsDraft((current) => ({ ...current, [field.key]: value || '' }))} notFoundContent="暂无当前账号可用的模型" /></div>)}
       <p className="drama-settings-footnote">模型来自模型目录，并受当前账号的模型策略限制。修改设置不会改变已有项目保存的模型。</p>
     </Drawer>
-    <Drawer title="生成任务" open={tasksOpen} onClose={() => setTasksOpen(false)} width={420}>{projects.length === 0 ? <Empty description="暂无生成任务" /> : <div className="drama-drawer-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => { setTasksOpen(false); navigate(`/ai-apps/drama/projects/${project.id}`) }}><strong>{project.title}</strong>{statusTag(project)}<small>{project.coverGenerationStatus === 'running' ? '封面后台生成中' : phaseNames[project.phase] ?? project.phase}</small></button>)}</div>}</Drawer>
+    <Drawer title="生成任务" open={tasksOpen} onClose={() => setTasksOpen(false)} size={420}>
+      {loading ? <Skeleton active /> : !hasActiveTasks ? <Empty description="暂无进行中的生成任务" /> :
+        <div className="drama-drawer-list">{activeTasks.map(({ project, kind, label, detail }) => (
+          <button key={`${project.id}:${kind}`} type="button" onClick={() => { setTasksOpen(false); navigate(`/ai-apps/drama/projects/${project.id}`) }}>
+            <strong>{project.title}</strong><Tag color="processing">{label}</Tag>
+            {detail && <small>{detail}</small>}
+          </button>
+        ))}</div>}
+    </Drawer>
   </main>
 }
