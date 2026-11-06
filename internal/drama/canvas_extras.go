@@ -96,10 +96,10 @@ func validCanvasText(value string, maxRunes int) bool {
 func validCanvasCardContent(project string, card CanvasCard) bool {
 	switch card.Kind {
 	case "text":
-		return validCanvasText(card.Content, 10000)
+		return card.Content == "" || validCanvasText(card.Content, 10000)
 	case "image", "video", "audio":
 		if card.Content == "" {
-			return card.Kind == "image" || card.Kind == "video"
+			return true
 		}
 		if len(card.Content) > 8192 {
 			return false

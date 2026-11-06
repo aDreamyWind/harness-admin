@@ -79,7 +79,7 @@ function fragment(value: StoryboardTextDocument, forms: DramaAssetForm[]) {
     const chip = document.createElement('span')
     chip.className = `drama-inline-asset ${form?.kind ?? 'character'}`
     chip.dataset.dramaForm = ref.formId; chip.dataset.dramaLabel = chars.slice(ref.start, ref.end).join(''); chip.contentEditable = 'false'
-    chip.title = form ? `${form.assetName} · ${form.name}` : '历史资产形象'
+    chip.title = form ? formLabel(form) : '历史资产形象'
     if (form?.imageUrl) { const image = document.createElement('img'); image.src = form.imageUrl; image.alt = ''; image.draggable = false; chip.append(image) }
     const original = chip.dataset.dramaLabel
     chip.append(document.createTextNode(form && original === form.assetName ? formLabel(form) : original))
@@ -248,8 +248,8 @@ export function DramaStoryboardTextEditor({ value, forms, episodeFormIds, editab
       <div className="drama-mention-scope">{(['episode', 'project'] as const).map((v) => <button type="button" key={v} aria-pressed={scope === v} onMouseDown={(e) => e.preventDefault()} onClick={() => { setScope(v); setActive(0) }}>{v === 'episode' ? '本集资产' : '全剧资产'}</button>)}<span>↑↓ 选择 · Enter {picker.replacementFormId ? '替换' : '插入'}</span></div>
       <div className="drama-mention-kinds">{(Object.keys(kindNames) as DramaAssetKind[]).map((v) => <button type="button" key={v} aria-pressed={kind === v} onMouseDown={(e) => e.preventDefault()} onClick={() => { setKind(v); setActive(0) }}>{kindNames[v]}</button>)}</div>
       <Input aria-label="搜索引用资产" prefix={<SearchOutlined />} value={search} placeholder="搜索资产或形象" onChange={(e) => { setSearch(e.target.value); setActive(0) }} />
-      <div id={listId} role="listbox" aria-label="可引用的资产形象" className="drama-mention-options">{eligible.length ? eligible.map((form, i) => <button type="button" role="option" aria-label={`${form.assetName} · ${form.name}`} aria-selected={i === active} key={form.id} title={`${form.assetName} · ${form.name}`} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(form)}>
-        <span className={`drama-mention-thumbnail ${form.kind}`}>{form.imageUrl ? <img src={form.imageUrl} alt="" loading="lazy" /> : icons[form.kind]}</span><strong>{form.assetName}</strong><small>{form.name}</small>
+      <div id={listId} role="listbox" aria-label="可引用的资产形象" className="drama-mention-options">{eligible.length ? eligible.map((form, i) => <button type="button" role="option" aria-label={formLabel(form)} aria-selected={i === active} key={form.id} title={formLabel(form)} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(form)}>
+        <span className={`drama-mention-thumbnail ${form.kind}`}>{form.imageUrl ? <img src={form.imageUrl} alt="" loading="lazy" /> : icons[form.kind]}</span><strong>{form.assetName}</strong>{form.parentId && <small>{form.name}</small>}
       </button>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的资产形象" />}</div>
     </div>, document.body)}
   </>

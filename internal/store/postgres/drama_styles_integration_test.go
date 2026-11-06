@@ -68,13 +68,20 @@ func TestDramaStylesPersistIDsAndKeepTemplatesServerSide(t *testing.T) {
 	if err != nil || len(board.Forms) != 1 || board.Forms[0].StyleID != "dark-comic" {
 		t.Fatal("默认形象没有继承风格ID", err)
 	}
+	if _, err := db.Exec(ctx, `UPDATE drama_asset_forms SET name='默认形象' WHERE id=$1`, asset); err != nil {
+		t.Fatal(err)
+	}
+	board, err = repo.ReadCanvas(ctx, org, owner, project)
+	if err != nil || len(board.Forms) != 1 || board.Forms[0].Name != "甲" {
+		t.Fatal("旧默认形象没有显示资产名", err)
+	}
 	service := drama.NewService(repo, nil).WithStyles(repo).WithVisuals(repo, nil, nil)
 	input := drama.FormEdit{Revision: 1, Name: "默认形象", Description: "青年男性，灰色风衣", Gender: "male", AspectRatio: "9:16", StyleID: "dark-concept", Style: "伪造前端名称"}
 	if err = service.EditForm(ctx, org, owner, project, asset, input); err != nil {
 		t.Fatal(err)
 	}
 	board, err = repo.ReadCanvas(ctx, org, owner, project)
-	if err != nil || board.Forms[0].StyleID != "dark-concept" || board.Forms[0].Style != "黑暗原画概念风" {
+	if err != nil || board.Forms[0].StyleID != "dark-concept" || board.Forms[0].Style != "黑暗原画概念风" || board.Forms[0].Name != "甲" {
 		t.Fatal("形象风格没有规范化", err)
 	}
 	job, err := repo.QueueImage(ctx, org, owner, project, asset, "painter", drama.ImageInput{})

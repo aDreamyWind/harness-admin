@@ -41,11 +41,12 @@ func TestDramaCanvasAssetCreationPersistsCatalogAndDefaultForm(t *testing.T) {
 		}
 	}()
 	service := drama.NewService(repo, nil).WithVisuals(repo, nil, nil)
-	in := drama.CanvasAssetInput{Name: "测试资产", Description: "初次画布设计", X: new(-11.5), Y: new(50.0), Revision: 1, Kind: "character"}
+	in := drama.CanvasAssetInput{Name: "测试资产", X: new(-11.5), Y: new(50.0), Revision: 1, Kind: "character"}
 	if _, err = service.CreateCanvasAsset(ctx, org, uuid.NewString(), project, in); !errors.Is(err, drama.ErrNotFound) {
 		t.Fatalf("其他用户可以写入画布: %v", err)
 	}
 	wantRatio := map[string]string{}
+	var characterID string
 	for _, item := range []struct{ kind, ratio string }{{"character", "9:16"}, {"scene", "16:9"}, {"prop", "1:1"}} {
 		in.Kind = item.kind
 		result, err := service.CreateCanvasAsset(ctx, org, user, project, in)
@@ -54,6 +55,9 @@ func TestDramaCanvasAssetCreationPersistsCatalogAndDefaultForm(t *testing.T) {
 		}
 		in.Revision = result.Revision
 		wantRatio[result.ID] = item.ratio
+		if item.kind == "character" {
+			characterID = result.ID
+		}
 		catalog, err := repo.ListProjectAssets(ctx, org, user, project, item.kind, "")
 		if err != nil || len(catalog) != 1 || catalog[0].ID != result.ID || catalog[0].Name != in.Name || catalog[0].Description != in.Description {
 			t.Fatalf("目录缺少新资产: %+v %v", catalog, err)
@@ -73,9 +77,25 @@ func TestDramaCanvasAssetCreationPersistsCatalogAndDefaultForm(t *testing.T) {
 		t.Fatalf("画布版本或资产数错误: %+v %v", board, err)
 	}
 	for _, form := range board.Forms {
-		if form.AssetID != form.ID || form.ParentID != "" || form.AspectRatio != wantRatio[form.ID] || form.Description != in.Description ||
+		if form.AssetID != form.ID || form.ParentID != "" || form.Name != in.Name || form.AspectRatio != wantRatio[form.ID] || form.Description != in.Description ||
 			form.StyleID != "dark-concept" || form.Style != "黑暗原画概念风" || form.X != *in.X || form.Y != *in.Y {
 			t.Fatalf("默认形象与资产关联、位置或默认配置错误: %+v", form)
 		}
+	}
+	in.Kind, in.Name = "character", "已有角色"
+	if _, err := service.CreateCanvasAsset(ctx, org, user, project, in); err != nil {
+		t.Fatal(err)
+	}
+	edit := drama.FormEdit{Revision: 1, Name: in.Name, Gender: "unspecified", AspectRatio: "9:16", StyleID: "dark-concept", Style: "黑暗原画概念风"}
+	if err := service.EditForm(ctx, org, user, project, characterID, edit); !errors.Is(err, drama.ErrCanvasAssetNameExists) {
+		t.Fatalf("角色改名未拒绝重名：%v", err)
+	}
+	edit.Name = "守门人"
+	if err := service.EditForm(ctx, org, user, project, characterID, edit); err != nil {
+		t.Fatalf("角色改名未保存：%v", err)
+	}
+	var assetName, formName string
+	if err := db.QueryRow(ctx, `SELECT a.name, f.name FROM drama_assets a JOIN drama_asset_forms f ON f.asset_id=a.id WHERE f.id=$1`, characterID).Scan(&assetName, &formName); err != nil || assetName != edit.Name || formName != edit.Name {
+		t.Fatalf("角色目录与原始形象未同步：%q、%q，%v", assetName, formName, err)
 	}
 }

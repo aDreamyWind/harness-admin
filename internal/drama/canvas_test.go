@@ -75,7 +75,10 @@ func TestCanvasExtrasValidateMediaAndConnections(t *testing.T) {
 	if repo.calls != 0 {
 		t.Fatal("校验失败后仍保存了画布")
 	}
-	extras := CanvasExtras{Cards: []CanvasCard{valid}, Links: []CanvasLink{link}}
+	extras := CanvasExtras{Cards: []CanvasCard{valid,
+		{ID: uuid.NewString(), Kind: "text", Title: "新文本"},
+		{ID: uuid.NewString(), Kind: "audio", Title: "新音频"},
+	}, Links: []CanvasLink{link}}
 	if _, err := s.SaveCanvas(context.Background(), "o", "u", project, CanvasLayout{Revision: 1, Zoom: 1, Extras: &extras}); err != nil {
 		t.Fatal(err)
 	}

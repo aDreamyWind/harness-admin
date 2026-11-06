@@ -11,9 +11,9 @@ func TestSegmentVideoUsesPinnedImageAndCurrentImageOnlyWhenUnpinned(t *testing.T
 	seg := StoryboardSegment{Scene: "小院", FormIDs: []string{"scene", "actor", "other"},
 		Bindings: []StoryboardBinding{{FormID: "scene", ImageID: "adopted"}},
 		Shots: []StoryboardShot{{Description: "小院里有人", Duration: 4.5, DescriptionMentions: []StoryboardMention{{Start: 0, End: 2, FormID: "scene"}},
-			Utterances: []StoryboardUtterance{{Kind: "dialogue", Speaker: "林夏", Text: "你好。"}, {Kind: "vo", Delivery: "visual", SourceText: "这句已改为画面"}}}},
+			Utterances: []StoryboardUtterance{{Kind: "dialogue", Speaker: "林夏-默认形象", Text: "你好。"}, {Kind: "vo", Delivery: "visual", SourceText: "这句已改为画面"}}}},
 	}
-	forms := []AssetForm{{ID: "scene", AssetName: "小院子", CurrentImageID: "newer"}, {ID: "actor", AssetName: "林夏"}, {ID: "other", AssetName: "其他片段场景"}}
+	forms := []AssetForm{{ID: "scene", AssetName: "小院子", CurrentImageID: "newer"}, {ID: "actor", AssetName: "林夏", Name: "林夏"}, {ID: "other", AssetName: "林夏", Name: "受伤", ParentID: "actor"}}
 	if _, err := planSegmentVideo(seg, forms, "水墨", "9:16"); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "林夏") {
 		t.Fatalf("应提示具体缺图：%v", err)
 	}

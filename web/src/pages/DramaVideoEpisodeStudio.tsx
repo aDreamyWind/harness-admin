@@ -38,7 +38,7 @@ export function DramaVideoEpisodeStudio({ project, episodeId }: { project: Drama
     const assets = [...(workspace?.[group.field] ?? [])], seen = new Set(assets.map((asset) => asset.assetId))
     for (const form of referencedForms) {
       if (form.kind === group.kind && !seen.has(form.assetId)) {
-        assets.push({ id: form.assetId, kind: group.kind, assetId: form.assetId, name: form.assetName, description: form.description, appearanceDescription: form.kind === 'character' ? form.description : '', voiceDescription: '', stateLabel: form.name })
+        assets.push({ id: form.assetId, kind: group.kind, assetId: form.assetId, name: form.assetName, description: form.description, appearanceDescription: form.kind === 'character' ? form.description : '', voiceDescription: '', stateLabel: form.parentId ? form.name : '' })
         seen.add(form.assetId)
       }
     }

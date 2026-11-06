@@ -33,7 +33,7 @@ func (s *Service) CreateCanvasAsset(ctx context.Context, org, user, project stri
 	in.Name = strings.TrimSpace(in.Name)
 	in.Description = strings.TrimSpace(in.Description)
 	if err != nil || (in.Kind != "character" && in.Kind != "scene" && in.Kind != "prop") ||
-		!validCanvasText(in.Name, 80) || !validCanvasText(in.Description, 10000) ||
+		!validCanvasText(in.Name, 80) || (in.Description != "" && !validCanvasText(in.Description, 10000)) ||
 		in.Revision < 1 || in.X == nil || in.Y == nil || !finiteCanvas(*in.X) || !finiteCanvas(*in.Y) {
 		return CanvasAssetResult{}, ErrInvalidInput
 	}

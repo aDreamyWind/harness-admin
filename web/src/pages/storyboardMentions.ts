@@ -1,16 +1,24 @@
 import type { DramaAssetForm, DramaStoryboardMention, DramaStoryboardSegment } from '../api/drama'
 
 export interface StoryboardTextDocument { text: string; mentions: DramaStoryboardMention[] }
-export const formLabel = (form: DramaAssetForm) => form.name && form.name !== '默认形象' ? `${form.assetName} · ${form.name}` : form.assetName
+export const formLabel = (form: DramaAssetForm) => form.parentId && form.name && form.name !== form.assetName
+  ? `${form.assetName} · ${form.name}` : form.assetName
 const count = (text: string) => Array.from(text).length
 
 // 只标记当前片段真实绑定中可唯一识别的名称；同名多形象不猜测。
 export function inferStoryboardMentions(text: string, forms: DramaAssetForm[], saved?: DramaStoryboardMention[]): DramaStoryboardMention[] {
   if (saved !== undefined) return saved
   const names = new Map<string, Set<string>>()
-  for (const form of forms) for (const name of new Set([form.assetName, formLabel(form), `${form.assetName}-${form.name}`])) {
-    if (count(name) < 2) continue
-    const ids = names.get(name) ?? new Set<string>(); ids.add(form.id); names.set(name, ids)
+  for (const form of forms) {
+    const labels = new Set([form.assetName, formLabel(form), `${form.assetName}-${form.name}`])
+    if (!form.parentId) {
+      labels.add(`${form.assetName}-默认形象`)
+      labels.add(`${form.assetName} · 默认形象`)
+    }
+    for (const name of labels) {
+      if (count(name) < 2) continue
+      const ids = names.get(name) ?? new Set<string>(); ids.add(form.id); names.set(name, ids)
+    }
   }
   const chars = Array.from(text), result: DramaStoryboardMention[] = []
   const candidates = [...names].filter(([, ids]) => ids.size === 1).sort((a, b) => count(b[0]) - count(a[0]))

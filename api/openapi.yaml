@@ -738,7 +738,7 @@ paths:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
       summary: 在项目资产目录和画布中创建角色、场景或道具
-      description: 创建项目资产及其默认形象，并在同一事务中更新画布版本。资产可在资产列表中选用，默认形象使用项目风格和资产类型的默认比例。
+      description: 创建项目资产及同名原始形象，并在同一事务中更新画布版本。可以先留空描述，使用项目风格和资产类型的默认比例。
       operationId: createDramaCanvasAsset
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -748,7 +748,7 @@ paths:
             schema: { $ref: '#/components/schemas/DramaCanvasAssetInput' }
       responses:
         '201':
-          description: 返回资产及默认形象的共用编号和新画布版本。
+          description: 返回资产及原始形象的共用编号和新画布版本。
           content:
             application/json:
               schema:
@@ -914,6 +914,7 @@ paths:
       - { name: formId, in: path, required: true, schema: { type: string, format: uuid } }
     put:
       summary: 编辑资产形象（生成中禁止编辑）
+      description: 原始形象的名称与项目资产同步修改。派生形象保留独立名称。
       operationId: editDramaAssetForm
       security: [{ sessionCookie: [] }]
       parameters:
@@ -925,7 +926,7 @@ paths:
             schema: { $ref: '#/components/schemas/DramaFormEdit' }
       responses:
         '200':
-          description: 操作成功。图片任务在后台执行，状态由画布接口轮询，失败保留已有图片。
+          description: 形象已保存。
           content:
             application/json:
               schema:
@@ -937,7 +938,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: CSRF 校验失败。 }
         '404': { description: 项目或形象不存在，或不属于当前用户。 }
-        '409': { description: 内容版本冲突、正在生成、未配置图片模型或来源图片尚未生成。 }
+        '409': { description: 内容版本冲突、正在生成，或项目内已有同名的同类资产。 }
   /ai-drama/projects/{id}/forms/{formId}/derive:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4843,8 +4844,8 @@ components:
         assetId: { type: string, format: uuid, description: 始终关联真实项目资产，多个形象共享同一资产。 }
         assetName: { type: string }
         kind: { type: string, enum: [character, scene, prop] }
-        parentId: { type: string, format: uuid, description: 同一资产的来源形象，默认形象省略。 }
-        name: { type: string }
+        parentId: { type: string, format: uuid, description: 同一资产的来源形象，原始形象省略。 }
+        name: { type: string, description: 原始形象使用资产名称，派生形象使用独立名称。 }
         description: { type: string }
         gender: { type: string, enum: [unspecified, male, female, other] }
         style: { type: string }
@@ -4886,11 +4887,11 @@ components:
               y: { type: number, minimum: -1000000, maximum: 1000000 }
     DramaCanvasAssetInput:
       type: object
-      required: [kind, name, description, x, y, revision]
+      required: [kind, name, x, y, revision]
       properties:
         kind: { type: string, enum: [character, scene, prop] }
         name: { type: string, minLength: 1, maxLength: 80 }
-        description: { type: string, minLength: 1, maxLength: 10000 }
+        description: { type: string, maxLength: 10000 }
         x: { type: number, minimum: -1000000, maximum: 1000000 }
         y: { type: number, minimum: -1000000, maximum: 1000000 }
         revision: { type: integer, minimum: 1 }
@@ -4952,7 +4953,7 @@ components:
               id: { type: string, format: uuid }
               kind: { type: string, enum: [text, image, video, audio] }
               title: { type: string, minLength: 1, maxLength: 80 }
-              content: { type: string, maxLength: 10000, description: 文本正文、HTTP(S) 媒体地址，或当前项目的同源画布素材地址。图片和视频节点允许留空以使用生成结果。所有素材内容合计不超过 1 MiB。 }
+              content: { type: string, maxLength: 10000, description: 文本正文、HTTP(S) 媒体地址，或当前项目的同源画布素材地址。新增节点可留空，图片和视频节点留空时使用已有生成结果。所有素材内容合计不超过 1 MiB。 }
               position:
                 type: object
                 required: [x, y]
@@ -4983,8 +4984,8 @@ components:
       properties:
         styleId: { type: string, maxLength: 80, description: 服务端风格目录主键。 }
         revision: { type: integer, minimum: 1 }
-        name: { type: string, minLength: 1, maxLength: 80 }
-        description: { type: string, minLength: 1, maxLength: 10000 }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 10000 }
         gender: { type: string, enum: [unspecified, male, female, other] }
         style: { type: string, maxLength: 120 }
         aspectRatio: { type: string, enum: ['9:16', '16:9', '1:1'] }

@@ -41,13 +41,13 @@ func (r *DramaRepository) CreateCanvasAsset(ctx context.Context, org, user, proj
 		return drama.CanvasAssetResult{}, drama.ErrCanvasAssetNameExists
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO drama_asset_forms(id,asset_id,name,description,style,aspect_ratio,position_x,position_y,style_id)
-		SELECT $1,$1,'默认形象',$4,p.style,
-		       CASE $3 WHEN 'character' THEN '9:16' WHEN 'scene' THEN '16:9' ELSE '1:1' END,$5,$6,s.id
+		SELECT $1,$1,$4,$5,p.style,
+		       CASE $3 WHEN 'character' THEN '9:16' WHEN 'scene' THEN '16:9' ELSE '1:1' END,$6,$7,s.id
 		FROM drama_projects p
 		LEFT JOIN drama_visual_styles s ON s.id=p.style_id OR (p.style_id IS NULL AND s.name=p.style)
-		WHERE p.id=$2`, id, project, in.Kind, in.Description, in.X, in.Y)
+		WHERE p.id=$2`, id, project, in.Kind, in.Name, in.Description, in.X, in.Y)
 	if err != nil {
-		return drama.CanvasAssetResult{}, fmt.Errorf("创建漫剧资产默认形象失败: %w", err)
+		return drama.CanvasAssetResult{}, fmt.Errorf("创建漫剧资产原始形象失败: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return drama.CanvasAssetResult{}, err

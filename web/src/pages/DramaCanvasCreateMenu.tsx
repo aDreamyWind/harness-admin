@@ -5,13 +5,12 @@ import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import type { DramaAssetKind, DramaCanvasCardKind } from '../api/drama'
 import './drama-canvas-create-menu.css'
 
-export type CanvasCreateKind = DramaAssetKind | DramaCanvasCardKind | 'upload'
+export type CanvasCreateKind = Exclude<DramaAssetKind, 'scene'> | DramaCanvasCardKind | 'upload'
 
 type Choice = { kind: CanvasCreateKind; label: string; icon: ReactNode }
 
 const assets: Choice[] = [
   { kind: 'character', label: '角色', icon: <UserOutlined /> },
-  { kind: 'scene', label: '场景', icon: <PictureOutlined /> },
   { kind: 'prop', label: '道具', icon: <GiftOutlined /> },
 ]
 const materials: Choice[] = [

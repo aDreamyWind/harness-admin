@@ -5,11 +5,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 var ErrCanvasConflict = errors.New("内容已被其他页面修改，请重新加载画布")
@@ -167,7 +168,8 @@ func (s *Service) EditForm(ctx context.Context, org, user, project, form string,
 	in.Name = strings.TrimSpace(in.Name)
 	in.Description = strings.TrimSpace(in.Description)
 	in.Style = strings.TrimSpace(in.Style)
-	if s.visual == nil || !validVisualIDs(project, form) || in.Revision < 1 || in.Name == "" || utf8.RuneCountInString(in.Name) > 80 || in.Description == "" || utf8.RuneCountInString(in.Description) > 10000 || utf8.RuneCountInString(in.Style) > 120 {
+	if s.visual == nil || !validVisualIDs(project, form) || in.Revision < 1 || !validCanvasText(in.Name, 120) ||
+		(in.Description != "" && !validCanvasText(in.Description, 10000)) || utf8.RuneCountInString(in.Style) > 120 {
 		return ErrInvalidInput
 	}
 	if in.Gender != "unspecified" && in.Gender != "male" && in.Gender != "female" && in.Gender != "other" {

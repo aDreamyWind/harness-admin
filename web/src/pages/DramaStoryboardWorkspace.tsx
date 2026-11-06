@@ -7,7 +7,7 @@ import { optimizeDramaStoryboardPacing, type DramaRepairTicket, getDramaStoryboa
 
 import { DramaSegmentVideoPreview } from './DramaSegmentVideoPreview'
 import { DramaStoryboardTextEditor } from './DramaStoryboardTextEditor'
-import { inferStoryboardMentions, materializeStoryboardMentions, type StoryboardTextDocument } from './storyboardMentions'
+import { formLabel, inferStoryboardMentions, materializeStoryboardMentions, type StoryboardTextDocument } from './storyboardMentions'
 
 export const storyboardStatusLabels: Record<string, string> = { pending: '待拆分', queued: '等待拆分', running: '拆分中', failed: '需重试', partial: '待继续', ready: '已保存', confirmed: '已保存', stale: '来源已变化' }
 const soundLabels = { dialogue: '对白', os: '内心独白', vo: '画外音' }
@@ -214,7 +214,7 @@ export function DramaStoryboardWorkspace({ projectId, episodeId, needsReview, on
                     return next
                   })
                 }} />}<Tooltip title="创建新版本，仅优化当前片段；其他片段及采用图片保留"><Button size="small" loading={busy} disabled={readonly || !!draft || !run || !['ready', 'confirmed', 'failed', 'partial'].includes(run.status) || selected.status !== 'ready'} onClick={optimizePacing}>优化当前片段</Button></Tooltip></div></>}
-            {structural && <label className="drama-storyboard-form-picker">引用资产形象<Select mode="multiple" showSearch optionFilterProp="label" value={selected.formIds} options={catalog.map((f) => ({ value: f.id, label: `${f.assetName} · ${f.name}${f.imageUrl ? '' : '（待素材）'}` }))} onChange={changeForms} /></label>}
+            {structural && <label className="drama-storyboard-form-picker">引用资产形象<Select mode="multiple" showSearch optionFilterProp="label" value={selected.formIds} options={catalog.map((f) => ({ value: f.id, label: `${formLabel(f)}${f.imageUrl ? '' : '（待素材）'}` }))} onChange={changeForms} /></label>}
 
             {!!pacingHistory.length && <details className="drama-storyboard-pacing-history" aria-label="节奏优化记录"><summary>节奏优化记录 · {pacingHistory.length}</summary>
               {pacingHistory.map((ticket) => <article key={ticket.id}>

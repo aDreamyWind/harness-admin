@@ -165,9 +165,12 @@ func segmentVideoReferences(seg StoryboardSegment, catalog []AssetForm) []Segmen
 		if !ok {
 			continue
 		}
-		labels := []string{form.AssetName, form.AssetName + "-" + form.Name}
-		if form.Name != "" && form.Name != "默认形象" {
-			labels = append(labels, form.AssetName+" · "+form.Name)
+		labels := []string{form.AssetName}
+		if form.ParentID == "" {
+			labels = append(labels, form.AssetName+"-默认形象", form.AssetName+" · 默认形象")
+		}
+		if form.Name != "" && form.Name != form.AssetName {
+			labels = append(labels, form.AssetName+"-"+form.Name, form.AssetName+" · "+form.Name)
 		}
 		for _, label := range labels {
 			if utf8.RuneCountInString(label) < 2 {
@@ -200,7 +203,7 @@ func segmentVideoReferences(seg StoryboardSegment, catalog []AssetForm) []Segmen
 			image = form.CurrentImageID
 		}
 		name := form.AssetName
-		if form.Name != "" {
+		if form.ParentID != "" && form.Name != "" && form.Name != name {
 			name += " · " + form.Name
 		}
 		if name == "" {

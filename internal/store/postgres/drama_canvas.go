@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"harness-admin/internal/drama"
-	"strings"
 )
 
 func (r *DramaRepository) visualProject(ctx context.Context, tx pgx.Tx, org, user, project string) error {
@@ -31,9 +34,9 @@ func (r *DramaRepository) ReadCanvas(ctx context.Context, org, user, project str
 	if _, err = tx.Exec(ctx, `INSERT INTO drama_canvas_boards(project_id) VALUES($1) ON CONFLICT DO NOTHING`, project); err != nil {
 		return drama.Canvas{}, err
 	}
-	// 解析得到的新资产首次进入画廊时建立默认形象；后续不覆盖人工编辑。
+	// 解析得到的新资产首次进入画廊时建立同名原始形象，后续保留人工编辑。
 	if _, err = tx.Exec(ctx, `INSERT INTO drama_asset_forms(id,asset_id,name,description,style,aspect_ratio,position_x,position_y,style_id)
- SELECT a.id,a.id,'默认形象',concat_ws(E'\n',NULLIF(a.description,''),NULLIF(a.appearance_description,'')),p.style,
+ SELECT a.id,a.id,a.name,concat_ws(E'\n',NULLIF(a.description,''),NULLIF(a.appearance_description,'')),p.style,
  CASE a.kind WHEN 'character' THEN '9:16' WHEN 'scene' THEN '16:9' ELSE '1:1' END,
  CASE a.kind WHEN 'character' THEN 0 WHEN 'scene' THEN 800 ELSE 1280 END,
  (row_number() OVER(PARTITION BY a.kind ORDER BY a.created_at,a.id)-1)*CASE a.kind WHEN 'character' THEN 620 WHEN 'scene' THEN 360 ELSE 440 END,s.id
@@ -51,7 +54,7 @@ func (r *DramaRepository) ReadCanvas(ctx context.Context, org, user, project str
 			return out, fmt.Errorf("读取漫剧画布素材失败: %w", err)
 		}
 	}
-	rows, err := tx.Query(ctx, `SELECT f.id,f.asset_id,a.name,a.kind,COALESCE(f.parent_id::text,''),f.name,f.description,f.gender,f.style,f.aspect_ratio,f.position_x,f.position_y,f.revision,COALESCE(f.current_image_id::text,''),COALESCE(j.status,'idle'),COALESCE(j.error_message,''),COALESCE(f.style_id,'')
+	rows, err := tx.Query(ctx, `SELECT f.id,f.asset_id,a.name,a.kind,COALESCE(f.parent_id::text,''),CASE WHEN f.parent_id IS NULL THEN a.name ELSE f.name END,f.description,f.gender,f.style,f.aspect_ratio,f.position_x,f.position_y,f.revision,COALESCE(f.current_image_id::text,''),COALESCE(j.status,'idle'),COALESCE(j.error_message,''),COALESCE(f.style_id,'')
  FROM drama_asset_forms f JOIN drama_assets a ON a.id=f.asset_id
  LEFT JOIN LATERAL(SELECT status,error_message FROM drama_image_jobs WHERE form_id=f.id ORDER BY created_at DESC,id DESC LIMIT 1) j ON true
  WHERE a.project_id=$1 ORDER BY a.kind,a.created_at,a.id,f.created_at,f.id`, project)
@@ -188,6 +191,22 @@ func (r *DramaRepository) EditAssetForm(ctx context.Context, org, user, project,
 	}
 	if err = visualBusy(ctx, tx, form); err != nil {
 		return err
+	}
+	if f.ParentID == "" {
+		// 旧客户端可能随风格编辑发回仍存于数据库的占位名称。
+		if f.Name == "默认形象" && in.Name == f.Name {
+			in.Name = f.AssetName
+		}
+		if in.Name != f.AssetName {
+			_, err := tx.Exec(ctx, `UPDATE drama_assets SET name=$2,updated_at=now() WHERE id=$1 AND project_id=$3`, f.AssetID, in.Name, project)
+			if err != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "drama_assets_project_id_kind_name_key" {
+					return drama.ErrCanvasAssetNameExists
+				}
+				return fmt.Errorf("修改漫剧资产名称失败: %w", err)
+			}
+		}
 	}
 	_, err = tx.Exec(ctx, `UPDATE drama_asset_forms SET name=$2,description=$3,gender=$4,style=$5,aspect_ratio=$6,style_id=COALESCE(NULLIF($7::text,''),(SELECT id FROM drama_visual_styles WHERE name=$5 AND enabled)),revision=revision+1,updated_at=now() WHERE id=$1`, form, in.Name, in.Description, in.Gender, in.Style, in.AspectRatio, in.StyleID)
 	if err != nil {

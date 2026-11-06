@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -20,10 +19,6 @@ func createDramaCanvasAsset(deps Dependencies) gin.HandlerFunc {
 		}
 		u := currentSession(c).User
 		out, err := deps.DramaVisual.CreateCanvasAsset(c.Request.Context(), u.OrganizationID, u.ID, c.Param("id"), in)
-		if errors.Is(err, drama.ErrCanvasAssetNameExists) {
-			httpx.Fail(c, http.StatusConflict, "drama_canvas_asset_name_exists", err.Error())
-			return
-		}
 		if err != nil {
 			handleDramaError(c, deps, err)
 			return
