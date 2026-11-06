@@ -9,6 +9,7 @@ import {
   startTryOn, tryOnAssetURL, tryOnResultURL,
   type TryOnAsset, type TryOnGarmentJob, type TryOnInput, type TryOnJob, type TryOnKind,
 } from '../api/tryon'
+import { formatDateTime } from '../utils/dateTime'
 import { TryOnAssetDialog, tryOnLabels } from './TryOnAssetDialog'
 import { garmentJobsKey, TryOnGarmentJobs } from './TryOnGarmentJobs'
 import {
@@ -417,9 +418,7 @@ function TryOnTaskCards({ jobs, assets, pending, label, onView, onRetry, retryin
               {jobSelection(job).garmentIds.filter((id) => assets.has(id)).map((id) =>
                 <img key={id} src={tryOnAssetURL(id)} alt="" loading="lazy" />)}
             </span>}
-            <time dateTime={job.createdAt}>{new Date(job.createdAt).toLocaleString('zh-CN', {
-              month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-            })}</time>
+            <time dateTime={job.createdAt}>{formatDateTime(job.createdAt)}</time>
           </span>
         </button>
         {job.status === 'failed' && <div className="tryon-task-retry">

@@ -1,6 +1,7 @@
 import { Alert, Button, Empty, Modal, Select, Skeleton, Spin, Tag } from 'antd'
 import { useId, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { formatDateTime } from '../utils/dateTime'
 import { dramaSegmentVideoURL, dramaVideoResolutions, getDramaSettings, listDramaCanvasGenerationModels, listDramaSegmentVideoCalls, listDramaSegmentVideos, type DramaSegmentVideo, type DramaVideoResolution, startDramaSegmentVideo } from '../api/drama'
 
 export function DramaSegmentVideoPreview({ projectId, episodeId, runId, segmentId, revision, segmentVersion, canGenerate, missingReferences }: {
@@ -81,7 +82,7 @@ export function DramaSegmentVideoPreview({ projectId, episodeId, runId, segmentI
         {calls.data.map((call, index) => <li key={`${call.createdAt}/${index}`}>
           <div><strong>{call.operation === 'video' ? '提交生成任务' : '查询生成结果'}</strong>
             <Tag color={call.result === 'failed' ? 'error' : 'success'}>{call.result === 'failed' ? '失败' : '成功'}</Tag></div>
-          <div className="drama-video-call-meta">{new Date(call.createdAt).toLocaleString()} · {call.model} · HTTP {call.httpStatus}</div>
+          <div className="drama-video-call-meta">{formatDateTime(call.createdAt)} · {call.model} · HTTP {call.httpStatus}</div>
           {call.code && <code>{call.code}</code>}
           {call.message && <p>{call.message}</p>}
         </li>)}
@@ -94,7 +95,7 @@ export function DramaSegmentVideoPreview({ projectId, episodeId, runId, segmentI
             <Tag color={video.segmentVersion === segmentVersion ? 'blue' : 'default'}>
               使用片段版本 {video.segmentVersion}
             </Tag>}
-          <span className="drama-video-call-meta">{video.duration} 秒 · {new Date(video.createdAt).toLocaleString()}</span>
+          <span className="drama-video-call-meta">{video.duration} 秒 · {formatDateTime(video.createdAt)}</span>
         </div>
         {video.status === 'running' && <Alert type="info" icon={<Spin size="small" />} showIcon title="正在生成片段视频" />}
         {video.status === 'succeeded' && <video className="drama-segment-video" aria-label={`片段版本 ${video.segmentVersion} 的视频`} controls playsInline preload="metadata" src={dramaSegmentVideoURL(...scope, video.id)} />}

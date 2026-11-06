@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Alert, Button, Input, Select, Space } from 'antd'
 import { useEffect, useState } from 'react'
 
+import { formatDateTime } from '../utils/dateTime'
 import { refineNovelIdea } from '../api/novel'
 import { listNovelIdeaHistory, novelIdeaHistoryPrefix, persistNovelIdeaHistoryEntry, type NovelIdeaHistoryEntry } from './novelIdeaHistory'
 
@@ -139,9 +140,7 @@ function ideaVersion(source: string): NovelIdeaHistoryEntry {
 }
 
 function historyLabel(entry: NovelIdeaHistoryEntry) {
-  const date = new Date(entry.savedAt).toLocaleString('zh-CN', {
-    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  })
+  const date = formatDateTime(entry.savedAt)
   const preview = Array.from(entry.source.trim().replace(/\s+/g, ' ')).slice(0, 18).join('')
   return `${date} · ${entry.modelName ?? '恢复前备份'} · ${preview}`
 }

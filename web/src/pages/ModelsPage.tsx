@@ -32,6 +32,7 @@ import {
 import { useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
+import { formatDateTime } from '../utils/dateTime'
 import { ApiError } from '../api/client'
 import {
   batchChangeModelStatus,
@@ -245,7 +246,7 @@ export function ModelsPage() {
     { title: '状态', key: 'status', width: 110, render: (_, provider) => <StatusIndicator label={provider.status === 'active' ? '已启用' : '已停用'} tone={provider.status === 'active' ? 'success' : 'muted'} /> },
     {
       title: '最近检测', key: 'probe', width: 150,
-      render: (_, provider) => <div className="probe-state"><StatusIndicator label={probeLabel(provider.lastProbeStatus)} tone={probeTone(provider.lastProbeStatus)} />{provider.lastProbeAt ? <small>{formatTime(provider.lastProbeAt)}</small> : null}</div>,
+      render: (_, provider) => <div className="probe-state"><StatusIndicator label={probeLabel(provider.lastProbeStatus)} tone={probeTone(provider.lastProbeStatus)} />{provider.lastProbeAt ? <small>{formatDateTime(provider.lastProbeAt)}</small> : null}</div>,
     },
     ...(canWriteProviders ? [{
       title: '操作', key: 'actions', width: 290,
@@ -450,10 +451,6 @@ function probeLabel(status: ModelProvider['lastProbeStatus']) {
 
 function probeTone(status: ModelProvider['lastProbeStatus']): 'success' | 'danger' | 'muted' {
   return status === 'success' ? 'success' : status === 'failed' ? 'danger' : 'muted'
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 }
 
 function errorMessage(error: unknown, fallback: string) {

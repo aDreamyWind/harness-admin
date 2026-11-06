@@ -15,6 +15,7 @@ import {
 } from 'antd'
 import { useState } from 'react'
 
+import { formatDateTime } from '../utils/dateTime'
 import { getAuditEvent, listAuditEvents, type AuditEvent } from '../api/audit'
 import { StatusIndicator } from '../components/StatusIndicator'
 
@@ -298,11 +299,4 @@ function dateBoundary(value: string, endOfDay: boolean): string | undefined {
   if (!value) return undefined
   const suffix = endOfDay ? 'T23:59:59.999' : 'T00:00:00.000'
   return new Date(`${value}${suffix}`).toISOString()
-}
-
-function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  }).format(new Date(value))
 }

@@ -2629,40 +2629,13 @@ select {
 }
 
 .gateway-key-name {
-  display: inline-grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  max-width: 100%;
-  text-align: left;
-}
-
-.gateway-key-name > .anticon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border: 1px solid #d6e0ea;
-  border-radius: 6px;
-  background: #f1f5f9;
-  color: #435a75;
-}
-
-.gateway-key-name strong,
-.gateway-key-name small {
   display: block;
-}
-
-.gateway-key-name strong {
+  max-width: 240px;
+  margin-inline: auto;
   color: #26364b;
   font-size: 12px;
+  text-align: left;
   overflow-wrap: anywhere;
-}
-
-.gateway-key-name small {
-  margin-top: 3px;
-  color: #8793a2;
-  font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
 }
 
 .gateway-limit-cell span,
@@ -2683,50 +2656,35 @@ select {
 }
 
 .gateway-model-scope {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+  display: grid;
+  gap: 8px;
+  text-align: left;
 }
 
-.gateway-model-scope-item {
+.gateway-model-group {
   display: grid;
   gap: 2px;
-  width: 100%;
-  padding: 5px 8px;
-  border: 1px solid #e3e9ef;
-  border-radius: 6px;
-  background: #f8fafc;
-  text-align: center;
   overflow-wrap: anywhere;
 }
 
-.gateway-model-scope-item span {
+.gateway-model-provider {
   color: #697b90;
   font-size: 11px;
 }
 
-.gateway-model-scope-item strong {
+.gateway-model-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
   color: #26364b;
   font-size: 12px;
 }
 
-.gateway-model-scope details {
-  width: 100%;
-}
-
-.gateway-model-scope summary {
-  text-align: center;
-  color: #2457d6;
-  cursor: pointer;
+.gateway-model-scope .gateway-model-scope-toggle {
+  justify-self: start;
+  height: auto;
+  padding-inline: 0;
   font-size: 11px;
-}
-
-.gateway-model-scope-extra {
-  display: grid;
-  gap: 6px;
-  margin-top: 6px;
 }
 
 .gateway-resource-card .ant-table-thead > tr > th,
@@ -2747,6 +2705,10 @@ select {
   padding: 16px 18px;
   border-bottom: 1px solid #e5ebf0;
   background: #fafbfd;
+}
+
+.gateway-call-filters .ant-picker {
+  width: 100%;
 }
 
 .gateway-usage-controls {
@@ -2825,49 +2787,61 @@ select {
   overflow-wrap: anywhere;
 }
 
-.application-access-name {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+.credential-value-row {
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  margin: 16px 0 12px;
 }
 
-.application-access-name > .anticon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border: 1px solid #d4e0ed;
-  border-radius: 6px;
-  background: #eef3fa;
-  color: #315b8f;
+.credential-value-row .ant-input {
+  flex: 1;
+  min-width: 0;
+  font-family: "SFMono-Regular", Menlo, monospace;
 }
 
-.application-access-name strong,
-.application-access-name small,
-.application-access-callback small {
+.application-access-table .ant-table-thead > tr > th,
+.application-access-table .ant-table-tbody > tr > td {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.application-access-cell {
+  margin-inline: auto;
+  text-align: left;
+}
+
+.application-access-name {
   display: block;
-}
-
-.application-access-name small {
-  overflow-wrap: anywhere;
-}
-
-.application-access-name strong {
+  max-width: 200px;
   color: #26364b;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 
-.application-access-name small,
-.application-access-callback small {
-  margin-top: 3px;
-  color: #8793a2;
-  font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
+.application-access-client-id {
+  max-width: 322px;
+}
+
+.application-access-client-id .ant-typography {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.application-access-client-id code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.application-access-client-id .ant-typography-copy {
+  flex: none;
 }
 
 .application-access-callback {
-  min-width: 0;
+  max-width: 250px;
 }
 
 .application-access-callback code {
@@ -2884,10 +2858,25 @@ select {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  max-width: 244px;
 }
 
 .application-access-scopes .ant-tag {
   margin: 0;
+}
+
+.application-access-status {
+  max-width: 56px;
+}
+
+.application-access-type {
+  max-width: 70px;
+  white-space: nowrap;
+}
+
+.application-access-table .application-access-actions {
+  display: flex;
+  max-width: 292px;
 }
 
 .application-scope-options {
@@ -2991,19 +2980,15 @@ select {
   flex: 1;
 }
 
-.application-credential-box small,
-.application-credential-box .ant-typography {
-  display: block;
-}
-
 .application-credential-box small {
+  display: block;
   margin-bottom: 4px;
   color: #7e8c9e;
   font-size: 10px;
 }
 
-.application-credential-box .ant-typography {
-  overflow-wrap: anywhere;
+.application-credential-box .ant-input {
+  font-family: "SFMono-Regular", Menlo, monospace;
 }
 
 @media (max-width: 960px) {
@@ -3267,6 +3252,15 @@ select {
   .gateway-secret-box {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .credential-value-row {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .credential-value-row .ant-input {
+    flex-basis: 100%;
   }
 }
 

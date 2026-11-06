@@ -2,9 +2,8 @@ import { CheckOutlined, ZoomInOutlined } from '@ant-design/icons'
 import { Alert, Button, Empty, Image, Skeleton } from 'antd'
 
 import type { CoverHistoryItem } from '../api/cover'
+import { formatDateTime } from '../utils/dateTime'
 import './cover-history.css'
-
-const dateLabel = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
 
 export function CoverHistoryGallery({ items, loading, error, disabled, applying, onRetry, onApply, onPreviewChange }: {
   items?: CoverHistoryItem[]
@@ -25,7 +24,7 @@ export function CoverHistoryGallery({ items, loading, error, disabled, applying,
     <ul className="cover-history-grid">
       {items.map((item) => {
         const source = item.source === 'ai' ? 'AI 生成' : '自己上传'
-        const date = dateLabel.format(new Date(item.createdAt))
+        const date = formatDateTime(item.createdAt)
         return <li key={item.revision} className="cover-history-card">
           <div className="cover-history-art">
             <Image src={item.url} alt={`${source}的封面，${date}`} loading="lazy"

@@ -56,7 +56,7 @@ Harness Admin 是一个可自托管的企业 AI 管理平台，也是一个 Go �
 
 ## 界面预览
 
-以下截图使用演示数据。
+以下截图展示企业管理端和三个 AI 创作工作台。
 
 ### 企业首页
 
@@ -66,17 +66,39 @@ Harness Admin 是一个可自托管的企业 AI 管理平台，也是一个 Go �
 
 ![模型目录，展示模型类型、调用入口、能力和启用状态](docs/screenshots/model-catalog.png)
 
-### AI 小说 · 章节写作与审稿
+### AI 漫剧
 
-![AI 小说工作台，展示示例作品《雾港来信》的章节目录、正文草稿、连续性摘要和审稿状态](docs/screenshots/ai-novel.png)
+**项目列表**
 
-### AI 漫剧 · 选章改编与项目管理
+![AI 漫剧项目列表，展示小说或剧本导入、画风和画幅设置，以及已有项目的封面](docs/screenshots/ai-drama.png)
 
-![AI 漫剧工作台，展示从示例小说选取已定稿章节、设置视觉风格与画幅，以及已有漫剧项目](docs/screenshots/ai-drama.png)
+**资产画布**
 
-### AI 试衣 · 参考素材与效果对比
+![AI 漫剧资产画布，展示角色和场景节点及其图片](docs/screenshots/ai-drama-canvas.png)
 
-![AI 试衣台，展示示例人物原图与换装插画对比，以及人物、衣物和姿态参考设置](docs/screenshots/ai-tryon.png)
+**分镜编辑与视频预览**
+
+![AI 漫剧分镜编辑器，展示本集资产、镜头脚本、片段列表和生成的视频预览](docs/screenshots/ai-drama-storyboard.png)
+
+### AI 小说
+
+**作品书架**
+
+![AI 小说作品书架，展示作品封面和计划章节数](docs/screenshots/ai-novel.png)
+
+**章节写作与审稿**
+
+![AI 小说章节编辑器，展示章节状态、正文草稿、连续性摘要和审稿入口](docs/screenshots/ai-novel-editor.png)
+
+### AI 试衣
+
+**人物库**
+
+![AI 试衣人物库，展示可选的写实模特和动漫角色](docs/screenshots/ai-tryon-people.png)
+
+**试衣台与效果对比**
+
+![AI 试衣台，展示人物原图与试穿结果的对比、搭配设置和已完成的试穿任务](docs/screenshots/ai-tryon.png)
 
 ## 快速启动
 

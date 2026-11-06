@@ -14,6 +14,7 @@ import {
 } from 'antd'
 import { useEffect } from 'react'
 
+import { formatDateTime } from '../utils/dateTime'
 import {
   changePassword,
   listSessions,
@@ -378,10 +379,4 @@ function describeClient(userAgent: string): string {
         : /Android/.test(userAgent) ? 'Android'
           : /Linux/.test(userAgent) ? 'Linux' : '未知设备'
   return `${browser} · ${system}`
-}
-
-function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date(value))
 }

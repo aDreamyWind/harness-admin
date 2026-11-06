@@ -1,6 +1,7 @@
 import { CopyOutlined, EyeOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import type { Dayjs } from 'dayjs'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
@@ -16,11 +17,12 @@ import { discoverMCPTools, listMCPServices, type MCPParameterDefinition, type MC
 import { listUsers } from '../api/users'
 import { useAuth } from '../auth/AuthContext'
 import { ModelPolicyDepartmentTree } from '../components/ModelPolicyDepartmentTree'
+import { dateTimeFormat } from '../utils/dateTime'
 
 const { Text } = Typography
 
 type ConnectionForm = Omit<MCPConnectionInput, 'expiresAt' | 'upstreamParameters'> & {
-  expiresAt?: { toISOString: () => string }
+  expiresAt?: Dayjs
   parameterValues?: Record<string, string>
 }
 
@@ -81,7 +83,7 @@ export function MCPConnectionsPage({ serviceId }: { serviceId?: string } = {}) {
       return createMCPConnection({
         ...connectionValues,
         upstreamParameters: parameterValues(selectedService?.parameters ?? [], configured),
-        expiresAt: values.expiresAt?.toISOString(),
+        expiresAt: values.expiresAt?.startOf('minute').toISOString(),
         departmentIds: values.purpose === 'harness' ? selectedDepartments : [],
         userIds: values.purpose === 'harness' ? (values.userIds ?? []) : [],
       })
@@ -292,7 +294,7 @@ export function MCPConnectionsPage({ serviceId }: { serviceId?: string } = {}) {
           <Text type="secondary">只授权明确勾选的部门和用户；新建下级部门不会自动加入。</Text>
         </>}
         <Space align="start">
-          <Form.Item name="expiresAt" label="到期时间（可选）"><DatePicker showTime /></Form.Item>
+          <Form.Item name="expiresAt" label="到期时间（可选）"><DatePicker showTime={{ format: 'HH:mm' }} format={dateTimeFormat} /></Form.Item>
           <Form.Item name="requestsPerMinute" label={`${purpose === 'harness' ? '每位员工每分钟请求上限' : '此连接每分钟请求上限'}（可选）`}
             extra="不填时默认 60 次／分钟。">
             <InputNumber min={1} max={100000} />

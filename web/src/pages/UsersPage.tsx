@@ -34,6 +34,7 @@ import {
   type UpdateUserInput,
 } from '../api/users'
 import { useAuth } from '../auth/AuthContext'
+import { formatDateTime } from '../utils/dateTime'
 import { DepartmentSelect } from '../components/DepartmentSelect'
 import { StatusIndicator } from '../components/StatusIndicator'
 
@@ -555,10 +556,4 @@ export function UsersPage() {
       </Modal>
     </main>
   )
-}
-
-function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date(value))
 }

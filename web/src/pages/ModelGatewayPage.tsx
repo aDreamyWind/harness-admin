@@ -2,8 +2,6 @@ import {
   CheckCircleOutlined,
   CopyOutlined,
   EditOutlined,
-  EyeOutlined,
-  KeyOutlined,
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -13,6 +11,7 @@ import {
   Alert,
   Button,
   Card,
+  DatePicker,
   Form,
   Input,
   InputNumber,
@@ -28,6 +27,7 @@ import {
   message,
   type TableColumnsType,
 } from 'antd'
+import dayjs, { type Dayjs } from 'dayjs'
 import { useMemo, useState, type ReactNode } from 'react'
 
 import { ApiError } from '../api/client'
@@ -54,13 +54,15 @@ import {
 } from '../api/modelGateway'
 import { listModelPolicies, type ModelPolicy } from '../api/modelPolicy'
 import { useAuth } from '../auth/AuthContext'
+import { SecretRevealModal } from '../components/SecretRevealModal'
 import { StatusIndicator } from '../components/StatusIndicator'
+import { dateTimeFormat, formatDateTime } from '../utils/dateTime'
 
 const { Paragraph, Text } = Typography
 
 interface APIKeyFormValue {
   name: string
-  expiresAt?: string
+  expiresAt?: Dayjs
   requestsPerMinute: number
   monthlyTokenLimit: number
   allowedModelCodes: string[]
@@ -70,8 +72,8 @@ interface CallFilterValue {
   apiKeyId?: string
   modelCode?: string
   result?: GatewayCall['result']
-  startedAt?: string
-  endedAt?: string
+  startedAt?: Dayjs
+  endedAt?: Dayjs
 }
 
 export function ModelGatewayPage() {
@@ -85,7 +87,7 @@ export function ModelGatewayPage() {
   const [keyModalOpen, setKeyModalOpen] = useState(false)
   const [editingKey, setEditingKey] = useState<GatewayAPIKey | null>(null)
   const [createdKey, setCreatedKey] = useState<CreatedGatewayAPIKey | null>(null)
-  const [revealedKey, setRevealedKey] = useState<{ name: string; secret: string } | null>(null)
+  const [viewedKey, setViewedKey] = useState<GatewayAPIKey | null>(null)
   const [callQuery, setCallQuery] = useState<GatewayCallQuery>({ page: 1, pageSize: 20 })
   const [activeTab, setActiveTab] = useState('keys')
   const [usageQuery, setUsageQuery] = useState<GatewayUsageQuery>({
@@ -113,7 +115,7 @@ export function ModelGatewayPage() {
     mutationFn: (value: APIKeyFormValue) => {
       const input = {
         name: value.name.trim(),
-        expiresAt: value.expiresAt ? new Date(value.expiresAt).toISOString() : undefined,
+        expiresAt: value.expiresAt?.startOf('minute').toISOString(),
         requestsPerMinute: value.requestsPerMinute,
         monthlyTokenLimit: value.monthlyTokenLimit,
         allowedModelCodes: value.allowedModelCodes ?? [],
@@ -136,11 +138,6 @@ export function ModelGatewayPage() {
       await queryClient.invalidateQueries({ queryKey: ['model-gateway-api-keys'] })
     },
     onError: (error) => messageApi.error(errorMessage(error, '调用密钥吊销失败')),
-  })
-  const revealKey = useMutation({
-    mutationFn: async (key: GatewayAPIKey) => ({ key, result: await revealGatewayAPIKeySecret(key.id) }),
-    onSuccess: ({ key, result }) => setRevealedKey({ name: key.name, secret: result.secret }),
-    onError: (error) => messageApi.error(errorMessage(error, '调用密钥查看失败')),
   })
   const acknowledgeAlert = useMutation({
     mutationFn: acknowledgeGatewayAlert,
@@ -178,7 +175,7 @@ export function ModelGatewayPage() {
     saveKey.reset()
     form.setFieldsValue({
       name: item.name,
-      expiresAt: item.expiresAt ? localDateTime(new Date(item.expiresAt)) : undefined,
+      expiresAt: item.expiresAt ? dayjs(item.expiresAt).startOf('minute') : undefined,
       requestsPerMinute: item.requestsPerMinute,
       monthlyTokenLimit: item.monthlyTokenLimit,
       allowedModelCodes: item.allowedModelCodes,
@@ -200,19 +197,19 @@ export function ModelGatewayPage() {
       apiKeyId: value.apiKeyId,
       modelCode: value.modelCode?.trim() || undefined,
       result: value.result,
-      startedAt: value.startedAt ? new Date(value.startedAt).toISOString() : undefined,
-      endedAt: value.endedAt ? new Date(value.endedAt).toISOString() : undefined,
+      startedAt: value.startedAt?.startOf('minute').toISOString(),
+      endedAt: value.endedAt?.startOf('minute').toISOString(),
     }))
   }
 
-  const keyColumns: TableColumnsType<GatewayAPIKey> = useMemo(() => [
+  const keyColumns: TableColumnsType<GatewayAPIKey> = [
     {
-      title: '调用密钥', key: 'identity', width: 230,
-      render: (_, item) => <div className="gateway-key-name"><KeyOutlined /><span><strong>{item.name}</strong><small>{item.keyPrefix}••••••••</small></span></div>,
+      title: '调用密钥', key: 'identity', width: 240,
+      render: (_, item) => <strong className="gateway-key-name">{item.name}</strong>,
     },
-    { title: '状态', key: 'status', width: 110, render: (_, item) => <StatusIndicator label={keyStatus(item)} tone={keyTone(item)} /> },
+    { title: '状态', key: 'status', width: 88, render: (_, item) => renderKeyStatus(item) },
     {
-      title: '调用限制', key: 'limits', width: 205,
+      title: '调用限制', key: 'limits', width: 148,
       render: (_, item) => <div className="gateway-limit-cell">
         <span>{item.requestsPerMinute > 0 ? `${item.requestsPerMinute} 次 / 分钟` : '不限每分钟请求'}</span>
         <small>{item.monthlyTokenLimit > 0 ? `本月 ${item.monthlyTokenUsed.toLocaleString()} / ${item.monthlyTokenLimit.toLocaleString()} Token` : '不限月度 Token'}</small>
@@ -223,24 +220,18 @@ export function ModelGatewayPage() {
       </div>,
     },
     {
-      title: '可用模型', key: 'allowedModels', width: 320,
+      title: '可用模型', key: 'allowedModels', width: 310,
       render: (_, item) => item.allowedModelCodes.length > 0
-        ? <div className="gateway-model-scope">
-          {(item.allowedModels ?? []).slice(0, 2).map((model) => <AllowedModelScope key={model.code} model={model} />)}
-          {item.allowedModelCodes.length > 2 ? <details>
-            <summary>其余 {item.allowedModelCodes.length - 2} 个模型</summary>
-            <div className="gateway-model-scope-extra">{(item.allowedModels ?? []).slice(2).map((model) => <AllowedModelScope key={model.code} model={model} />)}</div>
-          </details> : null}
-        </div>
+        ? <AllowedModelScope models={item.allowedModels ?? []} />
         : <Text type="secondary">全部模型</Text>,
     },
-    { title: '有效期', key: 'expiresAt', width: 180, render: (_, item) => item.expiresAt ? formatTime(item.expiresAt) : '永不过期' },
-    { title: '最近调用', key: 'lastUsedAt', width: 180, render: (_, item) => item.lastUsedAt ? formatTime(item.lastUsedAt) : '尚未使用' },
-    { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 180, render: formatTime },
+    { title: '有效期', key: 'expiresAt', width: 148, render: (_, item) => item.expiresAt ? formatDateTime(item.expiresAt) : '永不过期' },
+    { title: '最近调用', key: 'lastUsedAt', width: 148, render: (_, item) => item.lastUsedAt ? formatDateTime(item.lastUsedAt) : '尚未使用' },
+    { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 148, render: formatDateTime },
     ...(canWrite ? [{
-      title: '操作', key: 'actions', width: 200,
+      title: '操作', key: 'actions', width: 194,
       render: (_: unknown, item: GatewayAPIKey) => <Space size={4}>
-        <Button type="link" size="small" icon={<EyeOutlined />} loading={revealKey.isPending && revealKey.variables?.id === item.id} onClick={() => revealKey.mutate(item)}>查看</Button>
+        <Button type="link" size="small" onClick={() => setViewedKey(item)}>查看密钥</Button>
         {item.status === 'active' ? <>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditKey(item)}>编辑</Button>
           <Popconfirm title="吊销这个调用密钥？" description="吊销后立即失效，且无法恢复。" onConfirm={() => revokeKey.mutate(item.id)}>
@@ -249,10 +240,10 @@ export function ModelGatewayPage() {
         </> : null}
       </Space>,
     }] : []),
-  ], [canWrite, revokeKey, revealKey.isPending, revealKey.variables])
+  ]
 
   const callColumns: TableColumnsType<GatewayCall> = useMemo(() => [
-    { title: '发生时间', dataIndex: 'createdAt', key: 'createdAt', width: 178, render: formatTime },
+    { title: '发生时间', dataIndex: 'createdAt', key: 'createdAt', width: 178, render: formatDateTime },
     { title: '供应商', key: 'providerName', width: 190, render: (_, item) => <span className="gateway-call-provider">{item.providerName || '连接已删除'}</span> },
     {
       title: '模型', key: 'modelName', width: 230,
@@ -298,7 +289,7 @@ export function ModelGatewayPage() {
     { title: '预警内容', key: 'detail', render: (_, item) => item.kind === 'quota'
       ? <span>已统计 {item.usedTokens.toLocaleString()} / {item.tokenLimit.toLocaleString()} Token（{Math.floor(item.usedTokens / item.tokenLimit * 100)}%）</span>
       : <span>成功调用 {item.callCount.toLocaleString()} 次，其中 {item.unknownUsageCalls.toLocaleString()} 次用量未知</span> },
-    { title: '首次发现', dataIndex: 'firstDetectedAt', key: 'firstDetectedAt', width: 170, render: formatTime },
+    { title: '首次发现', dataIndex: 'firstDetectedAt', key: 'firstDetectedAt', width: 170, render: formatDateTime },
     { title: '处理状态', key: 'acknowledgedAt', width: 100, render: (_, item) => item.resolvedAt ? <Tag>已解除</Tag> : item.acknowledgedAt ? <Tag color="blue">已知悉</Tag> : <Tag color="gold">待查看</Tag> },
     ...(canWrite ? [{ title: '操作', key: 'actions', width: 90, render: (_: unknown, item: GatewayAlert) => !item.resolvedAt && !item.acknowledgedAt
       ? <Button type="link" size="small" loading={acknowledgeAlert.isPending && acknowledgeAlert.variables === item.id} onClick={() => acknowledgeAlert.mutate(item.id)}>标记知悉</Button>
@@ -315,7 +306,8 @@ export function ModelGatewayPage() {
         error={keysQuery.isError ? errorMessage(keysQuery.error, '调用密钥加载失败') : ''}
         retry={() => keysQuery.refetch()}
       >
-        <Table<GatewayAPIKey> rowKey="id" columns={keyColumns} dataSource={keys} loading={keysQuery.isLoading} pagination={false} scroll={{ x: 1480 }} locale={{ emptyText: '尚未创建调用密钥' }} />
+        <Table<GatewayAPIKey> rowKey="id" columns={keyColumns} dataSource={keys} loading={keysQuery.isLoading} pagination={false}
+          tableLayout="fixed" scroll={{ x: canWrite ? 1424 : 1230 }} locale={{ emptyText: '尚未创建调用密钥' }} />
       </GatewayResource>,
     },
     {
@@ -401,8 +393,8 @@ export function ModelGatewayPage() {
           <Form.Item name="result">
             <Select allowClear placeholder="全部结果" options={[{ label: '成功', value: 'success' }, { label: '失败', value: 'failed' }]} />
           </Form.Item>
-          <Form.Item name="startedAt"><Input type="datetime-local" aria-label="开始时间" /></Form.Item>
-          <Form.Item name="endedAt"><Input type="datetime-local" aria-label="结束时间" /></Form.Item>
+          <Form.Item name="startedAt"><DatePicker showTime={{ format: 'HH:mm' }} format={dateTimeFormat} placeholder="开始时间" aria-label="开始时间" /></Form.Item>
+          <Form.Item name="endedAt"><DatePicker showTime={{ format: 'HH:mm' }} format={dateTimeFormat} placeholder="结束时间" aria-label="结束时间" /></Form.Item>
           <Form.Item>
             <Space>
               <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>查询</Button>
@@ -470,8 +462,10 @@ export function ModelGatewayPage() {
           <Form.Item name="name" label="密钥名称" rules={[{ required: true, whitespace: true, message: '请输入密钥名称' }, { max: 120, message: '最多 120 个字符' }]}>
             <Input placeholder="例如：生产环境后端" autoFocus />
           </Form.Item>
-          <Form.Item name="expiresAt" label="过期时间（选填）" extra="留空表示永不过期。">
-            <Input type="datetime-local" min={localDateTime(new Date(Date.now() + 60_000))} />
+          <Form.Item name="expiresAt" label="过期时间（选填）" extra="留空表示永不过期。" rules={[
+            { validator: (_, value?: Dayjs) => !value || value.startOf('minute').isAfter(dayjs()) ? Promise.resolve() : Promise.reject(new Error('请选择晚于当前时间的有效期')) },
+          ]}>
+            <DatePicker showTime={{ format: 'HH:mm' }} format={dateTimeFormat} />
           </Form.Item>
           <div className="gateway-limit-grid">
             <Form.Item name="requestsPerMinute" label="每分钟请求上限" extra="0 表示不限制。" rules={[{ required: true, message: '请填写请求上限' }]}>
@@ -489,6 +483,7 @@ export function ModelGatewayPage() {
 
       <Modal
         title="保存调用密钥"
+        width={760}
         open={Boolean(createdKey)}
         okText="完成"
         cancelButtonProps={{ style: { display: 'none' } }}
@@ -497,8 +492,8 @@ export function ModelGatewayPage() {
         onOk={() => { setCreatedKey(null); saveKey.reset() }}
       >
         <Alert type="success" showIcon message="调用密钥已加密保存，之后仍可在列表中查看" />
-        <div className="gateway-secret-box">
-          <Text code>{createdKey?.secret}</Text>
+        <div className="credential-value-row">
+          <Input aria-label="调用密钥" readOnly value={createdKey?.secret ?? ''} />
           <Button icon={<CopyOutlined />} onClick={async () => {
             if (!createdKey) return
             await navigator.clipboard.writeText(createdKey.secret)
@@ -508,13 +503,9 @@ export function ModelGatewayPage() {
         <Paragraph type="secondary">请保存到服务端密钥管理工具，不要写入前端代码或提交到 Git。</Paragraph>
       </Modal>
 
-      <Modal title={`${revealedKey?.name ?? ''} · 调用密钥`} open={Boolean(revealedKey)} footer={null} onCancel={() => { setRevealedKey(null); revealKey.reset() }} destroyOnHidden>
-        <Alert type="info" showIcon message="本次查看已记录到审计日志" />
-        <div className="gateway-secret-box">
-          <Text code>{revealedKey?.secret}</Text>
-          <Button icon={<CopyOutlined />} onClick={async () => { if (!revealedKey) return; await navigator.clipboard.writeText(revealedKey.secret); messageApi.success('调用密钥已复制') }}>复制</Button>
-        </div>
-      </Modal>
+      {viewedKey && <SecretRevealModal key={viewedKey.id} title={`${viewedKey.name} · 查看密钥`} label="调用密钥"
+        requestSecret={() => revealGatewayAPIKeySecret(viewedKey.id)} onClose={() => setViewedKey(null)}
+        onCopy={() => messageApi.success('调用密钥已复制')} />}
     </main>
   )
 }
@@ -539,21 +530,34 @@ function GatewayResource({ title, hint, action, error, retry, children }: {
   )
 }
 
-function AllowedModelScope({ model }: { model: GatewayAPIKey['allowedModels'][number] }) {
-  return <div className="gateway-model-scope-item" title={model.code}>
-    <span>{model.providerName || '供应商已删除'}</span>
-    <strong>{model.modelName || '模型已删除'}</strong>
+function AllowedModelScope({ models }: { models: GatewayAPIKey['allowedModels'] }) {
+  const [expanded, setExpanded] = useState(false)
+  const previewCount = 2
+  const providers = new Map<string, GatewayAPIKey['allowedModels']>()
+  for (const model of expanded ? models : models.slice(0, previewCount)) {
+    const group = providers.get(model.providerName)
+    if (group) group.push(model)
+    else providers.set(model.providerName, [model])
+  }
+
+  return <div className="gateway-model-scope">
+    {[...providers].map(([providerName, providerModels]) => <div className="gateway-model-group" key={providerName}>
+      <span className="gateway-model-provider">{providerName || '供应商已删除'}</span>
+      <div className="gateway-model-names">
+        {providerModels.map((model) => <strong key={model.code} title={model.code}>{model.modelName || '模型已删除'}</strong>)}
+      </div>
+    </div>)}
+    {models.length > previewCount && <Button type="link" size="small" className="gateway-model-scope-toggle"
+      aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+      {expanded ? '收起模型' : `其余 ${models.length - previewCount} 个模型`}
+    </Button>}
   </div>
 }
 
-function keyStatus(item: GatewayAPIKey) {
-  if (item.status === 'revoked') return '已吊销'
-  if (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) return '已过期'
-  return '可用'
-}
-
-function keyTone(item: GatewayAPIKey): 'success' | 'muted' | 'danger' {
-  return keyStatus(item) === '可用' ? 'success' : 'muted'
+function renderKeyStatus(item: GatewayAPIKey) {
+  if (item.status === 'revoked') return <Text type="secondary">已吊销</Text>
+  if (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) return <Text type="warning">已过期</Text>
+  return <Text type="success">可用</Text>
 }
 
 function renderPolicyQuota(policy?: ModelPolicy) {
@@ -576,15 +580,6 @@ function formatUsageCount(value?: number) {
 
 function otherCallCount({ callCount, videoSubmitCount, videoQueryCount }: Pick<GatewayUsageGroup, 'callCount' | 'videoSubmitCount' | 'videoQueryCount'>) {
   return callCount - (videoSubmitCount ?? 0) - (videoQueryCount ?? 0)
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(new Date(value))
-}
-
-function localDateTime(value: Date) {
-  const offset = value.getTimezoneOffset() * 60_000
-  return new Date(value.getTime() - offset).toISOString().slice(0, 16)
 }
 
 function errorMessage(error: unknown, fallback: string) {
