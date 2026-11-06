@@ -1379,7 +1379,6 @@ select {
 }
 
 .mcp-service-list {
-  max-height: 70vh;
   overflow-y: auto;
   padding: 6px;
 }
@@ -1738,9 +1737,32 @@ select {
 .mcp-deployment-upload input { max-width: 100%; }
 .mcp-deployment-upload input:focus-visible { outline: 2px solid #2457d6; outline-offset: 3px; }
 
+@media (width > 900px) {
+  .main-content:has(> .mcp-management-page) {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - 64px);
+    padding-bottom: 24px;
+  }
+
+  .mcp-management-page {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .mcp-management-page > .module-heading { flex: none; }
+  .mcp-workspace { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+  .mcp-service-sidebar { display: flex; flex-direction: column; max-height: 100%; }
+  .mcp-sidebar-head { flex: none; }
+  .mcp-service-list { min-height: 0; overscroll-behavior-y: contain; }
+  .mcp-service-main { max-height: 100%; overflow-y: auto; overscroll-behavior-y: contain; }
+}
+
 @media (max-width: 900px) {
   .mcp-workspace { grid-template-columns: 1fr; }
-  .mcp-service-list { display: flex; max-height: none; overflow-x: auto; }
+  .mcp-service-list { display: flex; overflow-x: auto; }
   .mcp-service-item { min-width: 180px; }
 }
 
@@ -2836,7 +2858,7 @@ select {
   text-overflow: ellipsis;
 }
 
-.application-access-client-id .ant-typography-copy {
+.application-access-client-id .ant-typography-actions {
   flex: none;
 }
 
@@ -2876,7 +2898,11 @@ select {
 
 .application-access-table .application-access-actions {
   display: flex;
-  max-width: 292px;
+  max-width: 320px;
+}
+
+.application-access-actions .ant-btn {
+  padding-inline: 5px;
 }
 
 .application-scope-options {

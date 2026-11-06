@@ -45,7 +45,7 @@ export function SecretRevealModal({ title, label, requestSecret, onClose, onCopy
   return (
     <Modal title={title} open width={800} footer={null} onCancel={onClose}>
       <Alert type={error ? 'error' : 'info'} showIcon
-        message={error || (secret ? '本次查看已记录到审计日志' : '点击眼睛显示密钥，查看操作会记录到审计日志。')} />
+        title={error || (secret ? '本次查看已记录到审计日志' : '点击眼睛显示密钥，查看操作会记录到审计日志。')} />
       <div className="credential-value-row">
         <Input aria-label={label} readOnly value={secret || '••••••••••••'} />
         <Button aria-label={secret ? '隐藏密钥' : '显示密钥'} icon={secret ? <EyeInvisibleOutlined /> : <EyeOutlined />}

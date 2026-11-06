@@ -170,7 +170,7 @@ export function ApplicationAccessPage() {
       </div>,
     },
     ...(canWrite ? [{
-      title: '操作', key: 'actions', width: 322,
+      title: '操作', key: 'actions', width: 352,
       render: (_: unknown, client: OIDCClient) => <Space className="application-access-cell application-access-actions" size={2} wrap>
         <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(client)}>编辑</Button>
         {client.applicationType === 'web' ? <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => setViewedClient(client)}>查看密钥</Button> : null}
@@ -196,7 +196,7 @@ export function ApplicationAccessPage() {
         </div>
         {clientsQuery.isError ? <Alert className="model-resource-error" type="error" showIcon message={errorMessage(clientsQuery.error, '接入应用加载失败')} action={<Button size="small" onClick={() => clientsQuery.refetch()}>重试</Button>} /> : null}
         <Table<OIDCClient> className="application-access-table" rowKey="id" columns={columns} dataSource={clients} loading={clientsQuery.isLoading}
-          pagination={false} tableLayout="fixed" scroll={{ x: canWrite ? 1536 : 1214 }} locale={{ emptyText: '尚未接入统一登录应用' }} />
+          pagination={false} tableLayout="fixed" scroll={{ x: canWrite ? 1566 : 1214 }} locale={{ emptyText: '尚未接入统一登录应用' }} />
       </Card>
 
       <Modal title={editingClient ? '编辑接入应用' : '接入应用'} open={modalOpen} width={720} okText={editingClient ? '保存修改' : '创建应用'} cancelText="取消" confirmLoading={saveClient.isPending} onCancel={closeModal} onOk={() => form.submit()} forceRender>

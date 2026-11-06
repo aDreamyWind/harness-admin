@@ -1,7 +1,7 @@
 import { ApiOutlined, CloudUploadOutlined, CopyOutlined, ImportOutlined, MinusCircleOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Checkbox, Empty, Form, Input, Modal, Radio, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { ApiError } from '../api/client'
@@ -57,6 +57,7 @@ export function MCPServicesPage() {
   const [descriptionMode, setDescriptionMode] = useState<'编辑' | '预览'>('编辑')
   const [deploymentOpen, setDeploymentOpen] = useState(false)
   const [pendingDeployment, setPendingDeployment] = useState<PendingDeployment | null>(() => readPendingDeployment(pendingStorageKey))
+  const detailsRef = useRef<HTMLDivElement>(null)
   const descriptionPreview = Form.useWatch('description', serviceForm) ?? ''
 
 	const servicesQuery = useQuery({ queryKey: ['mcp-services'], queryFn: listMCPServices,
@@ -74,6 +75,9 @@ export function MCPServicesPage() {
   const selected = servicesQuery.data?.find((item) => item.id === selectedId)
     ?? servicesQuery.data?.find((item) => item.id === searchParams.get('service'))
     ?? servicesQuery.data?.[0] ?? null
+  useEffect(() => {
+    if (detailsRef.current) detailsRef.current.scrollTop = 0
+  }, [selected?.id])
   const isManagedService = selected?.sourceType === 'github' || selected?.sourceType === 'gitee' || selected?.sourceType === 'upload'
   const toolsQuery = useQuery({
     queryKey: ['mcp-tools', selected?.id], queryFn: () => listMCPTools(selected!.id), enabled: Boolean(selected),
@@ -262,7 +266,7 @@ export function MCPServicesPage() {
       </div>
     </aside>
 
-    <div className="mcp-service-main">
+    <div className="mcp-service-main" ref={detailsRef}>
       {selected ? <>
         <div className="mcp-service-overview">
           <Card className="content-card" variant="borderless">
