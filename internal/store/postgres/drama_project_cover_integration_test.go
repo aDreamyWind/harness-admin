@@ -55,6 +55,9 @@ func TestDramaProjectCoverLifecycle(t *testing.T) {
 	if state, err := repo.GetProjectCoverGeneration(ctx, scope); err != nil || state.Status != drama.CoverIdle {
 		t.Fatalf("未生成时未返回 idle: %+v %v", state, err)
 	}
+	if history, err := repo.ListProjectCoverHistory(ctx, scope); err != nil || history == nil || len(history) != 0 {
+		t.Fatalf("无封面的项目应返回空列表: %+v %v", history, err)
+	}
 	other := scope
 	other.UserID = uuid.NewString()
 	if _, err := repo.GetProjectCoverGeneration(ctx, other); !errors.Is(err, drama.ErrNotFound) {
@@ -62,7 +65,8 @@ func TestDramaProjectCoverLifecycle(t *testing.T) {
 	}
 	reserve := func(previous, id string, start bool) drama.CoverGeneration {
 		t.Helper()
-		state, started, err := repo.ReserveProjectCoverGeneration(ctx, scope, previous, id, "painter", time.Now().Add(time.Minute))
+		state, started, err := repo.ReserveProjectCoverGeneration(ctx, scope, previous, id,
+			drama.CoverGenerationInput{ModelCode: "painter", Instruction: "雪夜"}, time.Now().Add(time.Minute))
 		if err != nil || started != start {
 			t.Fatalf("预留任务结果错误: %+v %v %v", state, started, err)
 		}
@@ -80,7 +84,7 @@ func TestDramaProjectCoverLifecycle(t *testing.T) {
 		return state
 	}
 	first, second, third, fourth, fifth := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	if state := reserve("", first, true); state.Status != drama.CoverRunning || state.JobID != first {
+	if state := reserve("", first, true); state.Status != drama.CoverRunning || state.JobID != first || state.Instruction != "雪夜" {
 		t.Fatalf("未建立任务: %+v", state)
 	}
 	if state := reserve("", second, false); state.JobID != first {
@@ -116,7 +120,7 @@ func TestDramaProjectCoverLifecycle(t *testing.T) {
 		t.Fatalf("保留当前封面失败: %+v %v", state, err)
 	}
 	if _, err := repo.SelectProjectCover(ctx, scope, drama.CoverSelection{JobID: second, Choice: "candidate"}); !errors.Is(err, drama.ErrCoverConflict) {
-		t.Fatalf("被丢弃的候选还可以采用: %v", err)
+		t.Fatalf("已经关闭的候选不能通过原选择接口采用: %v", err)
 	}
 	reserve(second, third, true)
 	finish(third, "<svg>采用封面</svg>")
@@ -142,5 +146,51 @@ func TestDramaProjectCoverLifecycle(t *testing.T) {
 	}
 	if state, err := repo.GetProjectCoverGeneration(ctx, scope); err != nil || state.Status != drama.CoverFailed || state.Error != "模型调用失败" || state.CoverID != third {
 		t.Fatalf("未保留原图或记录失败: %+v %v", state, err)
+	}
+	if history, err := repo.ListProjectCoverHistory(ctx, scope); err != nil || len(history) != 3 ||
+		history[0].Revision != third || !history[0].Current || history[1].Revision != second || history[1].Current || history[2].Revision != first {
+		t.Fatalf("未归档未采用或被更换的封面: %+v %v", history, err)
+	}
+	if _, err := repo.ListProjectCoverHistory(ctx, other); !errors.Is(err, drama.ErrNotFound) {
+		t.Fatalf("未限制其他用户读取历史: %v", err)
+	}
+	if _, err := repo.ApplyProjectCoverHistory(ctx, other, second); !errors.Is(err, drama.ErrNotFound) {
+		t.Fatalf("未限制其他用户采用历史封面: %v", err)
+	}
+	if state, err := repo.ApplyProjectCoverHistory(ctx, scope, second); err != nil || state.CoverID != second || state.Status != drama.CoverFailed {
+		t.Fatalf("恢复曾未采用的封面失败: %+v %v", state, err)
+	}
+	sixth, uploaded := uuid.NewString(), uuid.NewString()
+	reserve(fifth, sixth, true)
+	upload := drama.CoverImage{MIME: "image/png", Data: []byte("本地图片")}
+	if _, err := repo.SaveProjectCoverUpload(ctx, other, uploaded, upload); !errors.Is(err, drama.ErrNotFound) {
+		t.Fatalf("未限制其他用户上传: %v", err)
+	}
+	if state, err := repo.SaveProjectCoverUpload(ctx, scope, uploaded, upload); err != nil || state.CoverID != uploaded || state.JobID != sixth || state.Status != drama.CoverRunning {
+		t.Fatalf("上传应替换当前封面并保留生成任务: %+v %v", state, err)
+	}
+	if image, err := repo.ReadProjectCoverImage(ctx, scope, uploaded); err != nil || image.MIME != upload.MIME || string(image.Data) != string(upload.Data) {
+		t.Fatalf("上传图片未保留媒体类型: %+v %v", image, err)
+	}
+	if state := finish(sixth, "<svg>上传期间生成</svg>"); state.CoverID != uploaded || state.CandidateID != sixth {
+		t.Fatalf("后台生成覆盖了后来上传的封面: %+v", state)
+	}
+	if state, err := repo.ApplyProjectCoverHistory(ctx, scope, sixth); err != nil || state.CoverID != sixth || state.CandidateID != "" {
+		t.Fatalf("从历史采用当前候选时应结束待选择状态: %+v %v", state, err)
+	}
+	if history, err := repo.ListProjectCoverHistory(ctx, scope); err != nil || len(history) != 5 || history[1].Source != "upload" || history[1].Revision != uploaded {
+		t.Fatalf("历史未保存本地上传图片: %+v %v", history, err)
+	}
+	initialScope := scope
+	initialScope.ProjectID = uuid.NewString()
+	project.ID = initialScope.ProjectID
+	if _, err := repo.Create(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := repo.SaveProjectCoverUpload(ctx, initialScope, uploaded, upload); err != nil || state.CoverID != uploaded || state.Status != drama.CoverIdle || state.JobID != "" {
+		t.Fatalf("首次设置封面应允许直接上传且无生成任务: %+v %v", state, err)
+	}
+	if _, started, err := repo.ReserveProjectCoverGeneration(ctx, initialScope, "", uuid.NewString(), drama.CoverGenerationInput{ModelCode: "painter"}, time.Now().Add(time.Minute)); err != nil || !started {
+		t.Fatalf("先上传封面后无法发起首次生成: %v", err)
 	}
 }

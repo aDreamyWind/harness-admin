@@ -48,22 +48,26 @@ func (s *dramaVideoForwarderStub) DownloadVideo(context.Context, string) ([]byte
 }
 
 func TestDramaVideoEngineSubmitsReferencesAndLogsTaskQuery(t *testing.T) {
-	gateway, forwarder := &dramaVideoGatewayStub{}, &dramaVideoForwarderStub{}
+	t.Parallel()
+	gateway, forwarder := &dramaVideoGatewayStub{upstreamModelID: "wan2.7-r2v"}, &dramaVideoForwarderStub{}
 	engine := &dramaVideoEngine{gateway: gateway, forwarder: forwarder}
 	result, err := engine.GenerateSegmentVideo(context.Background(), drama.SegmentVideoRequest{
 		OrganizationID: "org", UserID: "user", VideoID: "job-1", ModelCode: "video", Prompt: "人物看向图1", AspectRatio: "9:16",
-		Duration: 4, ReferenceImages: []string{"data:image/png;base64,abc"}, ImageIDs: []string{"image1"},
+		Duration: 4, Resolution: drama.VideoResolution1080P, ReferenceImages: []string{"data:image/png;base64,abc"}, ImageIDs: []string{"image1"},
 	})
 	if err != nil || string(result) != "虚构视频" || forwarder.task != "fake-task" {
 		t.Fatal(string(result), err, forwarder.task)
 	}
-	for _, fragment := range []string{`"type":"reference_image"`, `"url":"data:image/png;base64,abc"`, `"duration":4`, `"ratio":"9:16"`} {
+	for _, fragment := range []string{`"type":"reference_image"`, `"url":"data:image/png;base64,abc"`, `"duration":4`, `"ratio":"9:16"`, `"resolution":"1080P"`} {
 		if !strings.Contains(forwarder.payload, fragment) {
 			t.Fatalf("请求缺少 %s：%s", fragment, forwarder.payload)
 		}
 	}
 	if len(gateway.records) != 2 || gateway.records[1].Operation != "video_task_query" || gateway.records[1].SegmentVideoID != "job-1" || !strings.Contains(string(gateway.records[0].RequestBody), "image-job:image1") || strings.Contains(string(gateway.records[0].RequestBody), "base64") {
 		t.Fatalf("调用记录不正确：%+v", gateway.records)
+	}
+	if !strings.Contains(string(gateway.records[0].RequestBody), `"resolution":"1080P"`) {
+		t.Fatalf("调用记录缺少所选清晰度：%s", gateway.records[0].RequestBody)
 	}
 }
 

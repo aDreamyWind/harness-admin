@@ -4,7 +4,7 @@ import { useViewport } from '@xyflow/react'
 import { Alert, Button, InputNumber, Select, Tooltip } from 'antd'
 import { useRef, type ReactNode } from 'react'
 
-import { listDramaCanvasGenerationModels, listDramaStyles, type DramaCanvasGenerationInput, type DramaCanvasGenerationJob, type DramaCanvasGenerationKind, type DramaCanvasImageResolution } from '../api/drama'
+import { dramaVideoResolutions, listDramaCanvasGenerationModels, listDramaStyles, type DramaCanvasGenerationInput, type DramaCanvasGenerationJob, type DramaCanvasGenerationKind, type DramaCanvasImageResolution, type DramaVideoResolution } from '../api/drama'
 import { DramaCanvasPromptEditor, canvasPromptParts, canvasPromptText, type CanvasPromptPart, type CanvasPromptRefChanges, type DramaCanvasPromptHandle } from './DramaCanvasPromptEditor'
 import type { DramaCanvasMentionOption } from './DramaCanvasReferencePicker'
 import { DramaStylePicker } from './DramaStylePicker'
@@ -17,7 +17,10 @@ export type CanvasGenerationReference = { id: string; title: string } & (
 type CanvasRatio = NonNullable<DramaCanvasGenerationInput['aspectRatio']>
 type CanvasStyle = { id: string; name: string }
 const ratios: CanvasRatio[] = ['16:9', '9:16', '1:1']
-export type CanvasMediaDraft = { prompt: CanvasPromptPart[]; ratio: CanvasRatio; modelCode?: string; seconds?: number; style?: CanvasStyle; resolution?: DramaCanvasImageResolution }
+export type CanvasMediaDraft = {
+  prompt: CanvasPromptPart[]; ratio: CanvasRatio; modelCode?: string; seconds?: number; style?: CanvasStyle
+  resolution?: DramaCanvasImageResolution; videoResolution?: DramaVideoResolution
+}
 
 export function DramaCanvasComposerAnchor({ node, above, children }: { node: CanvasGeometryNode; above?: boolean; children: ReactNode }) {
   const { x, y, zoom } = useViewport()
@@ -65,8 +68,10 @@ export function DramaCanvasMediaGeneration({ kind, content, draft, defaultStyleI
   const imageCount = images.filter((reference) => reference.url).length
   const compatible = available.filter((item) => imageCount >= item.minReferences && imageCount <= item.maxReferences)
   const model = available.find((item) => item.code === modelCode) ?? compatible.find((item) => item.code === job?.modelCode) ?? compatible[0] ?? available[0]
-  const resolutions: readonly DramaCanvasImageResolution[] = model?.resolutions?.length ? model.resolutions : ['1K']
+  const resolutions: readonly DramaCanvasImageResolution[] = model?.kind === 'image' && model.resolutions?.length ? model.resolutions : ['1K']
   const resolution = draft.resolution && resolutions.includes(draft.resolution) ? draft.resolution : resolutions[0]
+  const videoResolutions = dramaVideoResolutions(model)
+  const videoResolution = draft.videoResolution && videoResolutions.includes(draft.videoResolution) ? draft.videoResolution : '720P'
   const sizes = ratios.flatMap((aspectRatio) => resolutions.map((quality) => ({
     value: `${aspectRatio}|${quality}`, label: `${aspectRatio} · ${quality}`, aspectRatio, quality,
   })))
@@ -95,7 +100,10 @@ export function DramaCanvasMediaGeneration({ kind, content, draft, defaultStyleI
     <footer className="drama-canvas-composer-toolbar">
       <DramaCanvasComposerSources disabled={running || saving} uploading={uploading} onUpload={onUploadReference} onMention={() => mention.current?.open()} />
       <DramaStylePicker value={style?.id} valueLabel={style?.name} onChange={({ id, name: label }) => onDraftChange({ style: { id, name: label } })} disabled={running} />
-      <Select className="drama-canvas-composer-model" size="small" aria-label={`${title}生成模型`} value={model?.code} onChange={(code) => onDraftChange({ modelCode: code })} disabled={running}
+      <Select className="drama-canvas-composer-model" size="small" aria-label={`${title}生成模型`} value={model?.code} onChange={(code) => {
+        const nextModel = available.find((item) => item.code === code)
+        onDraftChange({ modelCode: code, videoResolution: kind === 'video' && dramaVideoResolutions(nextModel).includes(videoResolution) ? videoResolution : undefined })
+      }} disabled={running}
         loading={models.isPending} placeholder="选择模型" popupMatchSelectWidth={false} options={available.map((item) => ({ value: item.code, label: item.name }))} />
       {kind === 'image' ? <Select className="drama-canvas-composer-size" size="small" aria-label="图片尺寸" value={`${ratio}|${resolution}`} disabled={running}
         options={sizes} onChange={(_, option) => { if (option && !Array.isArray(option)) onDraftChange({ ratio: option.aspectRatio, resolution: option.quality }) }} />
@@ -104,12 +112,15 @@ export function DramaCanvasMediaGeneration({ kind, content, draft, defaultStyleI
             options={ratios.map((value) => ({ value, label: value }))} />
           {duration !== undefined && <InputNumber size="small" aria-label="视频时长（秒）" disabled={running}
             min={model?.minDuration} max={model?.maxDuration} precision={0} value={duration} onChange={(value) => onDraftChange({ seconds: value ?? undefined })} suffix="秒" />}
+          <Select className="drama-canvas-composer-video-resolution" size="small" aria-label="视频清晰度" value={videoResolution}
+            disabled={running || videoResolutions.length === 1} options={videoResolutions.map((value) => ({ value, label: value }))}
+            onChange={(value) => onDraftChange({ videoResolution: value })} />
         </div>}
       <Button className="drama-canvas-composer-generate" size="small" type="primary" icon={<ThunderboltOutlined />} loading={running}
         disabled={saving || uploading || !model || !!referenceWarning || (!promptText && !references.length)}
         onClick={() => { if (model) onGenerate({
           modelCode: model.code, prompt: promptText, aspectRatio: ratio, styleId: style?.id || undefined,
-          ...(kind === 'video' ? { duration } : { resolution }),
+          ...(kind === 'video' ? { duration, resolution: videoResolution } : { resolution }),
         }) }}>{running ? '生成中' : `生成${title}`}</Button>
     </footer>
     {models.isError && <Alert type="error" title="读取生成模型失败" action={<Button size="small" onClick={() => void models.refetch()}>重试</Button>} />}

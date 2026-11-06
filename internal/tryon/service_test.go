@@ -11,13 +11,35 @@ import (
 
 func TestTryOnOuterwearPreservesLayersAndHem(t *testing.T) {
 	prompt := tryonPrompt(Person2D, "外套", false)
-	for _, constraint := range []string{"套在图 1 原有上衣外面", "保留原内搭", "下摆与袖口的相对高度以图 2 为准", "保持图 1 的姿势"} {
+	for _, constraint := range []string{"套在图 1 原有上衣外面", "保留原内搭", "下摆与袖口的相对高度以图 2 为准", "保持图 1 的姿势", "沿用图 1 的原画风绘制换上的服装"} {
 		if !strings.Contains(prompt, constraint) {
 			t.Errorf("外套试穿缺少约束 %q", constraint)
 		}
 	}
 	if prompt := tryonPrompt(PersonReal, "连衣裙", true); strings.Contains(prompt, "套在图 1 原有上衣外面") || !strings.Contains(prompt, "图 3 只提供动作") {
 		t.Errorf("连衣裙试穿混用了外套或姿势约束")
+	}
+}
+
+func TestAnimePersonPromptsRespectReferenceAndDescription(t *testing.T) {
+	operation, reference, err := assetPreviewPrompt(AssetPreviewInput{Kind: Person2D})
+	if err != nil || operation != "person_reconstruct" {
+		t.Fatalf("动漫参考图未进入人物重建流程：%q，%v", operation, err)
+	}
+	for _, phrase := range []string{"参考图已有明确的动漫画风时", "保留原角色设计、服饰与配饰特征", "精细的现代日系动漫画风"} {
+		if !strings.Contains(reference, phrase) {
+			t.Errorf("参考图提示缺少 %q", phrase)
+		}
+	}
+	description := "复古手绘动画风，红色短发，穿蓝色 Cosplay 制服，戴金色发饰"
+	text := personGenerationPrompt(Person2D, description)
+	for _, phrase := range []string{"没有指定画风时", "精细的现代日系动漫画风", "未指定服装时", description} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("文字生成人物提示缺少 %q", phrase)
+		}
+	}
+	if real := personGenerationPrompt(PersonReal, "黑色短发"); !strings.Contains(real, "真实摄影风格") || strings.Contains(real, "动漫") {
+		t.Error("真人生图提示不应使用动漫画风")
 	}
 }
 

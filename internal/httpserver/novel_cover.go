@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"io"
 	"net/http"
 	"net/url"
 
@@ -19,8 +18,29 @@ func registerNovelCoverRoutes(group *gin.RouterGroup, deps Dependencies) {
 		image, err := deps.Novel.CoverContent(c.Request.Context(), novelOwner(c), c.Param("id"), c.Query("v"))
 		writeNovelCoverImage(c, deps, image, err)
 	})
+	group.GET("/projects/:id/cover/history", func(c *gin.Context) {
+		c.Header("Cache-Control", "private, no-store")
+		id := c.Param("id")
+		items, err := deps.Novel.ListCoverHistory(c.Request.Context(), novelOwner(c), id)
+		for i := range items {
+			items[i].URL = novelCoverImageURL(id, items[i].Revision)
+		}
+		writeNovelResponse(c, deps, http.StatusOK, items, err)
+	})
+	group.POST("/projects/:id/cover/history/apply", requireCSRF(deps), func(c *gin.Context) {
+		c.Header("Cache-Control", "private, no-store")
+		var input struct {
+			Revision string `json:"revision"`
+		}
+		if !bindNovelInput(c, &input) {
+			return
+		}
+		id := c.Param("id")
+		cover, err := deps.Novel.ApplyCoverHistory(c.Request.Context(), novelOwner(c), id, input.Revision)
+		writeNovelResponse(c, deps, http.StatusOK, novelCoverWithURL(id, &cover), err)
+	})
 	group.POST("/projects/:id/cover", requireCSRF(deps), func(c *gin.Context) {
-		data, err := readNovelCoverUpload(c)
+		data, err := readCoverUpload(c)
 		if err != nil {
 			writeNovelResponse(c, deps, http.StatusOK, nil, err)
 			return
@@ -114,31 +134,15 @@ func writeNovelCoverImage(c *gin.Context, deps Dependencies, image novel.CoverIm
 	c.Data(http.StatusOK, image.MIME, image.Data)
 }
 
-func readNovelCoverUpload(c *gin.Context) ([]byte, error) {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, novel.MaxCoverBytes+64*1024)
-	reader, err := c.Request.MultipartReader()
-	if err != nil {
-		return nil, novel.ErrCoverImage
-	}
-	part, err := reader.NextPart()
-	if err != nil || part.FormName() != "file" || part.FileName() == "" {
-		return nil, novel.ErrCoverImage
-	}
-	data, err := io.ReadAll(io.LimitReader(part, novel.MaxCoverBytes+1))
-	if err != nil || len(data) == 0 || len(data) > novel.MaxCoverBytes {
-		return nil, novel.ErrCoverImage
-	}
-	if _, err := reader.NextPart(); err != io.EOF {
-		return nil, novel.ErrCoverImage
-	}
-	return data, nil
-}
-
 func novelCoverWithURL(projectID string, cover *novel.Cover) *novel.Cover {
 	if cover == nil || cover.Revision == "" {
 		return nil
 	}
 	result := *cover
-	result.URL = "/api/v1/ai-novel/projects/" + url.PathEscape(projectID) + "/cover?v=" + url.QueryEscape(cover.Revision)
+	result.URL = novelCoverImageURL(projectID, cover.Revision)
 	return &result
+}
+
+func novelCoverImageURL(projectID, revision string) string {
+	return "/api/v1/ai-novel/projects/" + url.PathEscape(projectID) + "/cover?v=" + url.QueryEscape(revision)
 }

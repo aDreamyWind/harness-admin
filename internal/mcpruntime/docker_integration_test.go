@@ -87,6 +87,20 @@ func TestDockerStdioMCP(t *testing.T) {
 	if err := runtime.Start(ctx, service); err != nil {
 		t.Fatal(err)
 	}
+	labels := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .Config.Labels}}", service.ContainerName)
+	output, err := labels.CombinedOutput()
+	if err != nil {
+		t.Fatalf("读取容器标签失败: %v %s", err, output)
+	}
+	var containerLabels map[string]string
+	if err := json.Unmarshal(output, &containerLabels); err != nil {
+		t.Fatalf("解析容器标签失败: %v", err)
+	}
+	if containerLabels["com.docker.compose.project"] != "hadmin-mcp" ||
+		containerLabels["com.docker.compose.service"] != service.ContainerName ||
+		containerLabels["com.harness-admin.service-id"] != service.ID {
+		t.Fatalf("容器分组或归属标签错误: %v", containerLabels)
+	}
 	status, err := runtime.Inspect(ctx, service)
 	if err != nil || !status.Running {
 		t.Fatalf("容器未运行: %+v %v", status, err)

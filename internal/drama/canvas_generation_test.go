@@ -51,7 +51,7 @@ func TestCanvasGenerationPlansDirectInputsInLinkOrder(t *testing.T) {
 	}
 	wantPrompt := "黄昏场景。\n\n参考文案「第二段」\n镜头对准灯笼。\n\n参考文案「第一段」\n从巷口走出。"
 	wantPrompt += "\n\n参考图顺序：\n图1（Image 1）：封面\n图2（Image 2）：角色"
-	if request.Prompt != wantPrompt || request.Kind != "video" || request.ModelCode != "test-video" || request.AspectRatio != "16:9" || request.Duration != 5 {
+	if request.Prompt != wantPrompt || request.Kind != "video" || request.ModelCode != "test-video" || request.AspectRatio != "16:9" || request.Duration != 5 || request.Resolution != VideoResolution720P {
 		t.Fatalf("生成参数错误：%+v", request)
 	}
 	wantRefs := []canvasGenerationSource{
@@ -61,8 +61,20 @@ func TestCanvasGenerationPlansDirectInputsInLinkOrder(t *testing.T) {
 	if !reflect.DeepEqual(refs, wantRefs) {
 		t.Fatalf("参考图错误：%+v", refs)
 	}
-	models := []CanvasGenerationModel{{Code: "test-video", Kind: "video", MinReferences: 1, MaxReferences: 2, MinDuration: 2, MaxDuration: 15}}
+	models := []CanvasGenerationModel{{Code: "test-video", Kind: "video", MinReferences: 1, MaxReferences: 2, MinDuration: 2, MaxDuration: 15, Resolutions: []string{VideoResolution720P}}}
 	if err := validateCanvasGenerationModel(models, request, len(refs)); err != nil {
+		t.Fatal(err)
+	}
+	input.Resolution = VideoResolution1080P
+	hdRequest, _, err := planCanvasGeneration(canvas, "video", input)
+	if err != nil || hdRequest.Resolution != VideoResolution1080P {
+		t.Fatalf("视频节点应保留 1080P：%+v，%v", hdRequest, err)
+	}
+	if err := validateCanvasGenerationModel(models, hdRequest, len(refs)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("仅支持 720P 的模型应拒绝 1080P：%v", err)
+	}
+	models[0].Resolutions = append(models[0].Resolutions, VideoResolution1080P)
+	if err := validateCanvasGenerationModel(models, hdRequest, len(refs)); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateCanvasGenerationModel(models, request, 3); !errors.Is(err, ErrInvalidInput) {

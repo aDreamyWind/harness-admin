@@ -159,8 +159,11 @@ func (d *Docker) Start(ctx context.Context, service mcpadmin.ServiceRecord) erro
 	} else if !isMissingContainer(err) {
 		return err
 	}
+	// Docker Desktop 按 Compose 项目标签折叠显示，后台仍按容器名管理单个服务。
 	_, err = run(ctx, "run", "-d", "--name", service.ContainerName,
 		"--label", "com.harness-admin.service-id="+service.ID,
+		"--label", "com.docker.compose.project=hadmin-mcp",
+		"--label", "com.docker.compose.service="+service.ContainerName,
 		"--network", "none", "--read-only", "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges", "--pids-limit", "64", "--memory", "256m", "--cpus", "1",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=32m", service.ImageRef, "sleep", "infinity")

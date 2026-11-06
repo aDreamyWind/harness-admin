@@ -43,16 +43,8 @@ function hasActiveTask(project: DramaProject) {
 }
 
 function DramaProjectCard({ project }: { project: DramaProject }) {
-  const coverRunning = project.coverGenerationStatus === 'running'
-  let status = phaseNames[project.phase] ?? '解析中'
-  if (project.status === 'ready') status = '概览已完成'
-  if (project.status === 'failed') status = '解析失败'
-  if (coverRunning) status = '封面生成中'
   return <Link className="drama-project-card" to={`/ai-apps/drama/projects/${project.id}`}>
-    <div className="drama-project-art">
-      <DramaProjectPoster title={project.title} url={project.coverUrl} lazy />
-      <span className="drama-project-status" data-state={coverRunning ? 'running' : project.status}>{status}</span>
-    </div>
+    <DramaProjectPoster title={project.title} url={project.coverUrl} lazy />
     <div className="drama-project-meta">
       <h3 title={project.title}>{project.title}</h3>
       <div className="drama-project-foot">

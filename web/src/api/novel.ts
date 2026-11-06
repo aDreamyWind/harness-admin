@@ -1,4 +1,5 @@
 import { csrfHeaders, request } from './client'
+import type { CoverHistoryItem } from './cover'
 
 export interface NovelCover {
   url: string
@@ -143,3 +144,9 @@ export const startNovelCoverGeneration = (id: string, input: NovelCoverGeneratio
 
 export const applyNovelCover = (id: string, token: string) =>
   post<NovelCover>(`/projects/${encodeURIComponent(id)}/cover/apply`, { token })
+
+export const listNovelCoverHistory = (id: string, signal?: AbortSignal) =>
+  request<CoverHistoryItem[]>(`${base}/projects/${encodeURIComponent(id)}/cover/history`, { signal })
+
+export const applyNovelCoverHistory = (id: string, revision: string) =>
+  post<NovelCover>(`/projects/${encodeURIComponent(id)}/cover/history/apply`, { revision })

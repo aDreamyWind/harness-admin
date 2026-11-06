@@ -6,12 +6,14 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 type memoryRepository struct {
-	owner      Owner
-	project    Project
-	coverImage CoverImage
+	owner        Owner
+	project      Project
+	coverImages  map[string]CoverImage
+	coverHistory []CoverHistoryItem
 }
 
 func (r *memoryRepository) List(_ context.Context, owner Owner) ([]Book, error) {
@@ -53,26 +55,74 @@ func (r *memoryRepository) GetCoverRevision(_ context.Context, owner Owner, id s
 }
 
 func (r *memoryRepository) GetCover(_ context.Context, owner Owner, id, revision string) (CoverImage, error) {
-	if r.owner != owner || r.project.ID != id || r.project.Cover == nil ||
-		(revision != "" && revision != r.project.Cover.Revision) {
+	if r.owner != owner || r.project.ID != id {
 		return CoverImage{}, ErrNotFound
 	}
-	return r.coverImage, nil
+	if revision == "" {
+		revision = coverRevision(r.project)
+	}
+	image, ok := r.coverImages[revision]
+	if !ok {
+		return CoverImage{}, ErrNotFound
+	}
+	return image, nil
 }
 
-func (r *memoryRepository) SaveCover(_ context.Context, owner Owner, id, previousRevision string, cover Cover, image CoverImage) (Cover, error) {
+func (r *memoryRepository) SaveCover(ctx context.Context, owner Owner, id, previousRevision string, cover Cover, image CoverImage) (Cover, error) {
 	if r.owner != owner || r.project.ID != id {
 		return Cover{}, ErrNotFound
 	}
-	currentRevision := ""
-	if r.project.Cover != nil {
-		currentRevision = r.project.Cover.Revision
-	}
-	if currentRevision != previousRevision {
+	if coverRevision(r.project) != previousRevision {
 		return Cover{}, ErrConflict
 	}
-	r.project.Cover, r.coverImage = &cover, image
-	return cover, nil
+	if err := r.SaveCoverVersion(ctx, owner, id, cover, image); err != nil {
+		return Cover{}, err
+	}
+	return r.SelectCoverVersion(ctx, owner, id, cover.Revision)
+}
+
+func (r *memoryRepository) SaveCoverVersion(_ context.Context, owner Owner, id string, cover Cover, image CoverImage) error {
+	if r.owner != owner || r.project.ID != id {
+		return ErrNotFound
+	}
+	if r.coverImages == nil {
+		r.coverImages = make(map[string]CoverImage)
+	}
+	if _, exists := r.coverImages[cover.Revision]; !exists {
+		r.coverImages[cover.Revision] = image
+		r.coverHistory = append(r.coverHistory, CoverHistoryItem{Revision: cover.Revision, Source: cover.Source, CreatedAt: time.Now()})
+	}
+	return nil
+}
+
+func (r *memoryRepository) ListCoverHistory(_ context.Context, owner Owner, id string) ([]CoverHistoryItem, error) {
+	if r.owner != owner || r.project.ID != id {
+		return nil, ErrNotFound
+	}
+	items := make([]CoverHistoryItem, 0, len(r.coverHistory))
+	for i := len(r.coverHistory) - 1; i >= 0; i-- {
+		item := r.coverHistory[i]
+		item.Current = item.Revision == coverRevision(r.project)
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (r *memoryRepository) SelectCoverVersion(_ context.Context, owner Owner, id, revision string) (Cover, error) {
+	if r.owner != owner || r.project.ID != id {
+		return Cover{}, ErrNotFound
+	}
+	if coverRevision(r.project) == revision {
+		return *r.project.Cover, nil
+	}
+	for _, item := range r.coverHistory {
+		if item.Revision == revision {
+			cover := Cover{Revision: revision, Source: item.Source, UpdatedAt: time.Now()}
+			r.project.Cover = &cover
+			return cover, nil
+		}
+	}
+	return Cover{}, ErrNotFound
 }
 
 type testWriter struct {

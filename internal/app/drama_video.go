@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -41,12 +42,27 @@ type dramaVideoOutput struct {
 	Message string `json:"message"`
 }
 
-func isWan27TextVideo(modelID string) bool {
+const (
+	wan27TextVideo      = "wan27_text"
+	wan27ReferenceVideo = "wan27_reference"
+	wan3Video           = "wan3"
+)
+
+func dramaVideoModel(providerKind, modelID string) (mode string, resolutions []string) {
+	if providerKind != "aliyun_bailian" {
+		return "", nil
+	}
 	switch modelID {
 	case "wan2.7-t2v", "wan2.7-t2v-2026-06-12", "wan2.7-t2v-2026-04-25":
-		return true
+		mode = wan27TextVideo
+	case "wan2.7-r2v", "wan2.7-r2v-2026-06-12":
+		mode = wan27ReferenceVideo
+	case "wan3.0-video", "wan3.0-video-prime":
+		mode = wan3Video
+	default:
+		return "", nil
 	}
-	return false
+	return mode, []string{drama.VideoResolution720P, drama.VideoResolution1080P}
 }
 
 func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.SegmentVideoRequest) ([]byte, error) {
@@ -61,6 +77,10 @@ func (w *dramaVideoEngine) GenerateSegmentVideo(ctx context.Context, in drama.Se
 }
 
 func (w *dramaVideoEngine) generateVideo(ctx context.Context, in drama.SegmentVideoRequest, loggedImages []string, canvas bool) ([]byte, error) {
+	resolution, err := drama.NormalizeVideoResolution(in.Resolution)
+	if err != nil {
+		return nil, &drama.SegmentVideoFailure{Message: "视频清晰度可选 720P 或 1080P", Cause: err}
+	}
 	media := make([]map[string]string, 0, len(in.ReferenceImages))
 	for _, image := range in.ReferenceImages {
 		media = append(media, map[string]string{"type": "reference_image", "url": image})
@@ -69,9 +89,6 @@ func (w *dramaVideoEngine) generateVideo(ctx context.Context, in drama.SegmentVi
 	if len(media) > 0 {
 		input["media"] = media
 	}
-	payload := map[string]any{"model": in.ModelCode, "input": input, "parameters": map[string]any{
-		"ratio": in.AspectRatio, "duration": in.Duration, "resolution": "720P", "prompt_extend": false, "audio": true,
-	}}
 	// 先按同一用户和模型校验网关权限，再编码完整媒体请求。
 	body, err := json.Marshal(map[string]any{"model": in.ModelCode, "input": map[string]string{"prompt": in.Prompt}})
 	if err != nil {
@@ -86,24 +103,28 @@ func (w *dramaVideoEngine) generateVideo(ctx context.Context, in drama.SegmentVi
 		return nil, &drama.SegmentVideoFailure{Message: message, Cause: err}
 	}
 	route := prepared.Route
-	referenceVideo := route.UpstreamModelID == "wan2.7-r2v" || route.UpstreamModelID == "wan2.7-r2v-2026-06-12"
-	textVideo := canvas && isWan27TextVideo(route.UpstreamModelID)
-	wan3 := route.UpstreamModelID == "wan3.0-video" || route.UpstreamModelID == "wan3.0-video-prime"
-	if route.ProviderKind != "aliyun_bailian" || (!referenceVideo && !textVideo && !wan3) {
+	mode, resolutions := dramaVideoModel(route.ProviderKind, route.UpstreamModelID)
+	if mode == "" || (mode == wan27TextVideo && !canvas) {
 		message := "请在漫剧设置中选择万相 2.7 参考生视频（wan2.7-r2v）或万相 3.0"
 		if canvas {
 			message = "请选择万相 2.7 文生视频、万相 2.7 参考生视频或万相 3.0"
 		}
 		return nil, &drama.SegmentVideoFailure{Message: message, Cause: drama.ErrModelUnavailable}
 	}
-	if referenceVideo || textVideo {
+	if !slices.Contains(resolutions, resolution) {
+		return nil, &drama.SegmentVideoFailure{Message: "当前模型不支持所选视频清晰度", Cause: drama.ErrInvalidInput}
+	}
+	parameters := map[string]any{"ratio": in.AspectRatio, "duration": in.Duration, "resolution": resolution, "prompt_extend": false}
+	if mode == wan3Video {
+		parameters["audio"] = true
+	} else {
 		var detail string
 		switch {
 		case in.Duration < 2 || in.Duration > 15:
 			detail = fmt.Sprintf("当前片段 %d 秒，万相 2.7 支持 2–15 秒，请缩短或拆成多个片段", in.Duration)
-		case textVideo && len(media) != 0:
+		case mode == wan27TextVideo && len(media) != 0:
 			detail = "万相 2.7 文生视频只支持文字，请移除参考图连线或更换模型"
-		case referenceVideo && (len(media) < 1 || len(media) > 5):
+		case mode == wan27ReferenceVideo && (len(media) < 1 || len(media) > 5):
 			detail = fmt.Sprintf("当前片段有 %d 张参考图，万相 2.7 需要 1–5 张，请调整引用", len(media))
 		case utf8.RuneCountInString(in.Prompt) > 5000:
 			detail = fmt.Sprintf("当前视频提示词 %d 字，万相 2.7 最多支持 5000 字，请精简分镜描述", utf8.RuneCountInString(in.Prompt))
@@ -114,9 +135,8 @@ func (w *dramaVideoEngine) generateVideo(ctx context.Context, in drama.SegmentVi
 		if detail != "" {
 			return nil, &drama.SegmentVideoFailure{Message: detail, Cause: drama.ErrInvalidInput}
 		}
-		delete(payload["parameters"].(map[string]any), "audio")
 	}
-	payload["model"] = route.UpstreamModelID
+	payload := map[string]any{"model": route.UpstreamModelID, "input": input, "parameters": parameters}
 	providerBody, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err

@@ -248,11 +248,17 @@ func planCanvasGeneration(canvas Canvas, node string, in CanvasGenerationInput) 
 		(in.StyleID != "" && !validCanvasText(in.StyleID, 80)) {
 		return request, nil, ErrInvalidInput
 	}
-	if request.Resolution != "" && (request.Kind != "image" || (request.Resolution != CanvasResolution1K && request.Resolution != CanvasResolution2K)) {
-		return request, nil, fmt.Errorf("%w：分辨率只适用于图片节点，可选 1K 或 2K", ErrInvalidInput)
-	}
-	if request.Kind == "video" && request.Duration == 0 {
-		request.Duration = 5
+	if request.Kind == "video" {
+		resolution, err := NormalizeVideoResolution(request.Resolution)
+		if err != nil {
+			return request, nil, err
+		}
+		request.Resolution = resolution
+		if request.Duration == 0 {
+			request.Duration = 5
+		}
+	} else if request.Resolution != "" && request.Resolution != CanvasResolution1K && request.Resolution != CanvasResolution2K {
+		return request, nil, fmt.Errorf("%w：图片分辨率可选 1K 或 2K", ErrInvalidInput)
 	}
 	texts, sources := canvasGenerationSources(canvas, node)
 	var parts []string

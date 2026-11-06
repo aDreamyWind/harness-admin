@@ -4,28 +4,32 @@ import { Alert, Button, Form, Image, Input, Modal, Select, Space, Tabs, Upload }
 import { useEffect, useState } from 'react'
 
 import { ApiError } from '../api/client'
-import { applyNovelCover, getNovelCoverGeneration, listNovelCoverModels, startNovelCoverGeneration, uploadNovelCover,
+import { applyNovelCover, applyNovelCoverHistory, getNovelCoverGeneration, listNovelCoverHistory, listNovelCoverModels, startNovelCoverGeneration, uploadNovelCover,
   type NovelBook, type NovelCoverGeneration, type NovelCoverGenerationInput, type NovelProject } from '../api/novel'
 import { useAuth } from '../auth/AuthContext'
+import { CoverHistoryGallery } from './CoverHistoryGallery'
 import { DramaStylePicker } from './DramaStylePicker'
+import { coverFileTypes, useCoverUpload } from './useCoverUpload'
 import './novel-cover-editor.css'
 
-const maxCoverBytes = 10 * 1024 * 1024
-const coverFileTypes = 'image/jpeg,image/png,image/webp'
-type CoverChange = { file: File } | { token: string }
+type CoverChange = { file: File } | { token: string } | { revision: string }
 
 export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: () => void }) {
   const { user } = useAuth()
   const cache = useQueryClient()
   const scope = [user?.organizationId, user?.id]
   const generationKey = ['novel-cover-generation', ...scope, book.id]
+  const historyKey = ['novel-cover-history', ...scope, book.id]
   const [tab, setTab] = useState('ai')
   const [draft, setDraft] = useState<Partial<NovelCoverGenerationInput>>({})
   const [rejectedToken, setRejectedToken] = useState<string>()
   const [candidateImage, setCandidateImage] = useState<{ token: string; status: 'loaded' | 'failed' }>()
-  const [picked, setPicked] = useState<{ file: File; url: string }>()
-  const [fileError, setFileError] = useState('')
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const { picked, fileError, pickFile, clearFile } = useCoverUpload()
   const models = useQuery({ queryKey: ['novel-cover-models', ...scope], queryFn: listNovelCoverModels, enabled: tab === 'ai' })
+  const history = useQuery({
+    queryKey: historyKey, queryFn: ({ signal }) => listNovelCoverHistory(book.id, signal), enabled: tab === 'history',
+  })
   const coverGeneration = useQuery({
     queryKey: generationKey,
     queryFn: ({ signal }) => getNovelCoverGeneration(book.id, signal),
@@ -50,9 +54,11 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
     onError: () => { void cache.invalidateQueries({ queryKey: generationKey }) },
   })
   const change = useMutation({
-    mutationFn: (input: CoverChange) => 'file' in input
-      ? uploadNovelCover(book.id, input.file)
-      : applyNovelCover(book.id, input.token),
+    mutationFn: (input: CoverChange) => {
+      if ('file' in input) return uploadNovelCover(book.id, input.file)
+      if ('revision' in input) return applyNovelCoverHistory(book.id, input.revision)
+      return applyNovelCover(book.id, input.token)
+    },
     onSuccess: async (cover) => {
       const listKey = ['novel-books', ...scope]
       const projectKey = ['novel-project', ...scope, book.id]
@@ -65,7 +71,8 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
       cache.setQueryData<NovelProject>(projectKey, (project) => project && { ...project, cover })
       cache.setQueryData<NovelCoverGeneration>(generationKey, (current) => current && { ...current, preview: undefined })
       void cache.invalidateQueries({ queryKey: generationKey })
-      setPicked(undefined)
+      void cache.invalidateQueries({ queryKey: historyKey })
+      clearFile()
     },
     onError: (error, input) => {
       if (!(error instanceof ApiError)) return
@@ -83,23 +90,11 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
   const busy = generating || change.isPending
   const imageStatus = candidateImage?.token === candidate?.token ? candidateImage?.status : undefined
 
-  useEffect(() => () => { if (picked) URL.revokeObjectURL(picked.url) }, [picked])
-
-  function pickFile(file: File) {
-    change.reset()
-    setPicked(undefined)
-    if (file.size === 0 || file.size > maxCoverBytes) {
-      setFileError('请选择不超过 10 MB 的图片。')
-      return Upload.LIST_IGNORE
+  useEffect(() => {
+    if (job?.status === 'succeeded') {
+      void cache.invalidateQueries({ queryKey: ['novel-cover-history', user?.organizationId, user?.id, book.id] })
     }
-    if (file.type && !coverFileTypes.split(',').includes(file.type)) {
-      setFileError('请选择 JPG、PNG 或 WebP 图片。')
-      return Upload.LIST_IGNORE
-    }
-    setFileError('')
-    setPicked({ file, url: URL.createObjectURL(file) })
-    return Upload.LIST_IGNORE
-  }
+  }, [job?.status, job?.jobId, cache, user?.organizationId, user?.id, book.id])
 
   function generatePreview() {
     if (!activeModel || !job || busy) return
@@ -119,13 +114,15 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
   const error = change.error?.message ?? (tab === 'ai' ? (generating ? undefined : generation.error?.message) ?? imageError : undefined)
 
   return (
-    <Modal title={`设置封面 · ${book.title}`} open footer={null} onCancel={() => { if (!change.isPending) onClose() }} width={shownCandidate ? 820 : 620}
-      closable={!change.isPending} keyboard={!change.isPending} mask={{ closable: !change.isPending }}>
-      <div className={`novel-cover-editor${shownCandidate ? ' novel-cover-editor--comparison' : ''}`}>
-        <div className="novel-cover-previews">
+    <Modal title={`设置封面 · ${book.title}`} open centered footer={null} width={shownCandidate ? 940 : 820}
+      onCancel={() => { if (!change.isPending && !previewOpen) onClose() }} closable={!change.isPending}
+      keyboard={!change.isPending && !previewOpen} focusable={{ trap: !previewOpen }} mask={{ closable: !change.isPending && !previewOpen }}>
+      <div className={`novel-cover-editor${shownCandidate ? ' novel-cover-editor--comparison' : ''}${tab === 'history' ? ' novel-cover-editor--history' : ''}`}>
+        {tab !== 'history' && <div className="novel-cover-previews">
           <figure className="novel-cover-preview-item">
             <div className="novel-cover-preview">
-              {preview ? <img src={preview} alt={tab === 'upload' && picked ? '待上传封面预览' : '当前封面'} />
+              {preview ? <Image src={preview} alt={tab === 'upload' && picked ? '待上传封面预览' : '当前封面'}
+                preview={{ onOpenChange: setPreviewOpen }} />
                 : <span><PictureOutlined aria-hidden="true" /> 暂无封面</span>}
             </div>
             {shownCandidate && <figcaption>当前封面</figcaption>}
@@ -138,12 +135,12 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
                 }
               }}>
               <Image key={shownCandidate.token} src={shownCandidate.previewUrl} alt="候选封面预览"
-                preview={imageStatus === 'loaded'}
+                preview={imageStatus === 'loaded' ? { onOpenChange: setPreviewOpen } : false}
                 onError={() => setCandidateImage({ token: shownCandidate.token, status: 'failed' })} />
             </div>
             <figcaption>{generating || job?.status === 'failed' ? '上一次预览' : '候选封面'}</figcaption>
           </figure>}
-        </div>
+        </div>}
         <Tabs activeKey={tab} onChange={(key) => {
           change.reset()
           setCandidateImage(undefined)
@@ -197,8 +194,8 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
             </Space>
           </div> },
           { key: 'upload', label: '自己上传', disabled: change.isPending && tab !== 'upload', children: <div className="novel-cover-fields">
-            <p>支持 JPG、PNG 和 WebP，最大 10 MB，边长不超过 4096 像素。建议使用 2:3 的竖图。</p>
-            <Upload accept={coverFileTypes} beforeUpload={pickFile} disabled={change.isPending} showUploadList={false}>
+            <p>支持 JPG、PNG 和 WebP，最大 10 MiB，边长不超过 4096 像素。建议使用 2:3 的竖图。</p>
+            <Upload accept={coverFileTypes} beforeUpload={(file) => { change.reset(); return pickFile(file) }} disabled={change.isPending} showUploadList={false}>
               <Button icon={<UploadOutlined />} disabled={change.isPending}>选择图片</Button>
             </Upload>
             {picked && <p className="novel-cover-filename">{picked.file.name}</p>}
@@ -207,6 +204,10 @@ export function NovelCoverEditor({ book, onClose }: { book: NovelBook; onClose: 
             <Button type="primary" loading={change.isPending} disabled={!picked || generating}
               onClick={() => picked && change.mutate({ file: picked.file })}>上传并设为封面</Button>
           </div> },
+          { key: 'history', label: '历史封面', disabled: change.isPending && tab !== 'history', children: <CoverHistoryGallery
+            items={history.data} loading={history.isPending} error={history.isError} disabled={busy}
+            applying={change.isPending && change.variables && 'revision' in change.variables ? change.variables.revision : undefined}
+            onRetry={() => void history.refetch()} onApply={(revision) => change.mutate({ revision })} onPreviewChange={setPreviewOpen} /> },
         ]} />
       </div>
       {error && <Alert type="error" showIcon title={error} />}

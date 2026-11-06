@@ -325,7 +325,7 @@ func TestTryOnHTTPFlow(t *testing.T) {
 	if privateCount != 3 || pose.Kind != tryon.Pose {
 		t.Fatalf("未找到已保存的三种素材: %#v", assets)
 	}
-	if len(builtin[tryon.Person2D]) != 2 || len(builtin[tryon.PersonReal]) != 2 || len(builtin[tryon.Garment]) != 3 || len(builtin[tryon.Pose]) < 2 {
+	if len(builtin[tryon.Person2D]) != 6 || len(builtin[tryon.PersonReal]) != 6 || len(builtin[tryon.Garment]) != 3 || len(builtin[tryon.Pose]) < 2 {
 		t.Fatalf("试衣样例素材未覆盖人物、衣物和姿态库: %#v", builtin)
 	}
 	for id, retired := range legacyRetired {

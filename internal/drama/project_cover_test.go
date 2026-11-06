@@ -1,30 +1,40 @@
 package drama
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"harness-admin/internal/coverimage"
 )
 
 type coverJobStub struct {
 	CoverRepository
-	state   CoverGeneration
-	result  chan CoverImage
-	message chan string
+	state    CoverGeneration
+	result   chan CoverImage
+	message  chan string
+	uploaded CoverImage
 }
 
 func (r *coverJobStub) GetProjectCoverGeneration(context.Context, CoverScope) (CoverGeneration, error) {
 	return r.state, nil
 }
 
-func (r *coverJobStub) ReserveProjectCoverGeneration(_ context.Context, _ CoverScope, _, id, model string, _ time.Time) (CoverGeneration, bool, error) {
-	r.state = CoverGeneration{JobID: id, ModelCode: model, Status: CoverRunning}
+func (r *coverJobStub) ReserveProjectCoverGeneration(_ context.Context, _ CoverScope, _, id string, in CoverGenerationInput, _ time.Time) (CoverGeneration, bool, error) {
+	r.state = CoverGeneration{JobID: id, ModelCode: in.ModelCode, Instruction: in.Instruction, Status: CoverRunning}
 	return r.state, true, nil
+}
+
+func (r *coverJobStub) SaveProjectCoverUpload(_ context.Context, _ CoverScope, revision string, image CoverImage) (CoverGeneration, error) {
+	r.uploaded = image
+	return CoverGeneration{CoverID: revision, Status: CoverIdle}, nil
 }
 
 func (r *coverJobStub) FinishProjectCoverGeneration(_ context.Context, _ CoverScope, _ string, image CoverImage, message string) error {
@@ -60,7 +70,8 @@ func TestDramaProjectCoverRunsIndependentlyAndUsesProjectStyle(t *testing.T) {
 			}
 			if jobID != jobs.state.JobID || in.OrganizationID != scope.OrganizationID || in.UserID != scope.UserID ||
 				in.ModelCode != "painter" || in.AspectRatio != "2:3" || !strings.Contains(in.Prompt, "侠客在雪夜守城门") ||
-				!strings.Contains(in.Prompt, "粗墨线和硬朗阴影") || !strings.Contains(in.Prompt, "下方约三分之一") || !strings.Contains(in.Prompt, "禁止任何文字") {
+				!strings.Contains(in.Prompt, "粗墨线和硬朗阴影") || !strings.Contains(in.Prompt, "下方约三分之一") ||
+				!strings.Contains(in.Prompt, "禁止任何文字") || !strings.Contains(in.Prompt, "突出提灯的火光") {
 				return nil, errors.New("图片模型收到的封面参数错误")
 			}
 			return []byte("位图"), nil
@@ -72,14 +83,17 @@ func TestDramaProjectCoverRunsIndependentlyAndUsesProjectStyle(t *testing.T) {
 			return []byte("<svg><text>风雪城门</text></svg>"), "image/svg+xml", nil
 		})
 	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := service.StartProjectCoverGeneration(ctx, scope, "writer"); !errors.Is(err, ErrModelUnavailable) {
+	if _, err := service.StartProjectCoverGeneration(ctx, scope, CoverGenerationInput{ModelCode: "writer"}); !errors.Is(err, ErrModelUnavailable) {
 		t.Fatalf("未拒绝非图片模型: %v", err)
 	}
-	job, err := service.StartProjectCoverGeneration(ctx, scope, "")
-	if err != nil || job.Status != CoverRunning || job.JobID == "" {
+	if _, err := service.StartProjectCoverGeneration(ctx, scope, CoverGenerationInput{Instruction: strings.Repeat("灯", 501)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("未拒绝过长的画面要求: %v", err)
+	}
+	job, err := service.StartProjectCoverGeneration(ctx, scope, CoverGenerationInput{Instruction: " 突出提灯的火光 "})
+	if err != nil || job.Status != CoverRunning || job.JobID == "" || job.Instruction != "突出提灯的火光" {
 		t.Fatalf("未建立后台任务: %+v %v", job, err)
 	}
-	if again, err := service.StartProjectCoverGeneration(ctx, scope, "painter"); err != nil || again.JobID != job.JobID {
+	if again, err := service.StartProjectCoverGeneration(ctx, scope, CoverGenerationInput{ModelCode: "painter"}); err != nil || again.JobID != job.JobID {
 		t.Fatalf("重复请求未复用任务: %+v %v", again, err)
 	}
 	cancel()
@@ -91,6 +105,25 @@ func TestDramaProjectCoverRunsIndependentlyAndUsesProjectStyle(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("未收到后台任务结果")
+	}
+}
+
+func TestDramaCoverUploadOnlyAcceptsVerifiedRasterImages(t *testing.T) {
+	ctx := context.Background()
+	scope := CoverScope{ProjectID: uuid.NewString()}
+	jobs := &coverJobStub{}
+	service := (&Service{}).WithProjectCovers(jobs, nil, nil)
+	if _, err := service.UploadProjectCover(ctx, scope, []byte(`<svg><script>alert(1)</script></svg>`)); !errors.Is(err, coverimage.ErrInvalidUpload) {
+		t.Fatalf("不应允许上传 SVG: %v", err)
+	}
+	var picture bytes.Buffer
+	if err := png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 3, 2))); err != nil {
+		t.Fatal(err)
+	}
+	state, err := service.UploadProjectCover(ctx, scope, picture.Bytes())
+	if err != nil || state.CoverURL != ProjectCoverImageURL(scope.ProjectID, state.CoverID) || state.CoverURL == "" ||
+		jobs.uploaded.MIME != "image/png" || !bytes.Equal(jobs.uploaded.Data, picture.Bytes()) {
+		t.Fatalf("上传图片没有保留已验证的媒体类型或原图: %+v %v", state, err)
 	}
 }
 

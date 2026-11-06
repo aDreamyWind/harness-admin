@@ -246,10 +246,27 @@ func (s *novelHTTPStub) CoverModels(_ context.Context, owner novel.Owner) ([]nov
 
 func (s *novelHTTPStub) CoverContent(_ context.Context, owner novel.Owner, id, revision string) (novel.CoverImage, error) {
 	s.owner = owner
-	if id != "book" || s.cover.Revision != revision {
+	if id != "book" || (s.cover.Revision != revision && !(revision == "upload-revision" && s.coverData != nil)) {
 		return novel.CoverImage{}, novel.ErrNotFound
 	}
 	return novel.CoverImage{MIME: "image/png", Data: s.coverData}, nil
+}
+
+func (s *novelHTTPStub) ListCoverHistory(_ context.Context, owner novel.Owner, id string) ([]novel.CoverHistoryItem, error) {
+	s.owner = owner
+	if id != "book" {
+		return nil, novel.ErrNotFound
+	}
+	return []novel.CoverHistoryItem{{Revision: "upload-revision", Source: "upload", Current: s.cover.Revision == "upload-revision"}}, nil
+}
+
+func (s *novelHTTPStub) ApplyCoverHistory(_ context.Context, owner novel.Owner, id, revision string) (novel.Cover, error) {
+	s.owner = owner
+	if id != "book" || revision != "upload-revision" {
+		return novel.Cover{}, novel.ErrNotFound
+	}
+	s.cover = novel.Cover{Revision: revision, Source: "upload"}
+	return s.cover, nil
 }
 
 func (s *novelHTTPStub) UploadCover(_ context.Context, owner novel.Owner, _ string, data []byte) (novel.Cover, error) {
@@ -453,12 +470,30 @@ func TestNovelCoverRoutesProtectAndVersionImages(t *testing.T) {
 		!strings.Contains(response.Body.String(), path+"?v=generated-revision") || !strings.Contains(response.Body.String(), `"source":"ai"`) {
 		t.Fatalf("应用未返回新的封面: %d %s", response.Code, response.Body)
 	}
-	if response := send("GET", path+"?v=upload-revision", nil, "", true, false); response.Code != http.StatusNotFound {
-		t.Fatalf("已更换版本不应返回新的图片: %d", response.Code)
+	if response := send("GET", path+"?v=upload-revision", nil, "", true, false); response.Code != http.StatusOK || response.Body.String() != "封面数据" {
+		t.Fatalf("已更换版本应返回历史图片: %d %s", response.Code, response.Body)
 	}
 	if response := send("GET", "/projects", nil, "", true, false); response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), path+"?v=generated-revision") || strings.Contains(response.Body.String(), `"revision"`) {
 		t.Fatalf("作品列表未使用新封面地址: %d %s", response.Code, response.Body)
+	}
+	const history = path + "/history"
+	if response := send("GET", history, nil, "", false, false); response.Code != http.StatusUnauthorized {
+		t.Fatalf("未拒绝匿名查看历史: %d", response.Code)
+	}
+	if response := send("GET", history, nil, "", true, false); response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), path+"?v=upload-revision") || !strings.Contains(response.Body.String(), `"current":false`) ||
+		response.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("历史列表未返回对应版本地址: %d %s", response.Code, response.Body)
+	}
+	const restore = `{"revision":"upload-revision","ownerId":"other"}`
+	if response := send("POST", history+"/apply", strings.NewReader(restore), "application/json", true, false); response.Code != http.StatusForbidden {
+		t.Fatalf("未拒绝缺少 CSRF 的恢复: %d", response.Code)
+	}
+	if response := send("POST", history+"/apply", strings.NewReader(restore), "application/json", true, true); response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), path+"?v=upload-revision") || !strings.Contains(response.Body.String(), `"source":"upload"`) ||
+		stub.owner != (novel.Owner{OrganizationID: "org-1", UserID: "user-1"}) {
+		t.Fatalf("恢复历史封面未使用会话身份及指定版本: %d %s", response.Code, response.Body)
 	}
 }
 

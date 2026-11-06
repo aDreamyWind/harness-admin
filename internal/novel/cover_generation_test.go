@@ -137,6 +137,9 @@ func TestCoverGenerationContinuesAfterRequestAndRecoversCandidate(t *testing.T) 
 	if repo.project.Cover != nil {
 		t.Fatal("生成候选时提前替换了正式封面")
 	}
+	if history, err := s.ListCoverHistory(ctx, owner, p.ID); err != nil || len(history) != 1 || history[0].Revision != first.JobID || history[0].Current {
+		t.Fatalf("后台出图完成后应归档未采用的候选: %+v %v", history, err)
+	}
 	if preview, err := s.CoverPreviewContent(ctx, owner, p.ID, first.JobID); err != nil || !bytes.Equal(preview.Data, imageBytes.Bytes()) {
 		t.Fatalf("重新打开后无法读取候选图片: %v", err)
 	}

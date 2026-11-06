@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"harness-admin/internal/coverimage"
 )
 
 const (
@@ -18,7 +19,7 @@ const (
 	CoverRunning   = "running"
 	CoverSucceeded = "succeeded"
 	CoverFailed    = "failed"
-	MaxCoverBytes  = 10 * 1024 * 1024
+	MaxCoverBytes  = coverimage.MaxBytes
 )
 
 var ErrCoverConflict = errors.New("封面候选已变化，请刷新后再选择")
@@ -29,11 +30,17 @@ type CoverGeneration struct {
 	Status       string `json:"status"`
 	JobID        string `json:"jobId,omitempty"`
 	ModelCode    string `json:"modelCode,omitempty"`
+	Instruction  string `json:"instruction,omitempty"`
 	Error        string `json:"error,omitempty"`
 	CoverURL     string `json:"coverUrl,omitempty"`
 	CandidateURL string `json:"candidateUrl,omitempty"`
 	CoverID      string `json:"-"`
 	CandidateID  string `json:"-"`
+}
+
+type CoverGenerationInput struct {
+	ModelCode   string `json:"modelCode"`
+	Instruction string `json:"instruction"`
 }
 
 type CoverSelection struct {
@@ -46,12 +53,23 @@ type CoverImage struct {
 	MIME string
 }
 
+type CoverRevision struct {
+	Revision  string    `json:"revision"`
+	Source    string    `json:"source"`
+	URL       string    `json:"url"`
+	CreatedAt time.Time `json:"createdAt"`
+	Current   bool      `json:"current"`
+}
+
 type CoverRepository interface {
 	GetProjectCoverGeneration(context.Context, CoverScope) (CoverGeneration, error)
-	ReserveProjectCoverGeneration(context.Context, CoverScope, string, string, string, time.Time) (CoverGeneration, bool, error)
+	ReserveProjectCoverGeneration(context.Context, CoverScope, string, string, CoverGenerationInput, time.Time) (CoverGeneration, bool, error)
 	FinishProjectCoverGeneration(context.Context, CoverScope, string, CoverImage, string) error
 	SelectProjectCover(context.Context, CoverScope, CoverSelection) (CoverGeneration, error)
 	ReadProjectCoverImage(context.Context, CoverScope, string) (CoverImage, error)
+	ListProjectCoverHistory(context.Context, CoverScope) ([]CoverRevision, error)
+	ApplyProjectCoverHistory(context.Context, CoverScope, string) (CoverGeneration, error)
+	SaveProjectCoverUpload(context.Context, CoverScope, string, CoverImage) (CoverGeneration, error)
 }
 
 type CoverGenerator func(context.Context, string, ImageRequest) ([]byte, error)
@@ -83,22 +101,26 @@ func (s *Service) GetProjectCoverGeneration(ctx context.Context, scope CoverScop
 	return state.withURLs(scope), err
 }
 
-func (s *Service) StartProjectCoverGeneration(ctx context.Context, scope CoverScope, modelCode string) (CoverGeneration, error) {
+func (s *Service) StartProjectCoverGeneration(ctx context.Context, scope CoverScope, input CoverGenerationInput) (CoverGeneration, error) {
 	state, err := s.GetProjectCoverGeneration(ctx, scope)
 	if err != nil || state.Status == CoverRunning || state.CandidateID != "" {
 		return state, err
 	}
-	modelCode = strings.TrimSpace(modelCode)
-	if utf8.RuneCountInString(modelCode) > 160 || strings.ContainsRune(modelCode, 0) {
+	input.ModelCode = strings.TrimSpace(input.ModelCode)
+	input.Instruction = strings.TrimSpace(input.Instruction)
+	if utf8.RuneCountInString(input.ModelCode) > 160 || strings.ContainsRune(input.ModelCode, 0) {
 		return CoverGeneration{}, ErrInvalidInput
 	}
-	if modelCode == "" {
+	if utf8.RuneCountInString(input.Instruction) > 500 || strings.ContainsRune(input.Instruction, 0) {
+		return CoverGeneration{}, fmt.Errorf("%w：封面画面要求最多 500 字", ErrInvalidInput)
+	}
+	if input.ModelCode == "" {
 		settings, err := s.repository.GetSettings(ctx, scope.OrganizationID, scope.UserID)
 		if err != nil {
 			return CoverGeneration{}, err
 		}
-		modelCode = settings.ImageModelCode
-		if modelCode == "" {
+		input.ModelCode = settings.ImageModelCode
+		if input.ModelCode == "" {
 			return CoverGeneration{}, ErrImageModelMissing
 		}
 	}
@@ -108,7 +130,7 @@ func (s *Service) StartProjectCoverGeneration(ctx context.Context, scope CoverSc
 	}
 	available := false
 	for _, model := range models {
-		if model.Code == modelCode && model.ModelType == "image" {
+		if model.Code == input.ModelCode && model.ModelType == "image" {
 			available = true
 			break
 		}
@@ -121,14 +143,14 @@ func (s *Service) StartProjectCoverGeneration(ctx context.Context, scope CoverSc
 		return CoverGeneration{}, err
 	}
 	jobID := uuid.New()
-	prompt, design, err := s.projectCoverPrompt(ctx, scope, project, jobID[0]&1 != 0)
+	prompt, design, err := s.projectCoverPrompt(ctx, scope, project, input.Instruction, jobID[0]&1 != 0)
 	if err != nil {
 		return CoverGeneration{}, err
 	}
 	parent := context.WithoutCancel(ctx)
 	reserveCtx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
-	state, started, err := s.coverRepository.ReserveProjectCoverGeneration(reserveCtx, scope, state.JobID, jobID.String(), modelCode, time.Now().Add(12*time.Minute))
+	state, started, err := s.coverRepository.ReserveProjectCoverGeneration(reserveCtx, scope, state.JobID, jobID.String(), input, time.Now().Add(12*time.Minute))
 	if err != nil {
 		return CoverGeneration{}, err
 	}
@@ -138,7 +160,7 @@ func (s *Service) StartProjectCoverGeneration(ctx context.Context, scope CoverSc
 	return state.withURLs(scope), nil
 }
 
-func (s *Service) projectCoverPrompt(ctx context.Context, scope CoverScope, project Project, alternate bool) (string, CoverTitleDesign, error) {
+func (s *Service) projectCoverPrompt(ctx context.Context, scope CoverScope, project Project, instruction string, alternate bool) (string, CoverTitleDesign, error) {
 	var overview struct{ Protagonist, Genre, Synopsis, Background string }
 	if len(project.Overview) != 0 {
 		if err := json.Unmarshal(project.Overview, &overview); err != nil {
@@ -173,6 +195,9 @@ func (s *Service) projectCoverPrompt(ctx context.Context, scope CoverScope, proj
 	design := chooseCoverTitleDesign(project.Title, styleKey, styleName, overview.Genre, alternate)
 	prompt := fmt.Sprintf("为漫剧绘制 2:3 竖版宣传海报底图。突出主角和有辨识度的故事场景，采用有层次的电影海报构图。%s图像中禁止任何文字、字母、徽标、水印与外框。下列项目资料只作绘画内容参考。\n作品名：%s\n项目画风：%s\n风格特征：%s\n主角：%s\n故事类型：%s\n故事梗概：%s\n故事背景：%s",
 		design.reserveSpace(), project.Title, styleName, stylePrompt, coverExcerpt(overview.Protagonist, 100), coverExcerpt(overview.Genre, 100), coverExcerpt(overview.Synopsis, 720), coverExcerpt(overview.Background, 180))
+	if instruction != "" {
+		prompt += "\n用户画面要求（在项目画风和标题留白范围内实现）：" + instruction
+	}
 	return prompt, design, nil
 }
 
@@ -228,4 +253,38 @@ func (s *Service) ProjectCoverImage(ctx context.Context, scope CoverScope, revis
 		return CoverImage{}, ErrNotFound
 	}
 	return s.coverRepository.ReadProjectCoverImage(ctx, scope, revision)
+}
+
+func (s *Service) ListProjectCoverHistory(ctx context.Context, scope CoverScope) ([]CoverRevision, error) {
+	if !canonicalCanvasID(scope.ProjectID) {
+		return nil, ErrInvalidInput
+	}
+	history, err := s.coverRepository.ListProjectCoverHistory(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	for i := range history {
+		history[i].URL = ProjectCoverImageURL(scope.ProjectID, history[i].Revision)
+	}
+	return history, nil
+}
+
+func (s *Service) ApplyProjectCoverHistory(ctx context.Context, scope CoverScope, revision string) (CoverGeneration, error) {
+	if !canonicalCanvasID(scope.ProjectID) || !canonicalCanvasID(revision) {
+		return CoverGeneration{}, ErrInvalidInput
+	}
+	state, err := s.coverRepository.ApplyProjectCoverHistory(ctx, scope, revision)
+	return state.withURLs(scope), err
+}
+
+func (s *Service) UploadProjectCover(ctx context.Context, scope CoverScope, data []byte) (CoverGeneration, error) {
+	if !canonicalCanvasID(scope.ProjectID) {
+		return CoverGeneration{}, ErrInvalidInput
+	}
+	mime, err := coverimage.Validate(data)
+	if err != nil {
+		return CoverGeneration{}, err
+	}
+	state, err := s.coverRepository.SaveProjectCoverUpload(ctx, scope, uuid.NewString(), CoverImage{Data: data, MIME: mime})
+	return state.withURLs(scope), err
 }

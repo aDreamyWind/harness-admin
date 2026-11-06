@@ -111,6 +111,11 @@ func (s *Service) runCoverGeneration(parent context.Context, owner Owner, id str
 	ctx, cancel := context.WithTimeout(parent, coverGenerationTimeout)
 	defer cancel()
 	preview, err := s.generateCoverPreview(ctx, owner, job.ModelCode, prompt, revision, job.JobID)
+	if err == nil {
+		archiveCtx, archiveCancel := context.WithTimeout(parent, 10*time.Second)
+		err = s.archiveCoverPreview(archiveCtx, owner, id, preview)
+		archiveCancel()
+	}
 	job.Status = CoverGenerationSucceeded
 	var completed *CoverPreview
 	if err == nil {

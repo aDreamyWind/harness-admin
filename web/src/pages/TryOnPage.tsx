@@ -1,7 +1,7 @@
 import {
   CameraOutlined, CloseOutlined, PictureOutlined, PlusOutlined, UserOutlined,
 } from '@ant-design/icons'
-import { Alert, Button, Empty, Image, Popconfirm, Select, Spin, Tabs, Tag, message } from 'antd'
+import { Alert, Button, Empty, Image, Select, Spin, Tabs, Tag, message } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import {
@@ -12,7 +12,8 @@ import {
 import { TryOnAssetDialog, tryOnLabels } from './TryOnAssetDialog'
 import { garmentJobsKey, TryOnGarmentJobs } from './TryOnGarmentJobs'
 import {
-  garmentFilters, maxTryOnGarments, outfitsKey, personCoverClass, personFilters, TryOnFilters, TryOnOutfitLibrary, TryOnReferencePicker,
+  garmentFilters, maxTryOnGarments, outfitsKey, personCoverClass, personFilters,
+  TryOnDeleteMenu, TryOnFilters, TryOnOutfitLibrary, TryOnReferencePicker,
   type TryOnPickerKind,
 } from './TryOnWardrobe'
 import './tryon.css'
@@ -98,7 +99,7 @@ export function TryOnPage() {
   const garmentTasks = (garmentJobs.data ?? []).filter((job) => job.status !== 'saved')
   const tryOnJobs = jobs.data ?? []
   const pendingJobs = tryOnJobs.filter(activeJob)
-  const recentJobs = [...pendingJobs, ...tryOnJobs.filter((job) => !activeJob(job)).slice(0, 3)]
+  const studioJobs = [...pendingJobs, ...tryOnJobs.filter((job) => !activeJob(job))]
   const outfitItems = outfits.data ?? []
   const person = byId.get(selection.personId)
   const pose = byId.get(selection.poseId)
@@ -267,15 +268,10 @@ export function TryOnPage() {
                 </div>
               </header>
               {viewedJob && <small className="tryon-viewing-label">{comboLabel(viewedJob)}</small>}
-              {emptyStage ? <div className="tryon-empty-stage">
-                <PictureOutlined />
-                <strong>选择人物开始搭配</strong>
-                <span>选好人物和衣物后，可在这里对比原图和试穿效果。</span>
-                <div className="tryon-empty-actions">
-                  <Button onClick={() => setPicker('person')}>选择人物</Button>
-                  {selectedGarments.length === 0 && <Button icon={<PlusOutlined />} onClick={() => setPicker('garment')}>添加衣物</Button>}
-                </div>
-              </div> : <div className="tryon-comparison">
+              {emptyStage ? <button type="button" className="tryon-stage-picture tryon-empty-stage" aria-label="选择人物"
+                onClick={() => setPicker('person')}>
+                <span className="tryon-placeholder"><UserOutlined aria-hidden /><span>点击选择人物</span></span>
+              </button> : <div className="tryon-comparison">
                 <figure><figcaption>人物原图</figcaption><div className="tryon-stage-picture">
                   {comparisonPerson ? <Image src={tryOnAssetURL(comparisonPerson.id)} alt={comparisonPerson.name} /> :
                     <div className="tryon-placeholder"><UserOutlined /><span>选择一位人物</span></div>}
@@ -328,13 +324,13 @@ export function TryOnPage() {
           </div>
           <section className="tryon-library tryon-task-panel" aria-label="试穿任务">
             <header className="tryon-control-heading"><div><h2>试穿任务</h2>
-              <span>进行中和最近的试穿</span></div>
+              <span>进行中的任务优先显示</span></div>
               <div className="tryon-stage-actions">
                 {pendingJobs.length > 0 && <Tag color="processing">{pendingJobs.length} 个进行中</Tag>}
                 {tryOnJobs.length > 0 && <Button type="link" onClick={() => setTab('history')}>查看全部</Button>}
               </div>
             </header>
-            <TryOnTaskCards jobs={recentJobs} assets={byId} pending={jobs.isPending} label={comboLabel}
+            <TryOnTaskCards strip jobs={studioJobs} assets={byId} pending={jobs.isPending} label={comboLabel}
               onView={showJob} onRetry={retryJob} retrying={isSubmitting} />
           </section>
         </> },
@@ -395,14 +391,15 @@ function Reference({ title, asset, onPick, onClear }: {
   )
 }
 
-function TryOnTaskCards({ jobs, assets, pending, label, onView, onRetry, retrying }: {
+function TryOnTaskCards({ jobs, assets, pending, label, onView, onRetry, retrying, strip = false }: {
   jobs: TryOnJob[]; assets: ReadonlyMap<string, TryOnAsset>; pending: boolean
   label: (job: TryOnJob) => string; onView: (job: TryOnJob) => void
-  onRetry: (job: TryOnJob) => void; retrying: boolean
+  onRetry: (job: TryOnJob) => void; retrying: boolean; strip?: boolean
 }) {
   if (pending) return <Spin />
   if (!jobs.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="生成试穿图后，任务会出现在这里。" />
-  return <div className="tryon-task-grid">
+  return <div className={strip ? 'tryon-task-grid tryon-task-strip' : 'tryon-task-grid'}
+    tabIndex={strip ? 0 : undefined} role={strip ? 'group' : undefined} aria-label={strip ? '可横向滚动的试穿任务' : undefined}>
     {jobs.map((job) => {
       const combination = label(job)
       const cover = job.status === 'succeeded' ? tryOnResultURL(job.id)
@@ -447,14 +444,13 @@ function Library({ assets, controls, addLabel, useLabel = '去试穿', pending, 
             <div className={`tryon-library-image ${personCoverClass(asset)}`}>
               <Image src={tryOnAssetURL(asset.id)} alt={asset.name} loading="lazy" />
             </div>
-            <div className="tryon-library-meta"><strong>{asset.name}</strong><small>{asset.builtin ? '内置 · ' : ''}{asset.category || tryOnLabels[asset.kind]}</small></div>
+            <div className="tryon-library-card-details">
+              <div className="tryon-library-meta"><strong>{asset.name}</strong><small>{asset.builtin ? '内置 · ' : ''}{asset.category || tryOnLabels[asset.kind]}</small></div>
+              {!asset.builtin && <TryOnDeleteMenu name={asset.name} disabled={deleting}
+                description="删除后将从素材库移除，相关试穿记录仍可查看。" onDelete={() => onDelete(asset)} />}
+            </div>
             <div className="tryon-library-actions">
               <Button size="small" onClick={() => onSelect(asset)}>{useLabel}</Button>
-              {!asset.builtin && <Popconfirm title={`删除「${asset.name}」？`}
-                description="删除后将从素材库移除，相关试穿记录仍可查看。"
-                okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => onDelete(asset)}>
-                <Button size="small" danger disabled={deleting} aria-label={`删除${asset.name}`}>删除</Button>
-              </Popconfirm>}
             </div>
           </article>,
         )}</div>}

@@ -1,5 +1,5 @@
-import { PlusOutlined } from '@ant-design/icons'
-import { Alert, Button, Empty, Image, Input, Modal, Popconfirm, Spin, message } from 'antd'
+import { DeleteOutlined, EllipsisOutlined, PlusOutlined } from '@ant-design/icons'
+import { Alert, Button, Dropdown, Empty, Image, Input, Modal, Spin, message } from 'antd'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { createTryOnOutfit, deleteTryOnOutfit, tryOnAssetURL, type TryOnAsset, type TryOnOutfit } from '../api/tryon'
@@ -9,7 +9,7 @@ export const maxTryOnGarments = 4
 export const outfitsKey = ['tryon', 'outfits']
 export const personFilters = [
   { value: 'all', label: '全部' },
-  { value: 'person_2d', label: '2D' },
+  { value: 'person_2d', label: tryOnLabels.person_2d },
   { value: 'person_real', label: '写实' },
 ]
 export const garmentFilters = [
@@ -25,6 +25,27 @@ export function TryOnFilters({ label, options, value, onChange }: {
     {options.map((option) => <Button key={option.value} size="small" type={option.value === value ? 'primary' : 'text'}
       aria-pressed={option.value === value} onClick={() => onChange(option.value)}>{option.label}</Button>)}
   </div>
+}
+
+export function TryOnDeleteMenu({ name, description, disabled, onDelete }: {
+  name: string; description: string; disabled: boolean; onDelete: () => Promise<unknown>
+}) {
+  const [modal, holder] = Modal.useModal()
+  return <>
+    {holder}
+    <Dropdown trigger={['click']} placement="bottomRight" autoFocus menu={{
+      items: [{ key: 'delete', label: '删除', icon: <DeleteOutlined aria-hidden />, danger: true }],
+      onClick: () => {
+        modal.confirm({
+          title: `删除「${name}」？`, content: description, okText: '确认删除', cancelText: '取消',
+          okButtonProps: { danger: true }, focusable: { autoFocusButton: 'cancel' }, onOk: onDelete,
+        })
+      },
+    }}>
+      <Button type="text" className="tryon-library-more" icon={<EllipsisOutlined />} disabled={disabled}
+        title="更多操作" aria-label={`「${name}」的更多操作`} aria-haspopup="menu" />
+    </Dropdown>
+  </>
 }
 
 function AssetImage({ asset, preview = false }: { asset: TryOnAsset; preview?: boolean }) {
@@ -72,7 +93,7 @@ export function TryOnReferencePicker({ kind, assets, outfits, selected, onPick, 
   const shownOutfits = outfits.filter((outfit) => matches(outfit.name))
   const availableSlots = maxTryOnGarments - selected.length
   return (
-    <Modal open title={config.title} width={740} onCancel={onClose}
+    <Modal open title={config.title} width={900} onCancel={onClose}
       footer={<><Button onClick={onAdd} icon={<PlusOutlined />}>{config.add}</Button><Button onClick={onClose}>关闭</Button></>}>
       <div className="tryon-picker-content">
         {filters.length > 0 && <TryOnFilters label={kind === 'person' ? '人物分类' : '衣物分类'} options={filters} value={filter} onChange={setFilter} />}
@@ -154,22 +175,21 @@ export function TryOnOutfitLibrary({ outfits, garments, loading, error, onRefres
       <div className="tryon-outfit-grid">
         {outfits.map((outfit) => <article key={outfit.id}>
           <OutfitImages outfit={outfit} garments={garments} />
-          <div className="tryon-library-meta"><strong>{outfit.name}</strong><small>{outfit.garmentIds.length} 件衣物</small></div>
+          <div className="tryon-library-card-details">
+            <div className="tryon-library-meta"><strong>{outfit.name}</strong><small>{outfit.garmentIds.length} 件衣物</small></div>
+            <TryOnDeleteMenu name={outfit.name} description="只删除套装，单品仍在衣物库。" disabled={remove.isPending}
+              onDelete={() => remove.mutateAsync(outfit.id).catch(() => undefined)} />
+          </div>
           <div className="tryon-library-actions">
             <Button size="small" onClick={() => setViewing(outfit)}>查看</Button>
             <Button size="small" disabled={!outfitAvailable(outfit, garments)} onClick={() => onUse(outfit)}>使用套装</Button>
-            <Popconfirm title={`删除「${outfit.name}」？`} description="只删除套装，单品仍在衣物库。"
-              okText="删除" cancelText="取消" okButtonProps={{ danger: true }}
-              onConfirm={() => remove.mutateAsync(outfit.id).catch(() => undefined)}>
-              <Button size="small" danger disabled={remove.isPending} aria-label={`删除套装${outfit.name}`}>删除</Button>
-            </Popconfirm>
           </div>
         </article>)}
       </div>
     ) : !error && <Empty description={garments.length < 2 ? '先添加至少两件衣物，再创建套装。' : '还没有套装。'} />}
     {creating && <OutfitCreator garments={garments} saving={create.isPending} error={create.error}
       onSave={(input) => create.mutate(input)} onClose={() => setCreating(false)} />}
-    {viewing && <Modal open title={viewing.name} width={620} onCancel={() => setViewing(undefined)}
+    {viewing && <Modal open title={viewing.name} width={720} onCancel={() => setViewing(undefined)}
       footer={<><Button onClick={() => setViewing(undefined)}>关闭</Button>
         <Button type="primary" disabled={!outfitAvailable(viewing, garments)} onClick={() => {
           onUse(viewing)
@@ -198,7 +218,7 @@ function OutfitCreator({ garments, saving, error, onSave, onClose }: {
   const selectedGarments = selected.filter((id) => garments.some((asset) => asset.id === id))
   const shown = garments.filter((asset) => asset.name.toLowerCase().includes(search.trim().toLowerCase()))
   return (
-    <Modal open title="创建套装" width={680} onCancel={onClose} maskClosable={!saving} closable={!saving} keyboard={!saving}
+    <Modal open title="创建套装" width={820} onCancel={onClose} maskClosable={!saving} closable={!saving} keyboard={!saving}
       footer={<><Button onClick={onClose} disabled={saving}>取消</Button>
         <Button type="primary" loading={saving} disabled={!name.trim() || selectedGarments.length < 2}
           onClick={() => onSave({ name: name.trim(), garmentIds: selectedGarments })}>保存套装</Button></>}>

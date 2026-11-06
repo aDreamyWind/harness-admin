@@ -23,7 +23,10 @@ type canvasGenerationRouteStub struct {
 
 func (s *canvasGenerationRouteStub) ListCanvasGenerationModels(_ context.Context, org, user string) ([]drama.CanvasGenerationModel, error) {
 	s.scope = []string{org, user}
-	return []drama.CanvasGenerationModel{{Code: "image", Kind: "image", MaxReferences: 3, Resolutions: []string{"1K", "2K"}}}, s.err
+	return []drama.CanvasGenerationModel{
+		{Code: "image", Kind: "image", MaxReferences: 3, Resolutions: []string{"1K", "2K"}},
+		{Code: "video", Kind: "video", MaxReferences: 5, Resolutions: []string{"720P", "1080P"}},
+	}, s.err
 }
 
 func (s *canvasGenerationRouteStub) ListCanvasGenerations(_ context.Context, org, user, project string) ([]drama.CanvasGenerationJob, error) {
@@ -85,6 +88,11 @@ func TestDramaCanvasGenerationRoutes(t *testing.T) {
 	if !slices.Equal(service.scope, nodeScope) || service.input != (drama.CanvasGenerationInput{ModelCode: "image", Revision: 7, Prompt: "镜头向前", StyleID: "ink-wash", AspectRatio: "9:16", Resolution: "2K"}) {
 		t.Fatalf("生成提交范围或参数不正确: %v %+v", service.scope, service.input)
 	}
+	const videoInput = `{"modelCode":"video","revision":7,"prompt":"镜头向前","resolution":"1080P","duration":5}`
+	if out := send(http.MethodPost, nodePath, videoInput, true, true); out.Code != http.StatusAccepted ||
+		service.input != (drama.CanvasGenerationInput{ModelCode: "video", Revision: 7, Prompt: "镜头向前", Resolution: "1080P", Duration: 5}) {
+		t.Fatalf("视频生成参数未正确传入服务: %d %s %+v", out.Code, out.Body, service.input)
+	}
 	service.err = drama.ErrCanvasConflict
 	if out := send(http.MethodPost, nodePath, input, true, true); out.Code != http.StatusConflict {
 		t.Fatalf("过期画布版本未返回 409: %d", out.Code)
@@ -110,7 +118,7 @@ func TestDramaCanvasGenerationRoutes(t *testing.T) {
 		t.Fatalf("项目任务查询结果或范围错误: %d %s %v", out.Code, out.Body, service.scope)
 	}
 	if out := send(http.MethodGet, modelPath, "", true, false); out.Code != http.StatusOK || !strings.Contains(out.Body.String(), `"maxReferences":3`) ||
-		!strings.Contains(out.Body.String(), `"resolutions":["1K","2K"]`) || !slices.Equal(service.scope, actor) {
+		!strings.Contains(out.Body.String(), `"resolutions":["1K","2K"]`) || !strings.Contains(out.Body.String(), `"resolutions":["720P","1080P"]`) || !slices.Equal(service.scope, actor) {
 		t.Fatalf("模型查询结果或范围错误: %d %s %v", out.Code, out.Body, service.scope)
 	}
 }

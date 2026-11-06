@@ -615,10 +615,10 @@ paths:
       operationId: getNovelCover
       security: [{ sessionCookie: [] }]
       parameters:
-        - { name: v, in: query, required: false, schema: { type: string, format: uuid }, description: 封面版本。省略时返回当前封面。 }
+        - { name: v, in: query, required: false, schema: { type: string, format: uuid }, description: 可指定封面历史中的任一版本。省略时返回当前封面。 }
       responses:
         '200':
-          description: 当前封面的图片内容，仅本人可读取。
+          description: 当前封面或指定历史版本的图片内容，仅本人可读取。
           headers:
             Cache-Control:
               schema: { type: string, const: 'private, no-store' }
@@ -657,13 +657,42 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NovelCoverConflict' }
+  /ai-novel/projects/{id}/cover/history:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 查询本人小说的封面历史
+      operationId: listNovelCoverHistory
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/ProjectCoverHistoryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-novel/projects/{id}/cover/history/apply:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 将历史版本设为本人小说的正式封面
+      operationId: applyNovelCoverHistory
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectCoverHistoryApplyInput' }
+      responses:
+        '200': { $ref: '#/components/responses/NovelCoverResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-novel/projects/{id}/cover/generate:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
       summary: 同步生成本人小说的封面预览
       operationId: generateNovelCover
-      description: 提交封面生成并等待结果。图片模型依据书名、故事灵感、可用的大纲资料和可选封面要求绘制竖版插画。同一部作品已有生成任务时等待该任务的结果。最新成功的预览保留 24 小时，可在此期间确认设为正式封面。
+      description: 提交封面生成并等待结果。图片模型依据书名、故事灵感、可用的大纲资料和可选封面要求绘制竖版插画。同一部作品已有生成任务时等待该任务的结果。最新成功的预览保留 24 小时，也可从封面历史中选用。
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
         required: true
@@ -707,7 +736,7 @@ paths:
     post:
       summary: 提交本人小说的后台封面生成
       operationId: startNovelCoverGeneration
-      description: 接受后在后台生成，同一部作品已有生成任务时返回该任务的当前状态。最新成功的预览保留 24 小时，候选封面需另行确认才能成为正式封面。
+      description: 接受后在后台生成，同一部作品已有生成任务时返回该任务的当前状态。成功的图片会保存到封面历史。最新成功的预览保留 24 小时，候选封面需另行确认才能成为正式封面。
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
         required: true
@@ -1046,7 +1075,7 @@ paths:
       security: [{ sessionCookie: [] }]
       responses:
         '200':
-          description: 返回支持的图片和视频模型及其参考图数量和视频时长限制。
+          description: 返回支持的图片和视频模型及其分辨率档位、参考图数量和视频时长限制。
           content:
             application/json:
               schema:
@@ -1081,7 +1110,7 @@ paths:
       - { name: nodeId, in: path, required: true, schema: { type: string, format: uuid } }
     post:
       summary: 提交画布图片或视频节点生成任务
-      description: 读取已保存的节点及其直接入边，将连接的文本和图片分别用作提示词及参考图。可指定风格库中的画风；图片可使用所选模型支持的分辨率。相同节点已有生成中任务时返回该任务。
+      description: 读取已保存的节点及其直接入边，将连接的文本和图片分别用作提示词及参考图。可指定风格库中的画风及所选模型支持的分辨率。相同节点已有生成中任务时返回该任务。
       operationId: startDramaCanvasGeneration
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -1422,6 +1451,7 @@ paths:
               type: object
               properties:
                 modelCode: { type: string, maxLength: 160, description: 本次使用的图片模型编码。省略时使用漫剧设置中的图片模型。 }
+                instruction: { type: string, maxLength: 500, description: 可选的封面画面要求，用于补充构图、人物、氛围或色调。 }
       responses:
         '202':
           description: 封面任务已接受。
@@ -1461,9 +1491,73 @@ paths:
         '403': { description: CSRF 校验失败。 }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 候选已变化或已经选择了其他封面。 }
+  /ai-drama/projects/{id}/cover/history:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 查询本人漫剧的封面历史
+      operationId: listDramaProjectCoverHistory
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/ProjectCoverHistoryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/cover/history/apply:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 将历史版本设为本人漫剧的正式封面
+      operationId: applyDramaProjectCoverHistory
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectCoverHistoryApplyInput' }
+      responses:
+        '200':
+          description: 已切换正式封面，返回最新封面生成状态。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DramaCoverGenerationEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/cover/upload:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 上传并替换本人漫剧的封面
+      operationId: uploadDramaProjectCover
+      description: 接受 JPEG、PNG、WebP，图片最多 10 MiB、每条边最多 4096 像素。上传成功后设为正式封面，并保存到封面历史。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+            encoding:
+              file:
+                contentType: image/jpeg, image/png, image/webp
+      responses:
+        '200':
+          description: 已保存上传图片，返回最新封面生成状态。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DramaCoverGenerationEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/cover/images/{revision}:
     get:
-      summary: 读取当前封面或待选候选封面的图片
+      summary: 读取本人漫剧的指定封面版本
       operationId: getDramaProjectCoverImage
       security: [{ sessionCookie: [] }]
       parameters:
@@ -1471,9 +1565,20 @@ paths:
         - { name: revision, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200':
-          description: 服务端合成的竖版海报，包含项目标题和生成底图。
+          description: 生成或上传的封面图片，包括当前封面、候选和历史版本。AI 生成的图片为服务端合成的带标题海报。
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
           content:
             image/svg+xml:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
               schema: { type: string, format: binary }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1799,6 +1904,7 @@ paths:
               required: [revision]
               properties:
                 revision: { type: integer, minimum: 1 }
+                resolution: { type: string, enum: ['720P', '1080P'], default: '720P', description: 视频清晰度。1080P 需由漫剧设置中的视频模型支持。 }
       responses:
         '202':
           description: 视频任务已创建
@@ -1808,7 +1914,7 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/DramaSegmentVideo' }
-        '400': { description: 参数错误、缺少参考图或超出模型限制 }
+        '400': { description: 参数错误、缺少参考图或超出模型限制（含分辨率） }
         '401': { description: 未登录 }
         '403': { description: 请求校验失败 }
         '404': { description: 项目或片段不存在 }
@@ -4937,6 +5043,18 @@ components:
             required: [data]
             properties:
               data: { $ref: '#/components/schemas/NovelCover' }
+    ProjectCoverHistoryResponse:
+      description: 本人作品的封面版本列表，包含成功生成和上传的图片，按创建时间倒序排列。没有历史时返回空数组。
+      headers:
+        Cache-Control:
+          schema: { type: string, const: 'private, no-store' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { type: array, items: { $ref: '#/components/schemas/ProjectCoverRevision' } }
     NovelCoverGenerationResponse:
       description: 封面生成状态，以及仍有效且尚未应用的候选封面。
       headers:
@@ -5074,6 +5192,20 @@ components:
         url: { type: string, format: uri-reference, description: 需要本人会话的同源图片地址，每次更换封面后更新。 }
         source: { type: string, enum: [upload, ai] }
         updatedAt: { type: string, format: date-time }
+    ProjectCoverRevision:
+      type: object
+      required: [revision, source, url, createdAt, current]
+      properties:
+        revision: { type: string, format: uuid }
+        source: { type: string, enum: [ai, upload] }
+        url: { type: string, format: uri-reference, description: 需要本人会话的同源图片地址。 }
+        createdAt: { type: string, format: date-time }
+        current: { type: boolean, description: 此版本是否是当前正式封面。 }
+    ProjectCoverHistoryApplyInput:
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: string, format: uuid, description: 此作品封面历史中的版本编号。 }
     NovelCoverGenerateInput:
       type: object
       required: [modelCode]
@@ -5342,7 +5474,7 @@ components:
         prompt: { type: string, maxLength: 10000, description: 在连接的文本之外补充的生成要求。 }
         styleId: { type: string, maxLength: 80, description: 可选的漫剧风格库 ID；省略或传空字符串时不附加风格模板。 }
         aspectRatio: { type: string, enum: ['9:16', '16:9', '1:1'], default: '16:9' }
-        resolution: { type: string, enum: ['1K', '2K'], description: 仅图片节点可指定。省略时使用 1K；2K 需由所选模型支持，实际发送的像素尺寸随画面比例而变。 }
+        resolution: { type: string, enum: ['1K', '2K', '720P', '1080P'], description: 图片使用 1K 或 2K，默认 1K。视频使用 720P 或 1080P，默认 720P。可选档位由模型决定，实际像素尺寸随画面比例而变。 }
         duration: { type: integer, description: 视频时长，单位为秒。省略时视频默认 5 秒，图片须省略或填 0。允许范围由所选模型决定。 }
     DramaCanvasGenerationModel:
       type: object
@@ -5353,7 +5485,7 @@ components:
         kind: { type: string, enum: [image, video] }
         minReferences: { type: integer, minimum: 0 }
         maxReferences: { type: integer, minimum: 0 }
-        resolutions: { type: array, items: { type: string, enum: ['1K', '2K'] }, description: 图片模型可选的分辨率档位；视频模型不返回此字段。 }
+        resolutions: { type: array, items: { type: string, enum: ['1K', '2K', '720P', '1080P'] }, description: 模型支持的分辨率档位，图片和视频分别使用各自的档位。 }
         minDuration: { type: integer, minimum: 1, description: 视频模型的最小时长，单位为秒。 }
         maxDuration: { type: integer, minimum: 1, description: 视频模型的最大时长，单位为秒。 }
     DramaCanvasGenerationJob:
@@ -6056,6 +6188,7 @@ components:
         status: { type: string, enum: [idle, running, succeeded, failed] }
         jobId: { type: string, format: uuid }
         modelCode: { type: string }
+        instruction: { type: string, maxLength: 500, description: 本次后台任务使用的画面要求。 }
         coverUrl: { type: string, description: 当前生效的封面图片地址。 }
         candidateUrl: { type: string, description: 等待用户选择的候选封面图片地址。 }
         error: { type: string, description: 本次任务失败时显示的说明。 }

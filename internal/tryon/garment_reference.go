@@ -59,10 +59,6 @@ func outfitTryOnPrompt(kind string, garments []AssetImage, pose bool) string {
 	if len(garments) == 1 {
 		return tryonPrompt(kind, garments[0].Category, pose)
 	}
-	style := "保留图 1 的插画画风、线条、配色方式和人物设定。"
-	if kind == PersonReal {
-		style = "保留图 1 的摄影质感、肤色和自然人体比例。"
-	}
 	action := "保持图 1 的姿势、镜头视角与构图。"
 	if pose {
 		action = "图 3 只提供动作、朝向和姿势，忽略其中的身份、衣物、画风和背景。"
@@ -71,7 +67,7 @@ func outfitTryOnPrompt(kind string, garments []AssetImage, pose bool) string {
 	for i, garment := range garments {
 		fmt.Fprintf(&targets, "%s是%s。", garmentCells[i], garment.Category)
 	}
-	return "生成一张虚拟试穿图。图 1 是唯一要保留的人物，保持五官、发型、身份特征和身材。" + style +
+	return "生成一张虚拟试穿图。图 1 是唯一要保留的人物，保持五官、发型、身份特征和身材。" + tryOnPersonStyle(kind) +
 		"图 2 是本次服装参考板，每个有衣物的格子各是一件目标单品。" + targets.String() +
 		"让图 1 的人物同时穿戴参考板中的每件衣物。分别保留每件的颜色、材质、图案、款式、长度和细节，不混合不同单品的纹理与版型。" +
 		"若有外套和上衣，外套穿在所选上衣外面；若只选了外套，保留图 1 原内搭。按真实穿法安排其他单品和配饰。保留图 1 未被替换的衣物、配饰与背景。" +

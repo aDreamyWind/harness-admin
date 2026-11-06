@@ -1,26 +1,21 @@
 package novel
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg"
-	_ "image/png"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	_ "golang.org/x/image/webp"
-)
 
-const MaxCoverBytes = 10 * 1024 * 1024
+	"harness-admin/internal/coverimage"
+)
 
 var (
 	ErrCoverModel          = errors.New("请选择当前账号可用的图片模型")
 	ErrCoverStyle          = errors.New("请选择风格库中的画面风格，或清空风格后重试")
-	ErrCoverImage          = errors.New("请选择不超过 10 MiB、边长不超过 4096 像素的 JPEG、PNG 或 WebP 图片")
+	ErrCoverImage          = coverimage.ErrInvalidUpload
 	ErrCoverGeneration     = errors.New("封面生成失败，请重试或更换图片模型")
 	ErrCoverPreviewExpired = errors.New("封面预览已失效，请重新生成")
 	ErrCoverConflict       = errors.New("封面已在其他操作中更新，请重新生成预览后再确认")
@@ -31,6 +26,14 @@ type Cover struct {
 	URL       string    `json:"url"`
 	Source    string    `json:"source"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type CoverHistoryItem struct {
+	Revision  string    `json:"revision"`
+	Source    string    `json:"source"`
+	URL       string    `json:"url"`
+	CreatedAt time.Time `json:"createdAt"`
+	Current   bool      `json:"current"`
 }
 
 type CoverImage struct {
@@ -93,6 +96,26 @@ func (s *Service) CoverContent(ctx context.Context, owner Owner, id, revision st
 	return s.repo.GetCover(ctx, owner, id, revision)
 }
 
+func (s *Service) ListCoverHistory(ctx context.Context, owner Owner, id string) ([]CoverHistoryItem, error) {
+	project, err := uuid.Parse(id)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	return s.repo.ListCoverHistory(ctx, owner, project.String())
+}
+
+func (s *Service) ApplyCoverHistory(ctx context.Context, owner Owner, id, revision string) (Cover, error) {
+	project, err := uuid.Parse(id)
+	if err != nil {
+		return Cover{}, ErrNotFound
+	}
+	version, err := uuid.Parse(revision)
+	if err != nil {
+		return Cover{}, fmt.Errorf("%w，封面版本无效", ErrInvalid)
+	}
+	return s.repo.SelectCoverVersion(ctx, owner, project.String(), version.String())
+}
+
 func (s *Service) UploadCover(ctx context.Context, owner Owner, id string, data []byte) (Cover, error) {
 	project, err := s.Get(ctx, owner, id)
 	if err != nil {
@@ -117,10 +140,20 @@ func (s *Service) GenerateCover(ctx context.Context, owner Owner, id string, inp
 	if err != nil {
 		return "", err
 	}
+	if err := s.archiveCoverPreview(ctx, owner, project.ID, preview); err != nil {
+		return "", err
+	}
 	if err := s.coverPreviews.Put(ctx, owner, project.ID, preview); err != nil {
 		return "", fmt.Errorf("保存小说封面预览失败: %w", err)
 	}
 	return preview.Token, nil
+}
+
+func (s *Service) archiveCoverPreview(ctx context.Context, owner Owner, id string, preview CoverPreview) error {
+	if err := s.repo.SaveCoverVersion(ctx, owner, id, Cover{Revision: preview.Token, Source: "ai"}, preview.Image); err != nil {
+		return fmt.Errorf("保存小说封面历史失败: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) prepareCoverGeneration(ctx context.Context, owner Owner, id string, input *GenerateCoverInput) (Project, string, error) {
@@ -226,22 +259,11 @@ func coverRevision(project Project) string {
 }
 
 func readCoverImage(data []byte) (CoverImage, error) {
-	if len(data) == 0 || len(data) > MaxCoverBytes {
-		return CoverImage{}, ErrCoverImage
+	mime, err := coverimage.Validate(data)
+	if err != nil {
+		return CoverImage{}, err
 	}
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil || cfg.Width < 1 || cfg.Height < 1 || cfg.Width > 4096 || cfg.Height > 4096 {
-		return CoverImage{}, ErrCoverImage
-	}
-	switch format {
-	case "jpeg", "png", "webp":
-		if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
-			return CoverImage{}, ErrCoverImage
-		}
-		return CoverImage{Data: data, MIME: "image/" + format}, nil
-	default:
-		return CoverImage{}, ErrCoverImage
-	}
+	return CoverImage{Data: data, MIME: mime}, nil
 }
 
 func coverPrompt(project Project, instruction string, style CoverStyle) string {

@@ -12,6 +12,8 @@ type AssetPreviewInput struct {
 	Box                             *Box
 }
 
+const defaultAnimePersonStyle = "精细的现代日系动漫画风，线条有粗细变化，发丝、五官和布料褶皱清晰，上色和赛璐璐光影有层次。避免通用扁平卡通模板和塑料质感。"
+
 // PreviewAsset 只生成入库候选，用户确认后再通过 SaveAsset 保存。
 func (s *Service) PreviewAsset(ctx context.Context, owner Owner, in AssetPreviewInput, data []byte) (Image, error) {
 	operation, prompt, err := assetPreviewPrompt(in)
@@ -76,13 +78,13 @@ func assetPreviewPrompt(in AssetPreviewInput) (operation string, prompt string, 
 		return "pose_standardize",
 			"将参考图中的主要人物动作重新绘制成一张通用全身姿态参考图。使用统一的哑光浅灰色关节人台，头部光滑无脸、无头发，身体无身份与服饰特征。严格保留动作、重心、四肢弯曲角度、手脚相对位置、身体朝向和原镜头视角。被遮挡关节按动作合理连接。仅一个人台，头到脚完整入镜，纯白背景，清楚分辨各肢体。不复制原图中的人物身份、衣服、背景或道具，不加文字、不拼图。", nil
 	case Person2D, PersonReal:
-		style := "输出二维插画，保持参考图的角色设定、线条、配色与原有绘画风格。"
+		style := "生成动漫角色图。参考图已有明确的动漫画风时，保留原角色设计、服饰与配饰特征，以及线条、上色和光影。参考图是照片、草图或没有明确画风时，在保留角色特征的基础上采用" + defaultAnimePersonStyle
 		if in.Kind == PersonReal {
 			style = "输出自然的写实摄影风格，保持真实肤色、脸部特征和人体比例。"
 		}
 		return "person_reconstruct",
 			"根据参考图重新生成同一人物的全身试衣底图。保留五官、脸型、发型、体型和能区分身份的特征，仅出现参考图中的主要人物。" +
-				style + "人物正面自然站立，手臂稍离身体，头到脚完整入镜。保留可见的基础衣着，合理补全被遮挡或未入镜的部分。使用浅色纯背景，移除其他人物、道具和杂物。输出一张独立人物图，不加文字、不拼图。", nil
+				style + "人物正面自然站立，手臂稍离身体，头到脚完整入镜。保留可见的衣着，合理补全被遮挡或未入镜的部分。使用浅色纯背景，移除其他人物、道具和杂物。输出一张独立人物图，不加文字、不拼图。", nil
 	default:
 		return "", "", invalid("素材类型不受支持")
 	}

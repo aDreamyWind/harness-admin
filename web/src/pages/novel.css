@@ -144,7 +144,7 @@
 }
 
 .novel-shelf {
-  --shelf-book-width: clamp(210px, 13cqi, 246px);
+  --shelf-book-width: clamp(188px, 11.25cqi, 216px);
   --shelf-gap: 20px;
   --shelf-base: 6px;
   --shelf-row-height: calc(var(--shelf-book-width) * 1.5 + 28px + var(--shelf-base));
@@ -229,7 +229,7 @@
 .novel-book-cover > strong {
   display: -webkit-box;
   overflow: hidden;
-  font: 600 clamp(16px, 1.2cqi, 23px) / 1.38 'Songti SC', 'Noto Serif CJK SC', serif;
+  font: 600 clamp(16px, 1.05cqi, 20px) / 1.38 'Songti SC', 'Noto Serif CJK SC', serif;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
@@ -314,7 +314,7 @@
 @container novel-library (max-width: 560px) {
   .novel-shelf {
     --shelf-gap: 12px;
-    --shelf-book-width: clamp(116px, (100cqi - var(--shelf-gap)) / 2, 194px);
+    --shelf-book-width: clamp(116px, (100cqi - var(--shelf-gap)) / 2, 188px);
   }
   .novel-book-cover { padding: 10px 9px 9px 16px; }
   .novel-book-meta { font-size: 11px; }

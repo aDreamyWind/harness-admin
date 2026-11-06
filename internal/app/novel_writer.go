@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"harness-admin/internal/coverimage"
 	"harness-admin/internal/drama"
 	"harness-admin/internal/modelgateway"
 	"harness-admin/internal/novel"
@@ -61,8 +62,8 @@ func (w *novelWriter) GenerateCover(ctx context.Context, owner novel.Owner, mode
 		errors.Is(err, modelgateway.ErrProviderDisabled) {
 		return nil, novel.ErrCoverModel
 	}
-	if err == nil && len(data) > novel.MaxCoverBytes {
-		return nil, errors.New("生成的封面超过 10 MB")
+	if err == nil && len(data) > coverimage.MaxBytes {
+		return nil, errors.New("生成的封面超过 10 MiB")
 	}
 	return data, err
 }

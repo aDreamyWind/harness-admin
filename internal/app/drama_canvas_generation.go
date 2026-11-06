@@ -72,16 +72,15 @@ func canvasGenerationModel(model modelgateway.AvailableModel) (drama.CanvasGener
 			return item, false
 		}
 	case "video":
-		if model.ProviderKind != "aliyun_bailian" {
-			return item, false
-		}
+		mode, resolutions := dramaVideoModel(model.ProviderKind, model.UpstreamModelID)
+		item.Resolutions = resolutions
 		item.MinDuration = 2
-		switch {
-		case isWan27TextVideo(model.UpstreamModelID):
+		switch mode {
+		case wan27TextVideo:
 			item.MaxDuration = 15
-		case model.UpstreamModelID == "wan2.7-r2v", model.UpstreamModelID == "wan2.7-r2v-2026-06-12":
+		case wan27ReferenceVideo:
 			item.MinReferences, item.MaxReferences, item.MaxDuration = 1, 5, 15
-		case model.UpstreamModelID == "wan3.0-video", model.UpstreamModelID == "wan3.0-video-prime":
+		case wan3Video:
 			item.MaxReferences, item.MaxDuration = 10, 30
 		default:
 			return item, false
@@ -147,7 +146,7 @@ func (e *dramaCanvasGenerationEngine) GenerateCanvasMedia(ctx context.Context, i
 		}
 		data, err := e.video.generateVideo(ctx, drama.SegmentVideoRequest{
 			OrganizationID: in.OrganizationID, UserID: in.UserID, ModelCode: in.ModelCode,
-			Prompt: in.Prompt, AspectRatio: in.AspectRatio, Duration: in.Duration, ReferenceImages: references,
+			Prompt: in.Prompt, AspectRatio: in.AspectRatio, Resolution: in.Resolution, Duration: in.Duration, ReferenceImages: references,
 		}, loggedReferences, true)
 		if err != nil {
 			message := "视频生成失败，请查看模型网关调用记录。"

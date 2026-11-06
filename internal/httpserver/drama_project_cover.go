@@ -8,15 +8,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"harness-admin/internal/coverimage"
 	"harness-admin/internal/drama"
 	"harness-admin/internal/httpx"
 )
 
 type DramaProjectCoverService interface {
 	GetProjectCoverGeneration(context.Context, drama.CoverScope) (drama.CoverGeneration, error)
-	StartProjectCoverGeneration(context.Context, drama.CoverScope, string) (drama.CoverGeneration, error)
+	StartProjectCoverGeneration(context.Context, drama.CoverScope, drama.CoverGenerationInput) (drama.CoverGeneration, error)
 	SelectProjectCover(context.Context, drama.CoverScope, drama.CoverSelection) (drama.CoverGeneration, error)
 	ProjectCoverImage(context.Context, drama.CoverScope, string) (drama.CoverImage, error)
+	ListProjectCoverHistory(context.Context, drama.CoverScope) ([]drama.CoverRevision, error)
+	ApplyProjectCoverHistory(context.Context, drama.CoverScope, string) (drama.CoverGeneration, error)
+	UploadProjectCover(context.Context, drama.CoverScope, []byte) (drama.CoverGeneration, error)
 }
 
 func registerDramaProjectCoverRoutes(router *gin.Engine, deps Dependencies) {
@@ -24,29 +28,52 @@ func registerDramaProjectCoverRoutes(router *gin.Engine, deps Dependencies) {
 	service := deps.DramaProjectCover
 	group.GET("/generation", func(c *gin.Context) {
 		state, err := service.GetProjectCoverGeneration(c.Request.Context(), dramaCoverScope(c))
-		writeDramaCoverGeneration(c, deps, http.StatusOK, state, err)
+		writeDramaCoverResponse(c, deps, http.StatusOK, state, err)
 	})
 	group.POST("/generation", requireCSRF(deps), func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
-		var input struct {
-			ModelCode string `json:"modelCode"`
-		}
+		var input drama.CoverGenerationInput
 		if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
-			writeDramaCoverGeneration(c, deps, http.StatusBadRequest, drama.CoverGeneration{}, drama.ErrInvalidInput)
+			writeDramaCoverResponse(c, deps, http.StatusBadRequest, nil, drama.ErrInvalidInput)
 			return
 		}
-		state, err := service.StartProjectCoverGeneration(c.Request.Context(), dramaCoverScope(c), input.ModelCode)
-		writeDramaCoverGeneration(c, deps, http.StatusAccepted, state, err)
+		state, err := service.StartProjectCoverGeneration(c.Request.Context(), dramaCoverScope(c), input)
+		writeDramaCoverResponse(c, deps, http.StatusAccepted, state, err)
 	})
 	group.POST("/selection", requireCSRF(deps), func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
 		var input drama.CoverSelection
 		if err := c.ShouldBindJSON(&input); err != nil {
-			writeDramaCoverGeneration(c, deps, http.StatusBadRequest, drama.CoverGeneration{}, drama.ErrInvalidInput)
+			writeDramaCoverResponse(c, deps, http.StatusBadRequest, nil, drama.ErrInvalidInput)
 			return
 		}
 		state, err := service.SelectProjectCover(c.Request.Context(), dramaCoverScope(c), input)
-		writeDramaCoverGeneration(c, deps, http.StatusOK, state, err)
+		writeDramaCoverResponse(c, deps, http.StatusOK, state, err)
+	})
+	group.GET("/history", func(c *gin.Context) {
+		history, err := service.ListProjectCoverHistory(c.Request.Context(), dramaCoverScope(c))
+		writeDramaCoverResponse(c, deps, http.StatusOK, history, err)
+	})
+	group.POST("/history/apply", requireCSRF(deps), func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+		var input struct {
+			Revision string `json:"revision"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil {
+			writeDramaCoverResponse(c, deps, http.StatusBadRequest, nil, drama.ErrInvalidInput)
+			return
+		}
+		state, err := service.ApplyProjectCoverHistory(c.Request.Context(), dramaCoverScope(c), input.Revision)
+		writeDramaCoverResponse(c, deps, http.StatusOK, state, err)
+	})
+	group.POST("/upload", requireCSRF(deps), func(c *gin.Context) {
+		data, err := readCoverUpload(c)
+		if err != nil {
+			writeDramaCoverResponse(c, deps, http.StatusBadRequest, nil, err)
+			return
+		}
+		state, err := service.UploadProjectCover(c.Request.Context(), dramaCoverScope(c), data)
+		writeDramaCoverResponse(c, deps, http.StatusOK, state, err)
 	})
 	group.GET("/images/:revision", func(c *gin.Context) {
 		c.Header("Cache-Control", "private, no-store")
@@ -67,15 +94,19 @@ func dramaCoverScope(c *gin.Context) drama.CoverScope {
 	return drama.CoverScope{OrganizationID: user.OrganizationID, UserID: user.ID, ProjectID: c.Param("id")}
 }
 
-func writeDramaCoverGeneration(c *gin.Context, deps Dependencies, status int, state drama.CoverGeneration, err error) {
+func writeDramaCoverResponse(c *gin.Context, deps Dependencies, status int, data any, err error) {
 	c.Header("Cache-Control", "private, no-store")
 	if errors.Is(err, drama.ErrCoverConflict) {
 		httpx.Fail(c, http.StatusConflict, "drama_cover_conflict", err.Error())
+		return
+	}
+	if errors.Is(err, coverimage.ErrInvalidUpload) {
+		httpx.Fail(c, http.StatusBadRequest, "drama_cover_invalid_image", err.Error())
 		return
 	}
 	if err != nil {
 		handleDramaError(c, deps, err)
 		return
 	}
-	httpx.OK(c, status, state)
+	httpx.OK(c, status, data)
 }

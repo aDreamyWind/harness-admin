@@ -115,16 +115,25 @@ func TestDramaCanvasGenerationUsesVideoQueryAndAllowsTextOnlyWan3(t *testing.T) 
 	if err != nil || len(models) != 2 || models[0].MaxReferences != 10 || models[0].MaxDuration != 30 || models[1].MaxReferences != 5 {
 		t.Fatalf("视频能力不正确：%+v，%v", models, err)
 	}
+	for _, model := range models {
+		if !slices.Equal(model.Resolutions, []string{drama.VideoResolution720P, drama.VideoResolution1080P}) {
+			t.Fatalf("视频模型清晰度不正确：%+v", model)
+		}
+	}
 	in.ModelCode = "wan3"
+	in.Resolution = drama.VideoResolution1080P
 	data, mime, err := engine.GenerateCanvasMedia(context.Background(), in)
 	if err != nil || mime != "video/mp4" || len(data) == 0 {
 		t.Fatalf("视频生成失败：%s，%v", mime, err)
 	}
-	if strings.Contains(forwarder.payload, `"media"`) || !strings.Contains(forwarder.payload, `"prompt":"风吹起灯笼"`) {
+	if strings.Contains(forwarder.payload, `"media"`) || !strings.Contains(forwarder.payload, `"prompt":"风吹起灯笼"`) || !strings.Contains(forwarder.payload, `"resolution":"1080P"`) {
 		t.Fatalf("万相 3.0 文生视频请求不正确：%s", forwarder.payload)
 	}
 	if len(gateway.records) != 2 || gateway.records[0].Operation != "video" || gateway.records[1].Operation != "video_task_query" {
 		t.Fatalf("视频提交和查询应分别记录：%+v", gateway.records)
+	}
+	if !strings.Contains(string(gateway.records[0].RequestBody), `"resolution":"1080P"`) {
+		t.Fatalf("画布提交记录缺少所选清晰度：%s", gateway.records[0].RequestBody)
 	}
 	for _, call := range gateway.records {
 		if call.Source != "ai_drama" || call.SegmentVideoID != "" || call.RequestID != "canvas-job" {

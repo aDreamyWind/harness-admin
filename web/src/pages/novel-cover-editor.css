@@ -1,13 +1,15 @@
 .novel-cover-editor {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  gap: 16px;
+  grid-template-columns: min(42%, 304px) minmax(0, 1fr);
+  gap: clamp(14px, 3vw, 28px);
   margin-block: 14px;
 }
 
 .novel-cover-editor--comparison {
   grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
 }
+
+.novel-cover-editor--history { grid-template-columns: minmax(0, 1fr); }
 
 .novel-cover-previews {
   display: grid;
@@ -24,6 +26,10 @@
   flex-direction: column;
   min-width: 0;
   margin: 0;
+}
+
+.novel-cover-editor:not(.novel-cover-editor--comparison) .novel-cover-preview {
+  min-height: min(300px, 40dvh);
 }
 
 .novel-cover-preview {
@@ -84,8 +90,9 @@
   .novel-cover-editor--comparison .novel-cover-preview { aspect-ratio: 2 / 3; }
 }
 
-@media (max-width: 460px) {
+@media (max-width: 560px) {
   .novel-cover-editor { grid-template-columns: minmax(0, 1fr); }
-  .novel-cover-editor:not(.novel-cover-editor--comparison) .novel-cover-previews { width: min(100%, 144px); }
+  .novel-cover-editor:not(.novel-cover-editor--comparison) .novel-cover-previews { width: min(100%, 220px, 36dvh); justify-self: center; }
   .novel-cover-preview { min-height: 0; aspect-ratio: 2 / 3; }
+  .novel-cover-editor:not(.novel-cover-editor--comparison) .novel-cover-preview { min-height: 0; }
 }

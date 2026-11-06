@@ -1,4 +1,5 @@
 import { csrfHeaders, request } from './client'
+import type { CoverHistoryItem } from './cover'
 
 export interface DramaModel { code: string; name: string; modelType: string }
 export interface DramaSettings {
@@ -79,6 +80,7 @@ export interface DramaCoverGeneration {
   status: 'idle' | 'running' | 'succeeded' | 'failed'
   jobId?: string
   modelCode?: string
+  instruction?: string
   coverUrl?: string
   candidateUrl?: string
   error?: string
@@ -87,15 +89,31 @@ export interface DramaCoverGeneration {
 export const getDramaCoverGeneration = (id: string, signal?: AbortSignal) =>
   request<DramaCoverGeneration>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/generation`, { signal })
 
-export const startDramaCoverGeneration = (id: string, modelCode: string) =>
+export const startDramaCoverGeneration = (id: string, modelCode: string, instruction: string) =>
   request<DramaCoverGeneration>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/generation`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ modelCode }), keepalive: true,
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ modelCode, instruction }), keepalive: true,
   })
 
 export const chooseDramaCover = (id: string, jobId: string, choice: 'current' | 'candidate') =>
   request<DramaCoverGeneration>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/selection`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ jobId, choice }),
   })
+
+export const listDramaCoverHistory = (id: string, signal?: AbortSignal) =>
+  request<CoverHistoryItem[]>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/history`, { signal })
+
+export const applyDramaCoverHistory = (id: string, revision: string) =>
+  request<DramaCoverGeneration>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/history/apply`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision }),
+  })
+
+export function uploadDramaCover(id: string, file: File) {
+  const body = new FormData()
+  body.append('file', file)
+  return request<DramaCoverGeneration>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/upload`, {
+    method: 'POST', headers: csrfHeaders(), body,
+  })
+}
 
 export const getDramaSource = (id: string) => request<{ sourceText: string }>(`/api/v1/ai-drama/projects/${id}/source`)
 export const retryDramaProject = (id: string) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/retry`, {
@@ -259,14 +277,20 @@ export interface DramaAssetForm {
 export type DramaCanvasCardKind = 'text' | 'image' | 'video' | 'audio'
 export type DramaCanvasGenerationKind = Extract<DramaCanvasCardKind, 'image' | 'video'>
 export type DramaCanvasImageResolution = '1K' | '2K'
-export interface DramaCanvasGenerationModel {
-  code: string; name: string; kind: DramaCanvasGenerationKind
+export type DramaVideoResolution = '720P' | '1080P'
+export type DramaCanvasGenerationModel = {
+  code: string; name: string
   minReferences: number; maxReferences: number; minDuration?: number; maxDuration?: number
-  resolutions?: DramaCanvasImageResolution[]
+} & (
+  { kind: 'image'; resolutions?: DramaCanvasImageResolution[] } |
+  { kind: 'video'; resolutions?: DramaVideoResolution[] }
+)
+export function dramaVideoResolutions(model?: DramaCanvasGenerationModel): DramaVideoResolution[] {
+  return model?.kind === 'video' && model.resolutions?.includes('1080P') ? ['720P', '1080P'] : ['720P']
 }
 export interface DramaCanvasGenerationInput {
   modelCode: string; prompt?: string; aspectRatio?: '16:9' | '9:16' | '1:1'; duration?: number
-  styleId?: string; resolution?: DramaCanvasImageResolution
+  styleId?: string; resolution?: DramaCanvasImageResolution | DramaVideoResolution
 }
 export interface DramaCanvasGenerationJob {
   id: string; nodeId: string; kind: DramaCanvasGenerationKind; modelCode: string
@@ -348,9 +372,9 @@ const segmentVideoBase = (project: string, episode: string, run: string, segment
   `${storyboardBase(project, episode)}/${run}/segments/${segment}/videos`
 export const listDramaSegmentVideos = (project: string, episode: string, run: string, segment: string) =>
   request<DramaSegmentVideo[]>(segmentVideoBase(project, episode, run, segment))
-export const startDramaSegmentVideo = (project: string, episode: string, run: string, segment: string, revision: number) =>
+export const startDramaSegmentVideo = (project: string, episode: string, run: string, segment: string, revision: number, resolution: DramaVideoResolution) =>
   request<DramaSegmentVideo>(segmentVideoBase(project, episode, run, segment), {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision }),
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision, resolution }),
   })
 export const dramaSegmentVideoURL = (project: string, episode: string, run: string, segment: string, video: string) =>
   `${segmentVideoBase(project, episode, run, segment)}/${video}/content`

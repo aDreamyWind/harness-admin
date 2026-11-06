@@ -179,8 +179,22 @@ func TestCoverUploadGenerationAndReplacement(t *testing.T) {
 	if err != nil || img.MIME != "image/png" || !bytes.Equal(img.Data, pngBytes.Bytes()) {
 		t.Fatalf("未读取当前图片: %s %v", img.MIME, err)
 	}
-	if _, err := service.CoverContent(ctx, owner, p.ID, upload.Revision); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("已替换的地址仍可读: %v", err)
+	if image, err := service.CoverContent(ctx, owner, p.ID, upload.Revision); err != nil || !bytes.Equal(image.Data, pngBytes.Bytes()) {
+		t.Fatalf("已替换的封面地址应读取原图片: %v", err)
+	}
+	items, err := service.ListCoverHistory(ctx, owner, p.ID)
+	if err != nil || len(items) != 3 || items[0].Revision != newToken || !items[0].Current || items[0].Source != "ai" ||
+		items[1].Revision != token || items[1].Current || items[2].Revision != upload.Revision || items[2].Source != "upload" {
+		t.Fatalf("历史应包含已替换上传封面和未选用的候选: %+v %v", items, err)
+	}
+	if _, err := service.ListCoverHistory(ctx, other, p.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("其他作者不应读取历史: %v", err)
+	}
+	if _, err := service.ApplyCoverHistory(ctx, other, p.ID, token); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("其他作者不应采用历史封面: %v", err)
+	}
+	if restored, err := service.ApplyCoverHistory(ctx, owner, p.ID, token); err != nil || restored.Revision != token || repo.project.Version != p.Version {
+		t.Fatalf("采用历史候选失败或影响了作品版本: %+v %v", restored, err)
 	}
 	generator.during = func() {
 		if _, err := service.UploadCover(ctx, owner, p.ID, pngBytes.Bytes()); err != nil {

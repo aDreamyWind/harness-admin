@@ -145,6 +145,9 @@ type Repository interface {
 	GetCoverRevision(context.Context, Owner, string) (string, error)
 	GetCover(context.Context, Owner, string, string) (CoverImage, error)
 	SaveCover(context.Context, Owner, string, string, Cover, CoverImage) (Cover, error)
+	SaveCoverVersion(context.Context, Owner, string, Cover, CoverImage) error
+	ListCoverHistory(context.Context, Owner, string) ([]CoverHistoryItem, error)
+	SelectCoverVersion(context.Context, Owner, string, string) (Cover, error)
 }
 
 type Writer interface {

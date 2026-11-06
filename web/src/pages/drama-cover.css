@@ -89,6 +89,8 @@
 
 .drama-cover-dialog-heading strong { color: #253550; overflow-wrap: anywhere; }
 .drama-cover-dialog-heading .ant-tag { margin-inline-end: 0; }
+.drama-cover-dialog > .ant-tabs .ant-tabs-nav { margin-bottom: 14px; }
+.drama-cover-tab { display: grid; gap: 15px; }
 
 .drama-cover-single,
 .drama-cover-comparison {
@@ -153,6 +155,10 @@
 .drama-cover-settings p { margin: 0 0 6px; color: #52647b; font-size: 13px; line-height: 1.65; }
 .drama-cover-settings label { color: #273951; font-size: 13px; font-weight: 600; }
 .drama-cover-settings .drama-cover-helper { margin-top: 3px; color: #63738a; font-size: 12px; }
+.drama-cover-upload-settings { justify-items: start; }
+.drama-cover-upload-preview { aspect-ratio: 2 / 3; }
+.drama-cover-upload-preview :is(.ant-image, img) { width: 100%; height: 100%; }
+.drama-cover-upload-preview img { display: block; object-fit: cover; }
 .drama-cover-running { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 8px; background: #eef3ff; color: #315abb; }
 .drama-cover-running > div { display: grid; gap: 3px; min-width: 0; }
 .drama-cover-running strong { font-size: 13px; }

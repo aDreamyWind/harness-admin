@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,27 @@ import (
 )
 
 var ErrSegmentVideoBusy = errors.New("此片段正在生成视频，请等待任务结束")
+
+const (
+	VideoResolution720P  = "720P"
+	VideoResolution1080P = "1080P"
+)
+
+type SegmentVideoInput struct {
+	Revision   int    `json:"revision"`
+	Resolution string `json:"resolution"`
+}
+
+func NormalizeVideoResolution(value string) (string, error) {
+	switch resolution := strings.TrimSpace(value); resolution {
+	case "", VideoResolution720P:
+		return VideoResolution720P, nil
+	case VideoResolution1080P:
+		return resolution, nil
+	default:
+		return "", fmt.Errorf("%w：视频清晰度可选 720P 或 1080P", ErrInvalidInput)
+	}
+}
 
 type SegmentVideo struct {
 	ID             string    `json:"id"`
@@ -57,6 +79,7 @@ type SegmentVideoMedia interface {
 
 type SegmentVideoRequest struct {
 	OrganizationID, UserID, ModelCode, Prompt, AspectRatio, VideoID string
+	Resolution                                                      string
 	Duration                                                        int
 	ReferenceImages                                                 []string
 	ImageIDs                                                        []string
@@ -89,9 +112,14 @@ func validVideoScope(scope SegmentVideoScope) bool {
 	return validVisualIDs(scope.ProjectID, scope.EpisodeID, scope.RunID, scope.SegmentID)
 }
 
-func (s *Service) StartSegmentVideo(ctx context.Context, scope SegmentVideoScope, revision int) (SegmentVideoJob, error) {
+func (s *Service) StartSegmentVideo(ctx context.Context, scope SegmentVideoScope, in SegmentVideoInput) (SegmentVideoJob, error) {
+	revision := in.Revision
 	if !validVideoScope(scope) || revision < 1 {
 		return SegmentVideoJob{}, ErrInvalidInput
+	}
+	resolution, err := NormalizeVideoResolution(in.Resolution)
+	if err != nil {
+		return SegmentVideoJob{}, err
 	}
 	page, err := s.Storyboards(ctx, scope.OrganizationID, scope.UserID, scope.ProjectID, scope.EpisodeID, scope.RunID)
 	if err != nil {
@@ -121,6 +149,17 @@ func (s *Service) StartSegmentVideo(ctx context.Context, scope SegmentVideoScope
 	if settings.VideoModelCode == "" {
 		return SegmentVideoJob{}, fmt.Errorf("%w：请先在 AI 漫剧设置中选择视频模型", ErrModelNotConfigured)
 	}
+	if resolution != VideoResolution720P {
+		models, err := s.ListCanvasGenerationModels(ctx, scope.OrganizationID, scope.UserID)
+		if err != nil {
+			return SegmentVideoJob{}, err
+		}
+		if !slices.ContainsFunc(models, func(model CanvasGenerationModel) bool {
+			return model.Code == settings.VideoModelCode && model.Kind == "video" && model.MaxReferences > 0 && slices.Contains(model.Resolutions, resolution)
+		}) {
+			return SegmentVideoJob{}, fmt.Errorf("%w：当前分镜模型不支持 %s，请更换清晰度或视频模型", ErrInvalidInput, resolution)
+		}
+	}
 	forms := page.CatalogForms
 	if forms == nil {
 		forms = page.Forms
@@ -134,6 +173,7 @@ func (s *Service) StartSegmentVideo(ctx context.Context, scope SegmentVideoScope
 		return SegmentVideoJob{}, err
 	}
 	request.OrganizationID, request.UserID, request.ModelCode = scope.OrganizationID, scope.UserID, settings.VideoModelCode
+	request.Resolution = resolution
 	video, err := s.segmentVideos.CreateSegmentVideo(ctx, scope, SegmentVideo{
 		ID: uuid.NewString(), SegmentID: scope.SegmentID, Revision: revision, ModelCode: request.ModelCode,
 		Duration: request.Duration, ImageIDs: request.ImageIDs,

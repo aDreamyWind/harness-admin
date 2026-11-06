@@ -13,7 +13,7 @@ import (
 )
 
 type DramaSegmentVideoService interface {
-	StartSegmentVideo(context.Context, drama.SegmentVideoScope, int) (drama.SegmentVideoJob, error)
+	StartSegmentVideo(context.Context, drama.SegmentVideoScope, drama.SegmentVideoInput) (drama.SegmentVideoJob, error)
 	GenerateSegmentVideo(drama.SegmentVideoJob) error
 	SegmentVideos(context.Context, drama.SegmentVideoScope) ([]drama.SegmentVideo, error)
 	SegmentVideoCalls(context.Context, drama.SegmentVideoScope, string) ([]drama.SegmentVideoCall, error)
@@ -37,14 +37,12 @@ func registerDramaSegmentVideoRoutes(router *gin.Engine, deps Dependencies) {
 		httpx.OK(c, http.StatusOK, jobs)
 	})
 	group.POST("", requireCSRF(deps), func(c *gin.Context) {
-		var in struct {
-			Revision int `json:"revision"`
-		}
+		var in drama.SegmentVideoInput
 		if err := c.ShouldBindJSON(&in); err != nil || in.Revision < 1 {
 			handleDramaError(c, deps, drama.ErrInvalidInput)
 			return
 		}
-		job, err := deps.DramaSegmentVideos.StartSegmentVideo(c.Request.Context(), segmentVideoScope(c), in.Revision)
+		job, err := deps.DramaSegmentVideos.StartSegmentVideo(c.Request.Context(), segmentVideoScope(c), in)
 		if errors.Is(err, drama.ErrSegmentVideoBusy) {
 			httpx.Fail(c, http.StatusConflict, "drama_video_busy", err.Error())
 			return

@@ -8,7 +8,7 @@ import {
 
 export const tryOnCategories = ['上衣', '外套', '裤子', '半裙', '连衣裙', '鞋履', '包袋', '首饰', '其他配饰']
 export const tryOnLabels: Record<TryOnKind, string> = {
-  person_2d: '2D 插画', person_real: '真人 / 写实', garment: '衣物', pose: '姿态',
+  person_2d: '动漫', person_real: '真人 / 写实', garment: '衣物', pose: '姿态',
 }
 const maxGarmentsPerBatch = 8
 
@@ -77,9 +77,9 @@ const referenceGeneration: Record<TryOnKind, { action: string; guide: string; re
     review: '请确认动作、身体朝向和视角。',
   },
   person_2d: {
-    action: '生成 2D 人物图',
-    guide: '保留角色特征和插画画风，生成适合试衣的全身人物图。',
-    review: '请确认角色特征和画风。',
+    action: '生成动漫角色',
+    guide: '生成适合试衣的全身动漫角色。动漫参考图尽量保留原画风，照片会转成动漫风格。',
+    review: '请确认脸型、发型和画风。',
   },
   person_real: {
     action: '生成写实人物图',
@@ -306,14 +306,14 @@ export function TryOnAssetDialog({ kind: initialKind, open = true, models, image
           : <Button key="primary" type="primary" onClick={() => awaitingPreview ? void generateReference() : void save()}
             disabled={busy || !(awaitingPreview ? canGenerateReference : ready)}
             loading={working === 'save' || (awaitingPreview && working === 'generate')}>
-            {mode === 'generate' ? '生成人物并入库' : awaitingPreview ? instructions.action : '确认保存生成图'}
+            {mode === 'generate' ? `${instructions.action}并入库` : awaitingPreview ? instructions.action : '确认保存生成图'}
           </Button>,
       ]}>
       <div className="tryon-dialog">
         {error && <Alert type="error" showIcon title={error} />}
         {person && <Space wrap>
           <Segmented<TryOnKind> value={kind} disabled={busy} onChange={(value) => { clearResult(); setKind(value) }} options={[
-            { label: '2D 插画', value: 'person_2d' }, { label: '真人 / 写实', value: 'person_real' },
+            { label: tryOnLabels.person_2d, value: 'person_2d' }, { label: tryOnLabels.person_real, value: 'person_real' },
           ]} />
           <Segmented<'upload' | 'generate'> value={mode} disabled={busy} onChange={(value) => { clearResult(); setMode(value) }} options={[
             { label: '参考图生成', value: 'upload' }, { label: '文字生成人物', value: 'generate' },
@@ -347,7 +347,7 @@ export function TryOnAssetDialog({ kind: initialKind, open = true, models, image
             <button className="tryon-drop" type="button" disabled={busy} onClick={() => input.current?.click()}
               onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); void pick(e.dataTransfer.files[0]) }}>
               <CloudUploadOutlined /><strong>{working === 'upload' ? '正在读取图片' : '点击、拖入或粘贴图片'}</strong>
-              <span>{person || kind === 'pose' ? '推荐单人、全身清晰、遮挡少的照片或插画' : '支持 JPG、PNG 和 WebP'}</span>
+              <span>{kind === 'person_2d' ? '推荐清晰、遮挡少的单人动漫图或照片' : garment ? '支持 JPG、PNG 和 WebP' : '推荐单人、全身清晰、遮挡少的照片或插画'}</span>
             </button>}
           {garment && file && <>
             <Space wrap>
@@ -389,7 +389,9 @@ export function TryOnAssetDialog({ kind: initialKind, open = true, models, image
           <label>图片模型<Select placeholder="请选择支持文生图的模型" value={personModel} disabled={busy}
             options={models?.person.map((item) => ({ label: item.name, value: item.code }))} onChange={setPersonModel} /></label>
           <label>人物描述<Input.TextArea value={description} disabled={busy} maxLength={1000} rows={3}
-            placeholder="例如：短发女性，体型匀称，复古漫画线条和低饱和配色" onChange={(e) => setDescription(e.target.value)} /></label>
+            placeholder={kind === 'person_2d' ? '例如：银色层次短发、灰眼、窄脸的青年，清爽的日系赛璐璐画风'
+              : '例如：黑色齐肩卷发、鹅蛋脸的女性，体型匀称，自然棚拍质感'}
+            onChange={(e) => setDescription(e.target.value)} /></label>
           {working === 'save' && <Alert type="info" title="正在生成并保存人物，请保留此窗口。" />}
         </>}
         {!recognizing && <div className="tryon-fields">

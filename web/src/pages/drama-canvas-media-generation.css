@@ -52,6 +52,7 @@
 .drama-canvas-composer-video-size { display:flex; flex:none; align-items:center; gap:5px; }
 .drama-canvas-composer-video-size > .drama-canvas-composer-ratio { width:65px; }
 .drama-canvas-composer-video-size > .ant-input-number { width:61px; }
+.drama-canvas-composer-video-size > .drama-canvas-composer-video-resolution { width:80px; }
 .drama-canvas-composer-toolbar .ant-select { min-height:30px; font-size:12px; }
 .drama-canvas-composer-toolbar .ant-select-selector { border-radius:999px; }
 .drama-canvas-composer-generate.ant-btn { flex:none; height:30px; margin-left:auto; padding-inline:12px; border-radius:999px; font-weight:600; }

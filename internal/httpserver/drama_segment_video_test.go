@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ func (videoTestFile) Close() error { return nil }
 
 type segmentVideoHTTPStub struct {
 	scope     drama.SegmentVideoScope
+	inputs    []drama.SegmentVideoInput
 	generated chan string
 }
 
@@ -26,9 +28,10 @@ func (s *segmentVideoHTTPStub) SegmentVideos(_ context.Context, scope drama.Segm
 	s.scope = scope
 	return []drama.SegmentVideo{}, nil
 }
-func (s *segmentVideoHTTPStub) StartSegmentVideo(_ context.Context, scope drama.SegmentVideoScope, revision int) (drama.SegmentVideoJob, error) {
+func (s *segmentVideoHTTPStub) StartSegmentVideo(_ context.Context, scope drama.SegmentVideoScope, input drama.SegmentVideoInput) (drama.SegmentVideoJob, error) {
 	s.scope = scope
-	if revision != 2 {
+	s.inputs = append(s.inputs, input)
+	if input.Revision != 2 {
 		return drama.SegmentVideoJob{}, drama.ErrStoryboardConflict
 	}
 	return drama.SegmentVideoJob{Video: drama.SegmentVideo{ID: "video", Status: "running"}}, nil
@@ -54,7 +57,7 @@ func (s *segmentVideoHTTPStub) SegmentVideoCalls(_ context.Context, scope drama.
 }
 
 func TestSegmentVideoRoutesEnforceSessionCSRFAndServeRanges(t *testing.T) {
-	stub := &segmentVideoHTTPStub{generated: make(chan string, 1)}
+	stub := &segmentVideoHTTPStub{generated: make(chan string, 2)}
 	session := accountTestSession()
 	router := New(Dependencies{AppName: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: &csrfCheckingAuthStub{&accountAuthStub{session: session}}, DramaSegmentVideos: stub, SessionCookie: "session"})
 	base := "/api/v1/ai-drama/projects/project/video-episodes/episode/storyboards/run/segments/segment/videos"
@@ -66,8 +69,10 @@ func TestSegmentVideoRoutesEnforceSessionCSRFAndServeRanges(t *testing.T) {
 		{"GET", base, "", false, false, 401},
 		{"GET", base, "", true, false, 200},
 		{"POST", base, `{"revision":2}`, true, false, 403},
+		{"POST", base, `{"revision":2,"resolution":1080}`, true, true, 400},
 		{"POST", base, `{"revision":1}`, true, true, 409},
 		{"POST", base, `{"revision":2}`, true, true, 202},
+		{"POST", base, `{"revision":2,"resolution":"1080P"}`, true, true, 202},
 		{"GET", base + "/video/calls", "", false, false, 401},
 		{"GET", base + "/video/calls", "", true, false, 200},
 		{"GET", base + "/missing/calls", "", true, false, 404},
@@ -97,12 +102,17 @@ func TestSegmentVideoRoutesEnforceSessionCSRFAndServeRanges(t *testing.T) {
 	if stub.scope.OrganizationID != session.User.OrganizationID || stub.scope.UserID != session.User.ID || stub.scope.SegmentID != "segment" || stub.scope.RunID != "run" {
 		t.Fatalf("视频查询范围错误：%+v", stub.scope)
 	}
-	select {
-	case id := <-stub.generated:
-		if id != "video" {
-			t.Fatal(id)
+	if !slices.Equal(stub.inputs, []drama.SegmentVideoInput{{Revision: 1}, {Revision: 2}, {Revision: 2, Resolution: "1080P"}}) {
+		t.Fatalf("片段视频生成参数未正确传入服务：%+v", stub.inputs)
+	}
+	for range 2 {
+		select {
+		case id := <-stub.generated:
+			if id != "video" {
+				t.Fatal(id)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("未启动后台任务")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("未启动后台任务")
 	}
 }

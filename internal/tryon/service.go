@@ -269,14 +269,9 @@ func (s *Service) GeneratePerson(ctx context.Context, owner Owner, in PersonInpu
 	if !validModelCode(in.ModelCode) {
 		return Asset{}, ErrModel
 	}
-	style := "清晰的二维插画，保持所描述的画风"
-	if in.Kind == PersonReal {
-		style = "真实摄影风格，自然光线和真实人体比例"
-	}
-	prompt := "生成一张可用于服装试穿的单人人物全身底图。" + style + "。人物正面自然站立，手臂与身体稍分开，头和脚完整可见，穿着简洁的日常衣服，使用单色背景，不加文字或边框。人物描述：" + desc
 	ctx, cancel := context.WithTimeout(ctx, jobTimeout)
 	defer cancel()
-	im, err := s.engine.Generate(ctx, owner, in.ModelCode, "person_generate", prompt, nil)
+	im, err := s.engine.Generate(ctx, owner, in.ModelCode, "person_generate", personGenerationPrompt(in.Kind, desc), nil)
 	if err != nil {
 		return Asset{}, err
 	}
@@ -285,6 +280,18 @@ func (s *Service) GeneratePerson(ctx context.Context, owner Owner, in PersonInpu
 		return Asset{}, fmt.Errorf("%w：%v", ErrInference, err)
 	}
 	return s.repo.SaveAsset(ctx, owner, AssetImage{Asset: meta, Image: im})
+}
+
+func personGenerationPrompt(kind, description string) string {
+	style := "生成动漫角色图。遵循描述中的角色设定和指定的动漫画风。没有指定画风时，采用" + defaultAnimePersonStyle
+	clothing := "保留描述中的服装与配饰。未指定服装时，穿着简洁的日常衣服。"
+	if kind == PersonReal {
+		style = "真实摄影风格，自然光线和真实人体比例。"
+		clothing = "穿着简洁的日常衣服。"
+	}
+	return "生成一张可用于服装试穿的单人人物全身底图。" + style +
+		"人物正面自然站立，手臂与身体稍分开，头和脚完整可见。" + clothing +
+		"使用单色背景，不加文字或边框。人物描述：" + description
 }
 
 func (s *Service) ListJobs(ctx context.Context, owner Owner) ([]Job, error) {
@@ -304,10 +311,6 @@ func validModelCode(code string) bool {
 }
 
 func tryonPrompt(kind, category string, pose bool) string {
-	style := "保留图 1 的插画画风、线条、配色方式和人物设定。"
-	if kind == PersonReal {
-		style = "保留图 1 的摄影质感、肤色和自然人体比例。"
-	}
 	action := "保持图 1 的姿势、镜头视角与构图。"
 	if pose {
 		action = "图 3 只提供动作、朝向与姿势。忽略图 3 的人物身份、衣物、画风和背景。"
@@ -316,7 +319,14 @@ func tryonPrompt(kind, category string, pose bool) string {
 	if category == "外套" {
 		layering = "把外套套在图 1 原有上衣外面。领口和门襟开口露出的部分保留原内搭的领型、颜色和纹理，不增加裸露皮肤。外套下摆与袖口的相对高度以图 2 为准，不随原有裙裤的长度延伸。"
 	}
-	return "生成一张虚拟试穿图。图 1 是要保留的唯一人物，保持其五官、发型、身份特征和身材。" + style +
+	return "生成一张虚拟试穿图。图 1 是要保留的唯一人物，保持其五官、发型、身份特征和身材。" + tryOnPersonStyle(kind) +
 		"图 2 是要试穿的" + category + "。按图 2 的颜色、材质、图案和版型穿戴，保持领型、袖长、下摆位置、门襟开合以及口袋和纽扣的数量及位置。若图 2 有其他人物，忽略其身份和未指定的衣物。" +
 		layering + action + "保留图 1 的背景和未被目标衣物遮挡的其他衣物、配饰。输出一张完整的人物试穿效果图，不拼图、不标注文字。"
+}
+
+func tryOnPersonStyle(kind string) string {
+	if kind == PersonReal {
+		return "保留图 1 的摄影质感、肤色和自然人体比例。"
+	}
+	return "保留图 1 的角色设定、线条、配色和光影。沿用图 1 的原画风绘制换上的服装。"
 }
