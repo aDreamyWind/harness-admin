@@ -1,0 +1,113 @@
+.drama-canvas-mention-picker {
+  position: fixed;
+  z-index: 1100;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e2e7f1;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 14px 40px #26375424, 0 2px 6px #2637540f;
+  color: #252e43;
+  font: inherit;
+  font-size: 13px;
+}
+
+.drama-canvas-mention-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #edf0f6;
+}
+
+.drama-canvas-mention-heading > span,
+.drama-canvas-mention-list small,
+.drama-canvas-mention-hint {
+  color: #5e6d86;
+  font-size: 11px;
+}
+
+.drama-canvas-mention-heading > span {
+  white-space: nowrap;
+}
+
+.drama-canvas-mention-list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+}
+
+.drama-canvas-mention-list > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drama-canvas-mention-list > button:hover,
+.drama-canvas-mention-list > button[aria-selected="true"] {
+  background: #f0ebfa;
+  color: #513d9e;
+}
+
+.drama-canvas-mention-list strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.drama-canvas-mention-list small {
+  flex: none;
+}
+
+.drama-canvas-mention-thumbnail {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #f2effa;
+  color: #755ac9;
+}
+
+.drama-canvas-mention-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.drama-canvas-mention-list > p,
+.drama-canvas-mention-hint {
+  margin: 0;
+  padding: 8px;
+  color: #5e6d86;
+}
+
+.drama-canvas-mention-hint {
+  padding-inline: 12px;
+  border-top: 1px solid #edf0f6;
+}
+
+@media (pointer: coarse) {
+  .drama-canvas-mention-heading > span { display: none; }
+  .drama-canvas-mention-list > button { min-height: 44px; }
+}

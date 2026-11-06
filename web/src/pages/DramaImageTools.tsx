@@ -9,12 +9,13 @@ export function useDramaCanvas(projectId: string) {
     refetchInterval: (query) => query.state.data?.forms.some((f) => f.imageStatus === 'queued' || f.imageStatus === 'running') ? 3000 : false,
   })
 }
-export function DramaImageModelSelect() {
+export function DramaImageModelSelect({ compact, disabled }: { compact?: boolean; disabled?: boolean } = {}) {
   const [messageApi, holder] = message.useMessage()
   const models = useQuery({ queryKey: ['drama-models'], queryFn: listDramaModels })
   const settings = useQuery({ queryKey: ['drama-settings'], queryFn: getDramaSettings })
   return <>{holder}<Select aria-label="图片模型" placeholder="设置图片模型" loading={models.isLoading || settings.isLoading} value={settings.data?.imageModelCode || undefined}
-    style={{ minWidth: 180, maxWidth: 300 }} options={models.data?.filter((m) => m.modelType === 'image').map((m) => ({ value: m.code, label: m.name }))}
+    disabled={disabled} className={compact ? 'drama-canvas-composer-model' : undefined} size={compact ? 'small' : undefined}
+    style={compact ? undefined : { minWidth: 180, maxWidth: 300 }} options={models.data?.filter((m) => m.modelType === 'image').map((m) => ({ value: m.code, label: m.name }))}
     onChange={async (value: string) => { try { const current = await getDramaSettings(); await saveDramaSettings({ ...current, imageModelCode: value }); await settings.refetch() } catch (error) { messageApi.error(error instanceof Error ? error.message : '保存图片模型失败') } }}
     notFoundContent={models.error ? '读取模型失败' : '暂无已启用且有权限的图片模型'} /></>
 }

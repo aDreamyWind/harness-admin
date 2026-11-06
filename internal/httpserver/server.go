@@ -41,6 +41,7 @@ type Dependencies struct {
 	Novel                 NovelService
 	TryOn                 TryOnService
 	Drama                 DramaService
+	DramaProjectCover     DramaProjectCoverService
 	DramaVisual           DramaVisualService
 	DramaCanvasMedia      DramaCanvasMediaService
 	DramaCanvasGeneration DramaCanvasGenerationService
@@ -135,6 +136,9 @@ func New(deps Dependencies) http.Handler {
 	}
 	if deps.Auth != nil && deps.Drama != nil {
 		registerDramaRoutes(router, deps)
+	}
+	if deps.Auth != nil && deps.DramaProjectCover != nil {
+		registerDramaProjectCoverRoutes(router, deps)
 	}
 	if deps.Auth != nil && deps.DramaSegmentVideos != nil {
 		registerDramaSegmentVideoRoutes(router, deps)

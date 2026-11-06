@@ -10,6 +10,7 @@ export interface TryOnAsset {
   category?: string
   builtin?: boolean
   retired?: boolean
+  deleted?: boolean
   createdAt: string
 }
 export interface TryOnCandidate {
@@ -21,13 +22,35 @@ export interface TryOnModel { code: string; name: string }
 export interface TryOnModels { detection: TryOnModel[]; image: TryOnModel[]; person: TryOnModel[] }
 export interface TryOnInput {
   personId: string
-  garmentId: string
+  garmentIds: string[]
   poseId?: string
   modelCode: string
 }
-export interface TryOnJob extends TryOnInput {
+export interface TryOnJob extends Omit<TryOnInput, 'garmentIds'> {
   id: string
-  status: 'running' | 'succeeded' | 'failed'
+  garmentId?: string
+  garmentIds?: string[]
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  error?: string
+  createdAt: string
+}
+export interface TryOnOutfit {
+  id: string
+  name: string
+  garmentIds: string[]
+  createdAt: string
+}
+export interface TryOnGarmentItem {
+  name: string
+  category: string
+  box?: TryOnBox
+}
+export interface TryOnGarmentJob {
+  id: string
+  name: string
+  category: string
+  modelCode: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'saved'
   error?: string
   createdAt: string
 }
@@ -36,8 +59,20 @@ const base = '/api/v1/ai-tryon'
 export const getTryOnModels = () => request<TryOnModels>(base + '/models')
 export const getTryOnAssets = () => request<TryOnAsset[]>(base + '/assets')
 export const getTryOnJobs = () => request<TryOnJob[]>(base + '/jobs')
+export const getTryOnOutfits = () => request<TryOnOutfit[]>(base + '/outfits')
+export const deleteTryOnOutfit = (id: string) =>
+  request<{ deleted: true }>(base + '/outfits/' + encodeURIComponent(id), { method: 'DELETE', headers: csrfHeaders() })
+export const deleteTryOnAsset = (id: string) =>
+  request<{ deleted: true }>(base + '/assets/' + encodeURIComponent(id), { method: 'DELETE', headers: csrfHeaders() })
 export const tryOnAssetURL = (id: string) => base + '/assets/' + encodeURIComponent(id) + '/content'
 export const tryOnResultURL = (id: string) => base + '/jobs/' + encodeURIComponent(id) + '/result'
+const garmentJobPath = (id: string) => '/garment-jobs/' + encodeURIComponent(id)
+export const tryOnGarmentResultURL = (id: string) => base + garmentJobPath(id) + '/result'
+export const getTryOnGarmentJobs = () => request<TryOnGarmentJob[]>(base + '/garment-jobs')
+export const saveTryOnGarmentJob = (id: string) =>
+  request<TryOnAsset>(base + garmentJobPath(id) + '/save', { method: 'POST', headers: csrfHeaders() })
+export const retryTryOnGarmentJob = (id: string) =>
+  request<TryOnGarmentJob>(base + garmentJobPath(id) + '/retry', { method: 'POST', headers: csrfHeaders() })
 
 function postJSON<T>(path: string, data: object) {
   return request<T>(base + path, {
@@ -53,10 +88,14 @@ function imageRequest(file: File, fields: Record<string, string>): RequestInit {
 }
 
 export const startTryOn = (input: TryOnInput) => postJSON<TryOnJob>('/jobs', input)
+export const createTryOnOutfit = (input: { name: string; garmentIds: string[] }) =>
+  postJSON<TryOnOutfit>('/outfits', input)
 export const generateTryOnPerson = (input: { kind: TryOnKind; name: string; description: string; modelCode: string }) =>
   postJSON<TryOnAsset>('/people/generate', input)
 export const detectTryOnGarments = (file: File, modelCode: string) =>
   request<TryOnCandidate[]>(base + '/garments/detect', imageRequest(file, { modelCode }))
+export const queueTryOnGarments = (file: File, modelCode: string, items: TryOnGarmentItem[]) =>
+  request<TryOnGarmentJob[]>(base + '/garment-jobs', imageRequest(file, { modelCode, items: JSON.stringify(items) }))
 
 export async function previewTryOnAsset(file: File, input: {
   kind: TryOnKind

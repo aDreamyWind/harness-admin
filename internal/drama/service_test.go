@@ -193,6 +193,25 @@ func (r *fakeRepository) UpdateOverview(_ context.Context, _, _, _ string, value
 	r.project.Overview = value
 	return r.project, nil
 }
+func (r *fakeRepository) UpdateProjectVisualSettings(_ context.Context, organizationID, ownerID, id string, settings ProjectVisualSettings) (ProjectVisualSettings, error) {
+	if r.project.OrganizationID != organizationID || r.project.OwnerID != ownerID || r.project.ID != id {
+		return ProjectVisualSettings{}, ErrNotFound
+	}
+	if settings.StyleID != "" {
+		r.project.StyleID, r.project.Style = settings.StyleID, settings.Style
+	}
+	if settings.AspectRatio != "" {
+		r.project.AspectRatio = settings.AspectRatio
+	}
+	return settings, nil
+}
+func (r *fakeRepository) RenameProject(_ context.Context, organizationID, ownerID, id, title string) (ProjectTitle, error) {
+	if r.project.OrganizationID != organizationID || r.project.OwnerID != ownerID || r.project.ID != id {
+		return ProjectTitle{}, ErrNotFound
+	}
+	r.project.Title = title
+	return ProjectTitle{Title: title}, nil
+}
 func (r *fakeRepository) FailInterrupted(context.Context) error { return nil }
 func (r *fakeRepository) SaveGeneratedScript(_ context.Context, _, _, _, script string) error {
 	r.project.SourceText = script
@@ -371,6 +390,29 @@ func TestAnalyzeRetrySkipsCompletedOverview(t *testing.T) {
 	}
 	if len(writer.prompts) != 0 || len(repo.stages) != 1 || repo.stages[0] != "overview_done" || repo.project.Status != "ready" {
 		t.Fatalf("重试应复用已有概览并结束自动解析: 调用 %d 次，阶段 %v", len(writer.prompts), repo.stages)
+	}
+}
+
+func TestRenameProjectValidatesTitleAndScope(t *testing.T) {
+	ctx := context.Background()
+	id := uuid.NewString()
+	repo := &fakeRepository{project: Project{ID: id, OrganizationID: "org", OwnerID: "user", Title: "原标题"}}
+	service := NewService(repo, &fakeWriter{})
+	for _, title := range []string{"　 ", strings.Repeat("章", 121), "标题\x00", string([]byte{0xff})} {
+		if _, err := service.RenameProject(ctx, "org", "user", id, title); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("无效的标题未被拒绝: %v", err)
+		}
+	}
+	if _, err := service.RenameProject(ctx, "org", "user", "错误项目编号", "新标题"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("无效的项目编号未被拒绝: %v", err)
+	}
+	if _, err := service.RenameProject(ctx, "org", "其他用户", id, "越权标题"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("其他用户不应能改名: %v", err)
+	}
+	title := strings.Repeat("章", 120)
+	renamed, err := service.RenameProject(ctx, "org", "user", id, "　"+title+" ")
+	if err != nil || renamed.Title != title || repo.project.Title != title {
+		t.Fatalf("标题应去除首尾空白并保存: %v %+v", err, renamed)
 	}
 }
 

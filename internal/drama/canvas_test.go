@@ -3,9 +3,12 @@ package drama
 import (
 	"context"
 	"errors"
-	"github.com/google/uuid"
 	"math"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 type visualRepoStub struct {
@@ -100,4 +103,82 @@ func TestImageFailureIsPersistedAndModelSettingRequired(t *testing.T) {
 	if err := s.GenerateImage(ImageJob{ID: id}); err == nil || repo.job.Status != "failed" || repo.job.Error != "图片模型响应超时，请重试。" {
 		t.Fatalf("失败任务未保存 %+v %v", repo.job, err)
 	}
+}
+
+func TestAssetImageUsesCanvasReferenceSnapshotAndOriginalJob(t *testing.T) {
+	project, parent, child, actor := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	parentImage, actorImage := uuid.NewString(), uuid.NewString()
+	upload, generated, uploadFile, resultFile := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	visual := &assetCanvasVisualStub{parentImage: parentImage, canvas: Canvas{
+		Revision: 7,
+		Forms: []AssetForm{
+			{ID: parent, AssetName: "林夏", CurrentImageID: uuid.NewString()},
+			{ID: child, AssetName: "林夏", ParentID: parent},
+			{ID: actor, AssetName: "守门人", ParentID: uuid.NewString(), Name: "雨夜服饰", CurrentImageID: actorImage},
+		},
+		Extras: &CanvasExtras{
+			Cards: []CanvasCard{
+				{ID: upload, Kind: "image", Title: "服装", Content: canvasGenerationResultURL(project, uploadFile)},
+				{ID: generated, Kind: "image", Title: "灯塔"},
+			},
+			Links: []CanvasLink{{Source: upload, Target: child}, {Source: parent, Target: child},
+				{Source: actor, Target: child}, {Source: generated, Target: child}},
+		},
+	}}
+	jobs := &canvasGenerationJobsStub{jobs: map[string]CanvasGenerationJob{generated: {ResultMediaID: resultFile}}}
+	png := []byte("\x89PNG\r\n\x1a\n")
+	media := &canvasGenerationFilesStub{referenceID: uploadFile, otherReferenceID: resultFile, data: png}
+	engine := &canvasGenerationEngineStub{started: make(chan CanvasGenerationRequest, 1), proceed: make(chan struct{}), data: png,
+		models: []CanvasGenerationModel{{Code: "painter", Kind: "image", MaxReferences: 4}}}
+	close(engine.proceed)
+	service := NewService(&fakeRepository{settings: Settings{ImageModelCode: "painter"}}, &fakeWriter{}).
+		WithVisuals(visual, &visualGeneratorStub{err: errors.New("不应使用仅支持单张父图的引擎")}, &assetCanvasFilesStub{}).
+		WithCanvasGeneration(jobs, engine).WithCanvasMedia(media)
+	ctx := context.Background()
+	if _, err := service.StartImage(ctx, "org", "user", project, child, ImageInput{CanvasRevision: new(6)}); !errors.Is(err, ErrCanvasConflict) || visual.calls != 0 {
+		t.Fatalf("未阻止使用过期连线的资产生图：%v", err)
+	}
+	job, err := service.StartImage(ctx, "org", "user", project, child, ImageInput{CanvasRevision: new(7), Prompt: "换衣"})
+	if err != nil || job.Status != "queued" {
+		t.Fatalf("资产生图未入队：%+v %v", job, err)
+	}
+	visual.canvas.Extras.Links = nil
+	if err := service.GenerateImage(job); err != nil {
+		t.Fatal(err)
+	}
+	request := awaitCanvasGenerationTest(t, engine.started)
+	if request.JobID != job.ID || !reflect.DeepEqual(request.ReferenceIDs, []string{parent, upload, actor, generated}) ||
+		!reflect.DeepEqual(request.ReferenceImages, []string{imageDataURI("image/png", []byte(parentImage)), imageDataURI("image/png", png), imageDataURI("image/png", []byte(actorImage)), imageDataURI("image/png", png)}) ||
+		!strings.Contains(request.Prompt, "图1（Image 1）：林夏\n图2（Image 2）：服装\n图3（Image 3）：守门人 · 雨夜服饰\n图4（Image 4）：灯塔") {
+		t.Fatalf("未按保存的入边、图片版本和参考图顺序生成：%+v", request)
+	}
+	if visual.job.Status != "succeeded" || visual.job.FormID != child || visual.job.StorageKey != "image.png" {
+		t.Fatalf("结果未保存到原形象任务：%+v", visual.job)
+	}
+}
+
+type assetCanvasVisualStub struct {
+	visualRepoStub
+	canvas      Canvas
+	parentImage string
+}
+
+func (s *assetCanvasVisualStub) ReadCanvas(context.Context, string, string, string) (Canvas, error) {
+	return s.canvas, nil
+}
+
+func (s *assetCanvasVisualStub) QueueImage(_ context.Context, org, user, project, form, model string, in ImageInput) (ImageJob, error) {
+	s.calls++
+	return ImageJob{ID: uuid.NewString(), OrganizationID: org, UserID: user, ProjectID: project, FormID: form,
+		ModelCode: model, AspectRatio: "9:16", Prompt: in.Prompt + in.ReferenceGuide, ReferenceID: s.parentImage, Status: "queued"}, nil
+}
+
+func (s *assetCanvasVisualStub) ReadImage(_ context.Context, _, _, _, id string) (ImageJob, error) {
+	return ImageJob{StorageKey: id}, nil
+}
+
+type assetCanvasFilesStub struct{ visualFilesStub }
+
+func (*assetCanvasFilesStub) Get(_ context.Context, key string) ([]byte, string, error) {
+	return []byte(key), "image/png", nil
 }

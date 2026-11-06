@@ -19,6 +19,12 @@ func (styleRepoStub) ResolveStyle(_ context.Context, key string) (VisualStyle, e
 	}
 	return VisualStyle{StyleOption: StyleOption{ID: "dark-concept", Name: "黑暗原画概念风"}, ImagePrompt: "私有生图模板", VideoPrompt: "私有视频模板"}, nil
 }
+func (s styleRepoStub) ResolveCatalogStyle(ctx context.Context, id string) (VisualStyle, error) {
+	if id != "dark-concept" {
+		return VisualStyle{}, ErrStyleUnavailable
+	}
+	return s.ResolveStyle(ctx, id)
+}
 func TestStylePrivateTemplatesNeverSerializeAndIDIsValidated(t *testing.T) {
 	service := NewService(&fakeRepository{settings: Settings{TextModelCode: "writer"}}, &fakeWriter{}).WithStyles(styleRepoStub{})
 	input := CreateInput{OrganizationID: "org", OwnerID: "user", Title: "风格测试", SourceText: "甲走入屋内。", SourceMode: "upload", StyleID: "dark-concept", Style: "伪造风格名", AspectRatio: "16:9"}

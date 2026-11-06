@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"harness-admin/internal/drama"
@@ -51,6 +52,7 @@ func canvasGenerationModel(model modelgateway.AvailableModel) (drama.CanvasGener
 	item := drama.CanvasGenerationModel{Code: model.Code, Name: model.Name, Kind: model.ModelType}
 	switch model.ModelType {
 	case "image":
+		item.Resolutions = []string{drama.CanvasResolution1K}
 		switch {
 		case model.ProviderKind == "openai_compatible":
 			if supportsTryOnImage(model) {
@@ -60,8 +62,10 @@ func canvasGenerationModel(model modelgateway.AvailableModel) (drama.CanvasGener
 			return item, false
 		case isImageSeries(model.UpstreamModelID, "qwen-image-2.1"):
 			item.MaxReferences = 10
+			item.Resolutions = append(item.Resolutions, drama.CanvasResolution2K)
 		case isImageSeries(model.UpstreamModelID, "qwen-image-2.0", "qwen-image-3.0"):
 			item.MaxReferences = 3
+			item.Resolutions = append(item.Resolutions, drama.CanvasResolution2K)
 		case isImageSeries(model.UpstreamModelID, "qwen-image-edit-plus", "qwen-image-edit-max"):
 			item.MinReferences, item.MaxReferences = 1, 3
 		default:
@@ -102,6 +106,9 @@ func (e *dramaCanvasGenerationEngine) GenerateCanvasMedia(ctx context.Context, i
 	}
 	if selected.Code == "" {
 		return nil, "", &drama.CanvasGenerationFailure{Message: "该模型无法用于此节点，请重新选择模型。", Cause: drama.ErrModelUnavailable}
+	}
+	if in.Resolution != "" && !slices.Contains(selected.Resolutions, in.Resolution) {
+		return nil, "", &drama.CanvasGenerationFailure{Message: "该模型不支持所选分辨率，请调整尺寸或更换模型。", Cause: drama.ErrInvalidInput}
 	}
 	if count := len(in.ReferenceImages); count < selected.MinReferences || count > selected.MaxReferences {
 		message := fmt.Sprintf("当前模型支持 %d–%d 张参考图。", selected.MinReferences, selected.MaxReferences)
@@ -155,7 +162,16 @@ func (e *dramaCanvasGenerationEngine) GenerateCanvasMedia(ctx context.Context, i
 	if strings.TrimSpace(in.Prompt) == "" {
 		in.Prompt = "根据参考图生成一张画面完整、风格统一的图片。"
 	}
-	payload := map[string]any{"model": in.ModelCode, "prompt": in.Prompt, "n": 1, "size": dramaImageSize(in.AspectRatio)}
+	size := dramaImageSize(in.AspectRatio)
+	if in.Resolution == drama.CanvasResolution2K {
+		// 百炼 Qwen Image 支持 512×512 至 2048×2048 的像素面积。
+		// 横竖画幅保留精确的 16:9 比例，且都落在供应商的 2K 档位。
+		size = map[string]string{"16:9": "2560x1440", "9:16": "1440x2560", "1:1": "2048x2048"}[in.AspectRatio]
+		if size == "" {
+			return nil, "", &drama.CanvasGenerationFailure{Message: "所选画面比例不支持 2K。", Cause: drama.ErrInvalidInput}
+		}
+	}
+	payload := map[string]any{"model": in.ModelCode, "prompt": in.Prompt, "n": 1, "size": size}
 	var loggedBody []byte
 	if len(references) > 0 {
 		payload["image"] = loggedReferences

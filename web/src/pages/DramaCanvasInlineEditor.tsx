@@ -3,6 +3,7 @@ import { Button, Input } from 'antd'
 import { useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 
 import type { DramaAssetKind, DramaCanvasCardKind } from '../api/drama'
+import { DramaCanvasMentionInput, type DramaCanvasMentionOption } from './DramaCanvasMentionInput'
 import './drama-canvas-inline-editor.css'
 
 const labels = { character: '角色', scene: '图片', prop: '道具', text: '文本', image: '图片', video: '视频', audio: '音频' }
@@ -19,18 +20,22 @@ interface DramaCanvasInlineEditorProps {
   title: string
   content: string
   saving?: boolean
+  saveDisabled?: boolean
   error?: string
   heading?: string
   titleLabel?: string
   descriptionLabel?: string
+  mentionOptions: DramaCanvasMentionOption[]
+  onMention: (source: string) => void
+  onMentionTextChange: (value: string) => void
   children?: ReactNode
   onSave: (input: DramaCanvasInlineInput) => void
   onCancel: () => void
 }
 
 export function DramaCanvasInlineEditor({
-  kind, title: initialTitle, content: initialContent, saving, error,
-  heading, titleLabel = '名称', descriptionLabel, children, onSave, onCancel,
+  kind, title: initialTitle, content: initialContent, saving, saveDisabled, error,
+  heading, titleLabel = '名称', descriptionLabel, mentionOptions, onMention, onMentionTextChange, children, onSave, onCancel,
 }: DramaCanvasInlineEditorProps) {
   const id = useId()
   const fileInput = useRef<HTMLInputElement>(null)
@@ -63,7 +68,7 @@ export function DramaCanvasInlineEditor({
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     event.stopPropagation()
-    if (saving || !canSave || validationError) return
+    if (saving || saveDisabled || !canSave || validationError) return
     const value = content.trim()
     if (media && !file && value) {
       const url = URL.canParse(value) ? new URL(value) : undefined
@@ -78,10 +83,11 @@ export function DramaCanvasInlineEditor({
   return <form className="drama-canvas-inline-editor nodrag nopan nowheel" aria-labelledby={`${id}-heading`}
     aria-busy={saving || undefined} onSubmit={save} onDoubleClick={(event) => event.stopPropagation()}
     onKeyDown={(event) => {
-      if (event.nativeEvent.isComposing || event.keyCode === 229) return
+      if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return
       if (event.key === 'Escape') {
+        if (event.target instanceof Element && event.target.closest('[role="combobox"][aria-expanded="true"]')) return
         event.stopPropagation()
-        if (!saving) onCancel()
+        onCancel()
       } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         event.stopPropagation()
@@ -120,16 +126,16 @@ export function DramaCanvasInlineEditor({
         </div>
       </> : <label className="drama-canvas-inline-field" htmlFor={`${id}-content`}>
         <span>{descriptionLabel ?? (asset ? '形象描述' : '文本内容')}</span>
-        <Input.TextArea id={`${id}-content`} autoFocus={!asset} value={content} maxLength={10000} disabled={saving}
-          autoSize={{ minRows: 3, maxRows: 5 }} placeholder={asset ? `填写${descriptionLabel ?? '形象描述'}` : '输入要放在画布上的文本'}
-          onChange={(event) => setContent(event.target.value)} />
+        <DramaCanvasMentionInput id={`${id}-content`} autoFocus={!asset} value={content} maxLength={10000} disabled={saving}
+          autoSize={{ minRows: 3, maxRows: 5 }} placeholder={asset ? `填写${descriptionLabel ?? '形象描述'}，输入 @ 引用卡片` : '输入文本，输入 @ 引用卡片'}
+          options={mentionOptions} onMention={onMention} onChange={(value) => { setContent(value); onMentionTextChange(value) }} />
       </label>}
       {children}
     </div>
     {(validationError || error) && <div className="drama-canvas-inline-error" role="alert">{validationError || error}</div>}
     <footer className="drama-canvas-inline-actions">
-      <Button size="small" type="text" disabled={saving} onClick={onCancel}>取消</Button>
-      <Button size="small" type="primary" htmlType="submit" loading={saving} disabled={!canSave || Boolean(validationError)}>保存</Button>
+      <Button size="small" type="text" onClick={onCancel}>取消</Button>
+      <Button size="small" type="primary" htmlType="submit" loading={saving} disabled={saveDisabled || !canSave || Boolean(validationError)}>保存</Button>
     </footer>
   </form>
 }

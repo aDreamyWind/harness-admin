@@ -28,7 +28,7 @@ import (
 	"harness-admin/internal/tryon"
 )
 
-const expectedMigrationVersion = 67
+const expectedMigrationVersion = 71
 
 // 需要具备 CREATE DATABASE 权限的专用测试实例；绝不能指向生产数据库。
 func TestMigrateBaselineMatchesLegacy(t *testing.T) {
@@ -331,6 +331,15 @@ func TestMigrateBaselineMatchesLegacy(t *testing.T) {
 	t.Run("试衣素材和任务按组织及用户隔离", func(t *testing.T) {
 		testTryOnPersistence(t, ctx, freshPool, created.ID)
 	})
+	t.Run("衣物后台队列可追加和重试", func(t *testing.T) {
+		testGarmentJobPersistence(t, ctx, freshPool, created.ID)
+	})
+	t.Run("多件试穿队列和衣物套装", func(t *testing.T) {
+		testTryOnQueueAndOutfits(t, ctx, freshPool, created.ID)
+	})
+	t.Run("旧单件试穿记录可重新迁移", func(t *testing.T) {
+		testTryOnLegacyMigration(t, ctx, freshPool, freshURL)
+	})
 }
 
 func testTryOnPersistence(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID string) {
@@ -379,16 +388,52 @@ func testTryOnPersistence(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}
 	job := tryon.Job{ID: "bb4ed136-72cd-4589-8ebd-6b8841edb776", PersonID: person.ID, GarmentID: garment.ID, PoseID: pose.ID, ModelCode: "editor"}
 	stored, err := repo.CreateJob(ctx, owner, job, time.Now().Add(time.Minute), []tryon.AssetImage{pose})
-	if err != nil || stored.Status != "running" {
+	if err != nil || stored.Status != "queued" || len(stored.GarmentIDs) != 1 || stored.GarmentIDs[0] != garment.ID {
 		t.Fatalf("试穿任务未创建: %#v %v", stored, err)
+	}
+	claimed, err := repo.ClaimTryOnJob(ctx, time.Now().Add(time.Minute))
+	if err != nil || claimed.Job.ID != job.ID || claimed.Job.Status != "running" {
+		t.Fatalf("排队任务未被领取: %#v %v", claimed, err)
 	}
 	second := job
 	second.ID = "073ffdae-3350-4a08-9651-248d5ec5db43"
-	if _, err := repo.CreateJob(ctx, owner, second, time.Now().Add(time.Minute), []tryon.AssetImage{pose}); !errors.Is(err, tryon.ErrBusy) {
-		t.Fatalf("未限制同一用户的并发试穿: %v", err)
-	}
 	if snapshot, err := repo.Asset(ctx, owner, pose.ID); err != nil || !bytes.Equal(snapshot.Data, pose.Data) {
 		t.Fatalf("姿态快照未随试穿任务保存: %v", err)
+	}
+	if err := service.DeleteAsset(ctx, owner, pose.ID); !errors.Is(err, tryon.ErrBuiltinAsset) {
+		t.Fatalf("内置姿态快照不应允许删除: %v", err)
+	}
+	unused, err := service.SaveAsset(ctx, owner, tryon.Pose, "未用于试穿的姿态", "", photo.Data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DeleteAsset(ctx, owner, unused.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Asset(ctx, owner, unused.ID); !errors.Is(err, tryon.ErrNotFound) {
+		t.Fatalf("未被引用的素材仍保留在数据库: %v", err)
+	}
+	if err := service.DeleteAsset(ctx, owner, garment.ID); err != nil {
+		t.Fatalf("试穿生成中应允许从衣物库移除引用的衣物: %v", err)
+	}
+	if snapshot, err := repo.Asset(ctx, owner, garment.ID); err != nil || !snapshot.Deleted || !bytes.Equal(snapshot.Data, photo.Data) {
+		t.Fatalf("被引用的删除素材未保留历史图片: %#v %v", snapshot.Asset, err)
+	}
+	listed, err := service.ListAssets(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deletedListed bool
+	for _, item := range listed {
+		if item.ID == unused.ID {
+			t.Fatal("已彻底删除的素材仍在列表中")
+		}
+		if item.ID == garment.ID && item.Deleted {
+			deletedListed = true
+		}
+	}
+	if !deletedListed {
+		t.Fatal("历史快照需要带删除标记返回")
 	}
 	if err := repo.FinishJob(ctx, owner, job.ID, photo, ""); err != nil {
 		t.Fatal(err)
@@ -397,9 +442,18 @@ func testTryOnPersistence(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	if err != nil || !bytes.Equal(result.Data, photo.Data) {
 		t.Fatalf("试穿结果未保存: %v", err)
 	}
+	if _, err := service.Start(ctx, owner, tryon.JobInput{PersonID: person.ID, GarmentID: garment.ID, ModelCode: "editor"}); !errors.Is(err, tryon.ErrNotFound) {
+		t.Fatalf("不能用已删除衣物新建试穿: %v", err)
+	}
+	if _, err := repo.CreateJob(ctx, owner, second, time.Now().Add(time.Minute), nil); !errors.Is(err, tryon.ErrNotFound) {
+		t.Fatalf("写入任务前应再次检查引用的素材是否已删除: %v", err)
+	}
 	for _, stranger := range []tryon.Owner{otherUser, otherOrg} {
 		if _, err := repo.Asset(ctx, stranger, person.ID); !errors.Is(err, tryon.ErrNotFound) {
 			t.Fatalf("其他用户可读取素材: %v", err)
+		}
+		if err := service.DeleteAsset(ctx, stranger, person.ID); !errors.Is(err, tryon.ErrNotFound) {
+			t.Fatalf("其他用户可删除素材: %v", err)
 		}
 		if _, err := service.Asset(ctx, stranger, pose.ID); !errors.Is(err, tryon.ErrNotFound) {
 			t.Fatalf("其他用户可读取当前用户的姿态快照: %v", err)

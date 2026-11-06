@@ -174,6 +174,39 @@ func TestNovelOutlineCheckAction(t *testing.T) {
 	}
 }
 
+func TestNovelReopenActionsAndLargeOutline(t *testing.T) {
+	stub := &novelHTTPStub{actionResult: &novel.Project{Version: 2}}
+	router := New(Dependencies{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth:   &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}},
+		Novel:  stub, SessionCookie: "test_session",
+	})
+	outline := &novel.Outline{Synopsis: "寻找证据", World: "孤岛", Characters: "林静守塔", Beats: make([]novel.Beat, novel.MaxChapters)}
+	for i := range outline.Beats {
+		outline.Beats[i] = novel.Beat{Title: "查访", Goal: strings.Repeat("继续查访", 300)}
+	}
+	for _, input := range []novel.Action{
+		{Kind: "reopen_outline", Version: 1},
+		{Kind: "reopen_chapter", Version: 2, Chapter: 2},
+		{Kind: "confirm_outline", Version: 3, Outline: outline},
+	} {
+		t.Run(input.Kind, func(t *testing.T) {
+			body, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/ai-novel/projects/book/actions", bytes.NewReader(body))
+			request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+			request.Header.Set("X-CSRF-Token", "csrf-token")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || !reflect.DeepEqual(stub.actionInput, input) {
+				t.Fatalf("未接收修改操作: %d %s", response.Code, response.Body)
+			}
+		})
+	}
+}
+
 func TestNovelOutlineGenerationReportsChapterCountWithoutExposingProviderErrors(t *testing.T) {
 	stub := &novelHTTPStub{}
 	router := New(Dependencies{

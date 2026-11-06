@@ -63,6 +63,17 @@ function hasSpace(point: XYPosition, size: CanvasSize, occupied: readonly Canvas
   )
 }
 
+export function findCanvasReferencePosition(target: CanvasGeometryNode, size: CanvasSize, occupied: readonly CanvasGeometryNode[]): XYPosition {
+  const x = target.position.x - size.width - laneGap
+  const center = target.position.y + (target.height - size.height) / 2
+  const nearby = occupied.filter(({ position, width }) => position.x < x + size.width + nodeGap && position.x + width + nodeGap > x)
+  const candidates = [center, ...nearby.flatMap(({ position, height }) => [
+    position.y - size.height - nodeGap,
+    position.y + height + nodeGap,
+  ])].sort((a, b) => Math.abs(a - center) - Math.abs(b - center))
+  return { x, y: candidates.find((y) => hasSpace({ x, y }, size, nearby)) ?? center }
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max))
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -49,6 +50,7 @@ func TestCanvasGenerationPlansDirectInputsInLinkOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantPrompt := "黄昏场景。\n\n参考文案「第二段」\n镜头对准灯笼。\n\n参考文案「第一段」\n从巷口走出。"
+	wantPrompt += "\n\n参考图顺序：\n图1（Image 1）：封面\n图2（Image 2）：角色"
 	if request.Prompt != wantPrompt || request.Kind != "video" || request.ModelCode != "test-video" || request.AspectRatio != "16:9" || request.Duration != 5 {
 		t.Fatalf("生成参数错误：%+v", request)
 	}
@@ -70,6 +72,10 @@ func TestCanvasGenerationPlansDirectInputsInLinkOrder(t *testing.T) {
 	if err := validateCanvasGenerationModel(models, request, len(refs)); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("模型时长越界应被拒绝：%v", err)
 	}
+	input.Resolution = CanvasResolution2K
+	if _, _, err := planCanvasGeneration(canvas, "video", input); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("图片分辨率不能用于视频节点：%v", err)
+	}
 }
 
 func TestCanvasGenerationRetainsReferenceAndRunsAfterRequestCancellation(t *testing.T) {
@@ -90,22 +96,36 @@ func TestCanvasGenerationRetainsReferenceAndRunsAfterRequestCancellation(t *test
 	}
 	png := []byte("\x89PNG\r\n\x1a\n")
 	media := &canvasGenerationFilesStub{referenceID: savedResult, data: png, stored: make(chan string, 1)}
-	engine := &canvasGenerationEngineStub{started: make(chan CanvasGenerationRequest, 1), proceed: make(chan struct{}), data: png}
-	s := (&Service{visual: visual}).WithCanvasGeneration(jobs, engine).WithCanvasMedia(media)
+	engine := &canvasGenerationEngineStub{started: make(chan CanvasGenerationRequest, 1), proceed: make(chan struct{}), data: png, models: []CanvasGenerationModel{
+		{Code: "test-image", Kind: "image", MaxReferences: 2, Resolutions: []string{CanvasResolution1K, CanvasResolution2K}},
+		{Code: "standard-image", Kind: "image", MaxReferences: 2, Resolutions: []string{CanvasResolution1K}},
+	}}
+	s := (&Service{visual: visual}).WithCanvasGeneration(jobs, engine).WithCanvasMedia(media).WithStyles(styleRepoStub{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if _, err := s.StartCanvasGeneration(ctx, scope.OrganizationID, scope.UserID, project, target, CanvasGenerationInput{ModelCode: "test-image", Revision: 6}); !errors.Is(err, ErrCanvasConflict) {
 		t.Fatalf("未拦截过期画布的生成请求：%v", err)
 	}
-	job, err := s.StartCanvasGeneration(ctx, scope.OrganizationID, scope.UserID, project, target, CanvasGenerationInput{ModelCode: "test-image", Revision: 7})
+	input := CanvasGenerationInput{ModelCode: "standard-image", Revision: 7, Resolution: CanvasResolution2K}
+	if _, err := s.StartCanvasGeneration(ctx, scope.OrganizationID, scope.UserID, project, target, input); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("模型不支持所选分辨率，应在创建任务前报错：%v", err)
+	}
+	input.ModelCode, input.StyleID = "test-image", "黑暗原画概念风"
+	if _, err := s.StartCanvasGeneration(ctx, scope.OrganizationID, scope.UserID, project, target, input); !errors.Is(err, ErrStyleUnavailable) {
+		t.Fatalf("风格参数只接受目录 ID：%v", err)
+	}
+	input.StyleID = "dark-concept"
+	job, err := s.StartCanvasGeneration(ctx, scope.OrganizationID, scope.UserID, project, target, input)
 	if err != nil || job.Status != "running" {
 		t.Fatalf("提交生成失败：%+v %v", job, err)
 	}
 	cancel()
 	request := awaitCanvasGenerationTest(t, engine.started)
-	if request.JobID != job.ID || request.Prompt == "" || !reflect.DeepEqual(request.ReferenceIDs, []string{source}) ||
+	if request.JobID != job.ID || request.Resolution != CanvasResolution2K || !strings.Contains(request.Prompt, "图1（Image 1）：已生成的图片") ||
+		!strings.Contains(request.Prompt, "画面风格：黑暗原画概念风\n风格要求：私有生图模板") || strings.Contains(request.Prompt, "私有视频模板") ||
+		!reflect.DeepEqual(request.ReferenceIDs, []string{source}) ||
 		!reflect.DeepEqual(request.ReferenceImages, []string{imageDataURI("image/png", png)}) {
-		t.Fatalf("没有使用参考节点上次生成的图片：%+v", request)
+		t.Fatalf("没有使用所选风格、尺寸或参考节点上次生成的图片：%+v", request)
 	}
 	duplicate, err := s.StartCanvasGeneration(context.Background(), scope.OrganizationID, scope.UserID, project, target, CanvasGenerationInput{ModelCode: "test-image", Revision: 7})
 	if err != nil || duplicate.ID != job.ID {
@@ -202,13 +222,14 @@ type canvasGenerationReadCloser struct{ *bytes.Reader }
 func (canvasGenerationReadCloser) Close() error { return nil }
 
 type canvasGenerationFilesStub struct {
-	referenceID string
-	data        []byte
-	stored      chan string
+	referenceID      string
+	otherReferenceID string
+	data             []byte
+	stored           chan string
 }
 
 func (s *canvasGenerationFilesStub) OpenCanvasMedia(_ context.Context, _, id string) (io.ReadSeekCloser, time.Time, error) {
-	if id != s.referenceID {
+	if id != s.referenceID && id != s.otherReferenceID {
 		return nil, time.Time{}, ErrNotFound
 	}
 	return canvasGenerationReadCloser{bytes.NewReader(s.data)}, time.Time{}, nil
@@ -233,9 +254,13 @@ type canvasGenerationEngineStub struct {
 	started chan CanvasGenerationRequest
 	proceed chan struct{}
 	data    []byte
+	models  []CanvasGenerationModel
 }
 
 func (s *canvasGenerationEngineStub) CanvasGenerationModels(context.Context, string, string) ([]CanvasGenerationModel, error) {
+	if s.models != nil {
+		return s.models, nil
+	}
 	return []CanvasGenerationModel{{Code: "test-image", Kind: "image", MaxReferences: 2}}, nil
 }
 

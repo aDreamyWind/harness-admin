@@ -60,22 +60,27 @@ func dramaProjectColumns(sourceText, assetJSON string) string {
  COALESCE((SELECT jsonb_agg(` + assetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='scene'), '[]'::jsonb),
  COALESCE((SELECT jsonb_agg(` + assetJSON + ` ORDER BY a.created_at, a.id) FROM drama_assets a WHERE a.project_id=drama_projects.id AND a.kind='prop'), '[]'::jsonb),
  COALESCE((SELECT jsonb_agg(jsonb_build_object('title', e.title, 'synopsis', e.synopsis) ORDER BY b.batch_number NULLS FIRST, e.number, e.created_at) FROM drama_script_episodes e LEFT JOIN drama_batches b ON b.id=e.batch_id WHERE e.project_id=drama_projects.id), '[]'::jsonb),
- created_at, updated_at,COALESCE(style_id,'')`
+ created_at, updated_at,COALESCE(style_id,''),
+ COALESCE((SELECT c.cover_id::text FROM drama_project_covers c WHERE c.project_id=drama_projects.id),''),
+ COALESCE((SELECT c.status FROM drama_project_covers c WHERE c.project_id=drama_projects.id AND c.status='running' AND c.expires_at>NOW()),'')`
 }
 
 func scanDrama(row pgx.Row) (drama.Project, error) {
 	var item drama.Project
 	var protagonist, genre, synopsis, background, setting string
+	var coverID string
 	err := row.Scan(&item.ID, &item.OrganizationID, &item.OwnerID, &item.Title, &item.SourceName,
 		&item.SourceText, &item.SourceLength, &item.SourceMode, &item.Style, &item.AspectRatio, &item.ModelCode,
 		&item.Status, &item.Phase, &item.Error, &protagonist, &genre, &synopsis, &background, &setting,
-		&item.Characters, &item.Scenes, &item.Props, &item.Episodes, &item.CreatedAt, &item.UpdatedAt, &item.StyleID)
+		&item.Characters, &item.Scenes, &item.Props, &item.Episodes, &item.CreatedAt, &item.UpdatedAt, &item.StyleID,
+		&coverID, &item.CoverGenerationStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return drama.Project{}, drama.ErrNotFound
 	}
 	if err != nil {
 		return drama.Project{}, err
 	}
+	item.CoverURL = drama.ProjectCoverImageURL(item.ID, coverID)
 	item.Overview = json.RawMessage(`{}`)
 	if protagonist != "" || genre != "" || synopsis != "" || background != "" || setting != "" {
 		item.Overview, err = json.Marshal(map[string]string{
@@ -124,6 +129,20 @@ func (r *DramaRepository) Get(ctx context.Context, organizationID, ownerID, id s
 		WHERE organization_id=$1 AND owner_id=$2 AND id=$3`, organizationID, ownerID, id))
 	item.SourceText = ""
 	return item, err
+}
+
+func (r *DramaRepository) RenameProject(ctx context.Context, organizationID, ownerID, id, title string) (drama.ProjectTitle, error) {
+	var item drama.ProjectTitle
+	err := r.db.QueryRow(ctx, `UPDATE drama_projects SET title=$4::text, updated_at=CASE WHEN title<>$4::text THEN NOW() ELSE updated_at END
+		WHERE organization_id=$1 AND owner_id=$2 AND id=$3
+		RETURNING title, updated_at`, organizationID, ownerID, id, title).Scan(&item.Title, &item.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return drama.ProjectTitle{}, drama.ErrNotFound
+	}
+	if err != nil {
+		return drama.ProjectTitle{}, fmt.Errorf("保存漫剧标题失败: %w", err)
+	}
+	return item, nil
 }
 
 func (r *DramaRepository) RetryFailed(ctx context.Context, organizationID, ownerID, id, modelCode string) (drama.Project, error) {
@@ -197,6 +216,24 @@ func (r *DramaRepository) UpdateOverview(ctx context.Context, organizationID, ow
 		updated_at=NOW()
 		WHERE organization_id=$1 AND owner_id=$2 AND id=$3 RETURNING `+dramaColumns,
 		organizationID, ownerID, id, overview))
+}
+
+func (r *DramaRepository) UpdateProjectVisualSettings(ctx context.Context, organizationID, ownerID, id string, settings drama.ProjectVisualSettings) (drama.ProjectVisualSettings, error) {
+	err := r.db.QueryRow(ctx, `UPDATE drama_projects SET
+		style_id=COALESCE(NULLIF($4::text,''), style_id),
+		style=COALESCE(NULLIF($5::text,''), style),
+		aspect_ratio=COALESCE(NULLIF($6::text,''), aspect_ratio),
+		updated_at=CASE WHEN ($4<>'' AND (style_id IS DISTINCT FROM $4 OR style<>$5))
+			OR ($6<>'' AND aspect_ratio<>$6) THEN GREATEST(updated_at, NOW()) ELSE updated_at END
+		WHERE organization_id=$1 AND owner_id=$2 AND id=$3
+		RETURNING updated_at`, organizationID, ownerID, id, settings.StyleID, settings.Style, settings.AspectRatio).Scan(&settings.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return drama.ProjectVisualSettings{}, drama.ErrNotFound
+	}
+	if err != nil {
+		return drama.ProjectVisualSettings{}, fmt.Errorf("保存漫剧画面设置失败: %w", err)
+	}
+	return settings, nil
 }
 
 func (r *DramaRepository) FailInterrupted(ctx context.Context) error {

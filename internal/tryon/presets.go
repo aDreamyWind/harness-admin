@@ -20,8 +20,10 @@ type preset struct {
 }
 
 var presets = []preset{
-	{file: "person-illustration.jpg", kind: Person2D, name: "短发眼镜模特"},
-	{file: "person-studio.jpg", kind: PersonReal, name: "短发写实模特"},
+	{file: "person-anime-woman.jpg", kind: Person2D, name: "紫发·动漫女角色"},
+	{file: "person-anime-man.jpg", kind: Person2D, name: "银发·动漫男角色"},
+	{file: "person-studio-woman.jpg", kind: PersonReal, name: "深色长发·写实女模特"},
+	{file: "person-studio-man.jpg", kind: PersonReal, name: "黑色短发·写实男模特"},
 	{file: "garment-blazer-photo.jpg", kind: Garment, name: "焦糖色翻领外套", category: "外套"},
 	{file: "garment-skirt-photo.jpg", kind: Garment, name: "莓紫色 A 字半裙", category: "半裙"},
 	{file: "garment-tee-photo.jpg", kind: Garment, name: "灰蓝圆领上衣", category: "上衣"},
@@ -30,8 +32,11 @@ var presets = []preset{
 	{file: "pose-step.png", kind: Pose, name: "向前迈步"},
 }
 
-// 旧版样例不再显示在衣物库，已保存的图片仍可随试穿记录查看。
-var retiredPresetFiles = []string{"garment-blazer.png", "garment-skirt.png", "garment-tee.png"}
+// 旧版样例不再作为新选择，已保存的图片仍可随试穿记录查看。
+var retiredPresetFiles = []string{
+	"person-illustration.jpg", "person-studio.jpg",
+	"garment-blazer.png", "garment-skirt.png", "garment-tee.png",
+}
 
 func presetID(owner Owner, file string) string {
 	key := "harness-admin/tryon/preset/" + owner.OrganizationID + "/" + owner.UserID + "/" + file

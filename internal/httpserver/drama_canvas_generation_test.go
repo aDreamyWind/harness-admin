@@ -23,7 +23,7 @@ type canvasGenerationRouteStub struct {
 
 func (s *canvasGenerationRouteStub) ListCanvasGenerationModels(_ context.Context, org, user string) ([]drama.CanvasGenerationModel, error) {
 	s.scope = []string{org, user}
-	return []drama.CanvasGenerationModel{{Code: "video", Kind: "video", MinReferences: 1, MaxReferences: 3}}, s.err
+	return []drama.CanvasGenerationModel{{Code: "image", Kind: "image", MaxReferences: 3, Resolutions: []string{"1K", "2K"}}}, s.err
 }
 
 func (s *canvasGenerationRouteStub) ListCanvasGenerations(_ context.Context, org, user, project string) ([]drama.CanvasGenerationJob, error) {
@@ -46,7 +46,7 @@ func TestDramaCanvasGenerationRoutes(t *testing.T) {
 	const canvasPath = "/api/v1/ai-drama/projects/project/canvas"
 	const nodePath = canvasPath + "/nodes/node/generation"
 	const modelPath = "/api/v1/ai-drama/canvas/generation-models"
-	const input = `{"modelCode":"video","revision":7,"prompt":"镜头向前","aspectRatio":"9:16","duration":5}`
+	const input = `{"modelCode":"image","revision":7,"prompt":"镜头向前","styleId":"ink-wash","aspectRatio":"9:16","resolution":"2K"}`
 	service := &canvasGenerationRouteStub{}
 	session := accountTestSession()
 	router := New(Dependencies{
@@ -82,7 +82,7 @@ func TestDramaCanvasGenerationRoutes(t *testing.T) {
 	}
 	actor := []string{session.User.OrganizationID, session.User.ID}
 	nodeScope := []string{actor[0], actor[1], "project", "node"}
-	if !slices.Equal(service.scope, nodeScope) || service.input != (drama.CanvasGenerationInput{ModelCode: "video", Revision: 7, Prompt: "镜头向前", AspectRatio: "9:16", Duration: 5}) {
+	if !slices.Equal(service.scope, nodeScope) || service.input != (drama.CanvasGenerationInput{ModelCode: "image", Revision: 7, Prompt: "镜头向前", StyleID: "ink-wash", AspectRatio: "9:16", Resolution: "2K"}) {
 		t.Fatalf("生成提交范围或参数不正确: %v %+v", service.scope, service.input)
 	}
 	service.err = drama.ErrCanvasConflict
@@ -109,7 +109,8 @@ func TestDramaCanvasGenerationRoutes(t *testing.T) {
 	if out := send(http.MethodGet, canvasPath+"/generations", "", true, false); out.Code != http.StatusOK || out.Body.String() != `{"data":[]}` || !slices.Equal(service.scope, nodeScope[:3]) {
 		t.Fatalf("项目任务查询结果或范围错误: %d %s %v", out.Code, out.Body, service.scope)
 	}
-	if out := send(http.MethodGet, modelPath, "", true, false); out.Code != http.StatusOK || !strings.Contains(out.Body.String(), `"maxReferences":3`) || !slices.Equal(service.scope, actor) {
+	if out := send(http.MethodGet, modelPath, "", true, false); out.Code != http.StatusOK || !strings.Contains(out.Body.String(), `"maxReferences":3`) ||
+		!strings.Contains(out.Body.String(), `"resolutions":["1K","2K"]`) || !slices.Equal(service.scope, actor) {
 		t.Fatalf("模型查询结果或范围错误: %d %s %v", out.Code, out.Body, service.scope)
 	}
 }

@@ -1,15 +1,16 @@
 import { AimOutlined, CloudUploadOutlined, ScanOutlined } from '@ant-design/icons'
-import { Alert, Button, Input, Modal, Segmented, Select, Space } from 'antd'
+import { Alert, Button, Checkbox, Input, Modal, Segmented, Select, Space } from 'antd'
 import { useEffect, useEffectEvent, useRef, useState, type PointerEvent } from 'react'
 import {
-  detectTryOnGarments, generateTryOnPerson, previewTryOnAsset, saveTryOnAsset,
-  type TryOnAsset, type TryOnBox, type TryOnCandidate, type TryOnKind, type TryOnModels,
+  detectTryOnGarments, generateTryOnPerson, previewTryOnAsset, queueTryOnGarments, saveTryOnAsset,
+  type TryOnAsset, type TryOnBox, type TryOnCandidate, type TryOnGarmentItem, type TryOnGarmentJob, type TryOnKind, type TryOnModels,
 } from '../api/tryon'
 
 export const tryOnCategories = ['上衣', '外套', '裤子', '半裙', '连衣裙', '鞋履', '包袋', '首饰', '其他配饰']
 export const tryOnLabels: Record<TryOnKind, string> = {
   person_2d: '2D 插画', person_real: '真人 / 写实', garment: '衣物', pose: '姿态',
 }
+const maxGarmentsPerBatch = 8
 
 async function normalizePhoto(file: File) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 25 * 1024 * 1024) {
@@ -66,9 +67,9 @@ function usePhotoURL(file?: File) {
 
 const referenceGeneration: Record<TryOnKind, { action: string; guide: string; review: string }> = {
   garment: {
-    action: '生成完整衣物图',
-    guide: '指定一件衣物，生成完整的单品图。',
-    review: '遮挡处由 AI 补全，请确认款式和细节。',
+    action: '提交后台生成',
+    guide: '识别并勾选衣物，或手动指定单品。生成完成后在衣物库查看并确认入库。',
+    review: '',
   },
   pose: {
     action: '生成通用姿态图',
@@ -87,8 +88,9 @@ const referenceGeneration: Record<TryOnKind, { action: string; guide: string; re
   },
 }
 
-export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClose, onSaved }: {
-  kind: TryOnKind; models?: TryOnModels; imageModel?: string; onClose: () => void; onSaved: (asset: TryOnAsset) => void
+export function TryOnAssetDialog({ kind: initialKind, open = true, models, imageModel, onClose, onSaved, onQueued }: {
+  kind: TryOnKind; open?: boolean; models?: TryOnModels; imageModel?: string
+  onClose: () => void; onSaved: (asset: TryOnAsset) => void; onQueued?: (jobs: TryOnGarmentJob[]) => void
 }) {
   const [kind, setKind] = useState(initialKind)
   const [mode, setMode] = useState<'upload' | 'generate'>('upload')
@@ -109,14 +111,20 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
   const preview = usePhotoURL(file)
   const resultPreview = usePhotoURL(result)
   const [candidates, setCandidates] = useState<TryOnCandidate[]>([])
-  const [active, setActive] = useState<number>()
+  const [garmentMode, setGarmentMode] = useState<'recognized' | 'manual'>('manual')
+  const [selected, setSelected] = useState<number[]>([])
+  const [submitted, setSubmitted] = useState<number[]>([])
+  const [manualSubmitted, setManualSubmitted] = useState(false)
   const [crop, setCrop] = useState<TryOnBox>()
   const [draft, setDraft] = useState<TryOnBox>()
   const [error, setError] = useState('')
   const [hint, setHint] = useState('')
-  const [working, setWorking] = useState<'upload' | 'detect' | 'generate' | 'save'>()
+  const [working, setWorking] = useState<'upload' | 'detect' | 'queue' | 'generate' | 'save'>()
   const busy = working !== undefined
   const person = kind === 'person_2d' || kind === 'person_real'
+  const garment = kind === 'garment'
+  const canClose = garment || !busy
+  const recognizing = garment && garmentMode === 'recognized'
   const pointerStart = useRef<{ x: number; y: number; id: number } | undefined>(undefined)
   const input = useRef<HTMLInputElement>(null)
 
@@ -133,10 +141,14 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
       const photo = await normalizePhoto(source)
       clearResult()
       setFile(photo)
-      setName((current) => current.trim() ? current :
-        pasted ? '粘贴图片' : source.name.replace(/\.[^.]+$/, '').slice(0, 80))
+      const suggestedName = pasted ? '粘贴图片' : source.name.replace(/\.[^.]+$/, '').slice(0, 80)
+      setName((current) => !garment && current.trim() ? current : suggestedName)
+      setCategory(undefined)
       setCandidates([])
-      setActive(undefined)
+      setGarmentMode('manual')
+      setSelected([])
+      setSubmitted([])
+      setManualSubmitted(false)
       setCrop(undefined)
       setDraft(undefined)
       pointerStart.current = undefined
@@ -159,19 +171,11 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
   })
 
   useEffect(() => {
-    if (mode !== 'upload') return
+    if (!open || mode !== 'upload') return
     const onPaste = (event: ClipboardEvent) => pasteImage(event)
     document.addEventListener('paste', onPaste)
     return () => document.removeEventListener('paste', onPaste)
-  }, [mode])
-
-  function choose(candidate: TryOnCandidate, index: number) {
-    clearResult()
-    setActive(index)
-    setCrop(candidate.box)
-    setName(candidate.name)
-    setCategory(candidate.category)
-  }
+  }, [open, mode])
 
   async function detect() {
     if (!file || !detectionModel) return
@@ -182,10 +186,12 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
       const items = await detectTryOnGarments(file, detectionModel)
       setCandidates(items)
       if (items.length) {
-        choose(items[0], 0)
-        setHint('选择一件衣物，可拖动调整选框。保存后可继续处理其他候选。')
+        setGarmentMode('recognized')
+        setSelected(items.length === 1 ? [0] : [])
+        setHint('勾选要生成的衣物。提交一批后，还能继续选剩下的候选。')
       } else {
-        setActive(undefined)
+        setGarmentMode('manual')
+        setSelected([])
         setHint('没有找到清晰的衣物候选，可以直接在照片上拖动框选。')
       }
     } catch (error) {
@@ -196,7 +202,7 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
   }
 
   function draw(e: PointerEvent<HTMLDivElement>, phase: 'start' | 'move' | 'end') {
-    if (kind !== 'garment' || busy) return
+    if (!garment || recognizing || busy) return
     const rect = e.currentTarget.getBoundingClientRect()
     const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
     const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
@@ -216,20 +222,44 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
       pointerStart.current = undefined
       setDraft(undefined)
       if (next[2] - next[0] >= .008 && next[3] - next[1] >= .008) {
-        clearResult()
         setCrop(next)
+        setManualSubmitted(false)
       }
     }
   }
 
-  const canGenerateReference = file && referenceModel && (kind !== 'garment' || category)
+  const availableCandidates = candidates.flatMap((_, index) => submitted.includes(index) ? [] : [index])
+  const garmentItems: TryOnGarmentItem[] = recognizing ? selected.map((index) => candidates[index])
+    : name.trim() && category && !manualSubmitted ? [{ name: name.trim(), category, box: crop }] : []
+  const canQueueGarments = file && referenceModel && garmentItems.length > 0
+  async function queueGarments() {
+    if (!file || !referenceModel || !garmentItems.length || busy) return
+    setWorking('queue')
+    setError('')
+    try {
+      const jobs = await queueTryOnGarments(file, referenceModel, garmentItems)
+      if (recognizing) {
+        setSubmitted((previous) => [...previous, ...selected])
+        setSelected([])
+      } else {
+        setManualSubmitted(true)
+      }
+      setHint(`已提交 ${jobs.length} 件衣物，可到衣物库查看生成任务。`)
+      onQueued?.(jobs)
+    } catch (error) {
+      setError(errorText(error))
+    } finally {
+      setWorking(undefined)
+    }
+  }
+
+  const canGenerateReference = file && referenceModel
   async function generateReference() {
     if (!canGenerateReference || !file || !referenceModel || busy) return
     setWorking('generate')
     setError('')
     try {
-      const fields = kind === 'garment' ? { name: name.trim(), category, box: crop } : {}
-      const image = await previewTryOnAsset(file, { kind, modelCode: referenceModel, ...fields })
+      const image = await previewTryOnAsset(file, { kind, modelCode: referenceModel })
       setGenerated({ file: image, modelCode: referenceModel })
     } catch (error) {
       setError(errorText(error))
@@ -248,16 +278,9 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
         onSaved(await generateTryOnPerson({ kind, name, description, modelCode: personModel }))
         onClose()
       } else if (result) {
-        const asset = await saveTryOnAsset(result, kind, name, category ?? '')
+        const asset = await saveTryOnAsset(result, kind, name, '')
         onSaved(asset)
-        if (kind === 'garment' && active !== undefined && candidates.length > 1) {
-          const next = candidates.filter((_, index) => index !== active)
-          setCandidates(next)
-          choose(next[0], 0)
-          setHint(`已保存「${asset.name}」，可继续生成下一件衣物。`)
-        } else {
-          onClose()
-        }
+        onClose()
       }
     } catch (error) {
       setError(errorText(error))
@@ -271,16 +294,20 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
   const instructions = referenceGeneration[kind]
   return (
     <Modal title={person ? '添加人物' : `添加${tryOnLabels[kind]}`} width={mode === 'upload' ? 820 : 540}
-      open onCancel={onClose} maskClosable={!busy} closable={!busy} keyboard={!busy}
+      open={open} onCancel={onClose} maskClosable={canClose} closable={canClose} keyboard={canClose}
       footer={[
-        <Button key="back" onClick={onClose} disabled={busy}>返回</Button>,
+        <Button key="back" onClick={onClose} disabled={!canClose}>返回</Button>,
         mode === 'upload' && result &&
           <Button key="regenerate" disabled={busy} loading={working === 'generate'} onClick={() => void generateReference()}>重新生成</Button>,
-        <Button key="primary" type="primary" onClick={() => awaitingPreview ? void generateReference() : void save()}
-          disabled={busy || !(awaitingPreview ? canGenerateReference : ready)}
-          loading={working === 'save' || (awaitingPreview && working === 'generate')}>
-          {mode === 'generate' ? '生成人物并入库' : awaitingPreview ? instructions.action : '确认保存生成图'}
-        </Button>,
+        garment
+          ? <Button key="queue" type="primary" disabled={busy || !canQueueGarments} loading={working === 'queue'} onClick={() => void queueGarments()}>
+            {garmentItems.length ? `提交 ${garmentItems.length} 件后台生成` : '提交后台生成'}
+          </Button>
+          : <Button key="primary" type="primary" onClick={() => awaitingPreview ? void generateReference() : void save()}
+            disabled={busy || !(awaitingPreview ? canGenerateReference : ready)}
+            loading={working === 'save' || (awaitingPreview && working === 'generate')}>
+            {mode === 'generate' ? '生成人物并入库' : awaitingPreview ? instructions.action : '确认保存生成图'}
+          </Button>,
       ]}>
       <div className="tryon-dialog">
         {error && <Alert type="error" showIcon title={error} />}
@@ -299,13 +326,14 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
           {preview ? <div className="tryon-asset-previews">
             <figure className="tryon-upload-preview">
               <figcaption>参考原图</figcaption>
-              <div className="tryon-crop" data-crop={kind === 'garment' && !busy} onPointerDown={(e) => draw(e, 'start')}
+              <div className="tryon-crop" data-crop={garment && !recognizing && !busy} onPointerDown={(e) => draw(e, 'start')}
                 onPointerMove={(e) => draw(e, 'move')} onPointerUp={(e) => draw(e, 'end')}
                 onPointerCancel={() => { pointerStart.current = undefined; setDraft(undefined) }}>
                 <img src={preview} alt="参考原图" draggable={false} />
-                {!draft && candidates.map((item, i) => i !== active &&
-                  <span key={i} className="tryon-crop-box is-secondary" style={boxStyle(item.box)} />)}
-                {selection && <span className="tryon-crop-box" style={boxStyle(selection)} />}
+                {recognizing ? candidates.map((item, index) => (
+                  <span key={index} aria-hidden className={`tryon-crop-box ${submitted.includes(index) ? 'is-submitted' : selected.includes(index) ? 'is-selected' : 'is-secondary'}`}
+                    style={boxStyle(item.box)}><span>{index + 1}</span></span>
+                )) : selection && <span className="tryon-crop-box" style={boxStyle(selection)} />}
               </div>
               <Button size="small" disabled={busy} onClick={() => input.current?.click()}>更换图片</Button>
               <small>也可直接粘贴图片来更换</small>
@@ -321,23 +349,37 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
               <CloudUploadOutlined /><strong>{working === 'upload' ? '正在读取图片' : '点击、拖入或粘贴图片'}</strong>
               <span>{person || kind === 'pose' ? '推荐单人、全身清晰、遮挡少的照片或插画' : '支持 JPG、PNG 和 WebP'}</span>
             </button>}
-          {kind === 'garment' && file && <>
+          {garment && file && <>
             <Space wrap>
               <Select aria-label="衣物识别模型" placeholder="无可用视觉模型" value={detectionModel} disabled={busy}
                 style={{ minWidth: 176 }} onChange={setDetectionModel}
                 options={models?.detection.map((item) => ({ label: item.name, value: item.code }))} />
-              <Button icon={<ScanOutlined />} loading={working === 'detect'} disabled={!detectionModel || busy}
+              <Button icon={<ScanOutlined />} loading={working === 'detect'} disabled={!detectionModel || busy || submitted.length > 0}
                 onClick={() => void detect()}>识别衣物</Button>
-              {crop && <Button disabled={busy} onClick={() => {
-                clearResult()
+              {!recognizing && crop && <Button disabled={busy} onClick={() => {
                 setCrop(undefined)
-                setActive(undefined)
+                setManualSubmitted(false)
               }}>参考整张图</Button>}
             </Space>
-            <small><AimOutlined /> 框选用于定位目标。{hint || '可先识别或手动框选，单品图可直接生成。'}</small>
-            {candidates.length > 0 && <Space wrap>{candidates.map((item, i) =>
-              <Button key={i} disabled={busy} type={active === i ? 'primary' : 'default'} onClick={() => choose(item, i)}>{item.name} · {item.category}</Button>,
-            )}</Space>}
+            {candidates.length > 0 && <Segmented value={garmentMode} disabled={busy} onChange={setGarmentMode}
+              options={[{ label: '识别候选', value: 'recognized' }, { label: '手动指定', value: 'manual' }]} />}
+            {hint && <small role="status">{hint}</small>}
+            {recognizing ? <div className="tryon-garment-candidates">
+              <Space wrap>
+                <strong>已选 {selected.length} 件</strong>
+                <Button type="link" size="small" disabled={busy || !availableCandidates.length}
+                  onClick={() => setSelected(availableCandidates.slice(0, maxGarmentsPerBatch))}>
+                  {availableCandidates.length > maxGarmentsPerBatch ? '选择前 8 件' : '全选'}
+                </Button>
+                <Button type="link" size="small" disabled={busy || !selected.length} onClick={() => setSelected([])}>清空选择</Button>
+              </Space>
+              <Checkbox.Group value={selected} onChange={setSelected} className="tryon-garment-checkboxes">
+                {candidates.map((item, index) => <Checkbox key={index} value={index}
+                  disabled={busy || submitted.includes(index) || (selected.length >= maxGarmentsPerBatch && !selected.includes(index))}>
+                  {index + 1}. {item.name} · {item.category}{submitted.includes(index) && ' · 已提交'}
+                </Checkbox>)}
+              </Checkbox.Group>
+            </div> : <small><AimOutlined /> 单品图可直接提交，穿搭照可以拖动框选目标衣物。</small>}
           </>}
           {file && <label>参考图生成模型<Select placeholder="暂无可用参考图生成模型" value={referenceModel} disabled={busy}
             options={models?.image.map((item) => ({ label: item.name, value: item.code }))}
@@ -350,15 +392,18 @@ export function TryOnAssetDialog({ kind: initialKind, models, imageModel, onClos
             placeholder="例如：短发女性，体型匀称，复古漫画线条和低饱和配色" onChange={(e) => setDescription(e.target.value)} /></label>
           {working === 'save' && <Alert type="info" title="正在生成并保存人物，请保留此窗口。" />}
         </>}
-        <div className="tryon-fields">
-          <label>名称<Input value={name} maxLength={80} disabled={busy} onChange={(e) => setName(e.target.value)}
+        {!recognizing && <div className="tryon-fields">
+          <label>名称<Input value={name} maxLength={80} disabled={busy} onChange={(e) => {
+            setName(e.target.value)
+            setManualSubmitted(false)
+          }}
             placeholder="方便下次找到这张图" /></label>
-          {kind === 'garment' && <label>分类<Select value={category} disabled={busy} onChange={(value) => {
-            clearResult()
+          {garment && <label>分类<Select value={category} disabled={busy} onChange={(value) => {
             setCategory(value)
+            setManualSubmitted(false)
           }}
             placeholder="请选择品类" options={tryOnCategories.map((item) => ({ label: item, value: item }))} /></label>}
-        </div>
+        </div>}
       </div>
     </Modal>
   )

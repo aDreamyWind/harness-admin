@@ -27,6 +27,7 @@ type VisualStyle struct {
 type StyleRepository interface {
 	ListStyles(context.Context) ([]StyleOption, error)
 	ResolveStyle(context.Context, string) (VisualStyle, error)
+	ResolveCatalogStyle(context.Context, string) (VisualStyle, error)
 }
 
 func (s *Service) WithStyles(repo StyleRepository) *Service { s.styles = repo; return s }

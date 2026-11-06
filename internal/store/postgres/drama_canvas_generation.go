@@ -40,16 +40,9 @@ func (r *DramaRepository) ReserveCanvasGeneration(ctx context.Context, scope dra
 	defer tx.Rollback(ctx)
 
 	// 与画布布局保存共用行锁，防止使用已变更的连线或素材提交新任务。
-	var currentRevision int
-	err = tx.QueryRow(ctx, `SELECT b.revision FROM drama_canvas_boards b
-		JOIN drama_projects p ON p.id=b.project_id
-		WHERE p.id=$1 AND p.organization_id=$2 AND p.owner_id=$3
-		FOR UPDATE OF b`, scope.ProjectID, scope.OrganizationID, scope.UserID).Scan(&currentRevision)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return drama.CanvasGenerationJob{}, false, drama.ErrNotFound
-	}
+	currentRevision, err := lockCanvasBoardRevision(ctx, tx, scope.OrganizationID, scope.UserID, scope.ProjectID)
 	if err != nil {
-		return drama.CanvasGenerationJob{}, false, fmt.Errorf("锁定漫剧画布版本失败: %w", err)
+		return drama.CanvasGenerationJob{}, false, err
 	}
 
 	current, err := scanCanvasGeneration(tx.QueryRow(ctx, `SELECT `+canvasGenerationColumns+`

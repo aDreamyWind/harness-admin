@@ -45,6 +45,9 @@ const reviseOutlinePrompt = `按修改要求修订当前小说大纲，返回恰
 涉及历史纠正时，以作者给出的时代范围和依据为准，将修订同步到受影响的故事梗概、世界设定、人物和章节。对不确定的史实使用稳妥表述，避免捏造出处。保持章节顺序和数量，核对修订后的时间线、人物关系与线索承接。
 ` + resourceCausalityGuidance + outlineResponseFormat
 
+const finalizedOutlineGuidance = `资料中的已定稿摘要记录了已经发生的情节。调整大纲时请保持与这些情节的衔接。作者明确要求调整已有情节时，区分待修订的大纲与已定稿正文。
+`
+
 func outlineGenerationPrompt(p *Project, action Action) (string, error) {
 	titlePrompt := ""
 	if p.NeedsTitle {
@@ -54,18 +57,24 @@ func outlineGenerationPrompt(p *Project, action Action) (string, error) {
 	if !validOptional(instruction, 1200) {
 		return "", fmt.Errorf("%w，修改要求最多 1200 字", ErrInvalid)
 	}
+	finalized := priorChapters(*p, p.finalizedCount(), false)
+	guidance := ""
+	if len(finalized) > 0 {
+		guidance = finalizedOutlineGuidance
+	}
 	if instruction == "" {
 		material := asJSON(struct {
-			Title, Brief   string
-			AuthorGuidance string `json:",omitempty"`
-		}{p.Title, p.Brief, p.AuthorGuidance})
+			Title, Brief      string
+			AuthorGuidance    string         `json:",omitempty"`
+			FinalizedChapters []priorChapter `json:",omitempty"`
+		}{p.Title, p.Brief, p.AuthorGuidance, finalized})
 		if p.StoryMode == StoryModeSerial {
 			if p.Outline == nil {
 				return fmt.Sprintf(serialOpeningPrompt, minSerialOpeningChapters, maxSerialOpeningChapters, titlePrompt, material), nil
 			}
-			return serialOutlineGuidance + fmt.Sprintf(outlinePrompt, p.ChapterCount, titlePrompt, material), nil
+			return guidance + serialOutlineGuidance + fmt.Sprintf(outlinePrompt, p.ChapterCount, titlePrompt, material), nil
 		}
-		return fmt.Sprintf(outlinePrompt, p.ChapterCount, titlePrompt, material), nil
+		return guidance + fmt.Sprintf(outlinePrompt, p.ChapterCount, titlePrompt, material), nil
 	}
 	current := action.Outline
 	if current == nil {
@@ -83,12 +92,13 @@ func outlineGenerationPrompt(p *Project, action Action) (string, error) {
 		Title, Brief, Instruction string
 		AuthorGuidance            string `json:",omitempty"`
 		CurrentOutline            Outline
-	}{p.Title, p.Brief, instruction, p.AuthorGuidance, draft}
+		FinalizedChapters         []priorChapter `json:",omitempty"`
+	}{p.Title, p.Brief, instruction, p.AuthorGuidance, draft, finalized}
 	prompt := fmt.Sprintf(reviseOutlinePrompt, p.ChapterCount, titlePrompt, asJSON(material))
 	if p.StoryMode == StoryModeSerial {
 		prompt = serialOutlineGuidance + prompt
 	}
-	return prompt, nil
+	return guidance + prompt, nil
 }
 
 const serialWriteGuidance = `这是一部长篇连载。Synopsis 是全书主线和未来方向，正文只推进当前章目标。即使暂时没有下一章目标，也把它视为当前批的末章，保留长线冲突和未到回收时机的伏笔。明确要求写全书终章时才收束主线。
@@ -139,7 +149,7 @@ func priorChapters(p Project, before int, includeRecentProse bool) []priorChapte
 		if !chapter.Final {
 			continue
 		}
-		entry := priorChapter{Number: i + 1, Title: p.Outline.Beats[i].Title, Summary: chapter.Summary}
+		entry := priorChapter{Number: i + 1, Title: p.chapterTitle(i), Summary: chapter.Summary}
 		if includeRecentProse && before-i <= 2 {
 			entry.FinalizedProse = excerptEnds(chapter.Body, recentChapterRunes, "\n【中间正文省略】\n")
 		}

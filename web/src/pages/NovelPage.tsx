@@ -11,6 +11,7 @@ import { NovelAppendChapters, novelChapterLimit } from './NovelAppendChapters'
 import { NovelCoverEditor } from './NovelCoverEditor'
 import { NovelCreateDialog } from './NovelCreateDialog'
 import { NovelTitleEditor } from './NovelTitleEditor'
+import { ProjectCoverBackdrop } from './ProjectCoverBackdrop'
 import './novel.css'
 
 const { TextArea } = Input
@@ -30,12 +31,14 @@ const messages: Record<NovelAction['kind'], string> = {
   save_author_guidance: '正在保存写作约定',
   save_outline: '正在保存大纲',
   confirm_outline: '正在确认大纲',
+  reopen_outline: '正在撤回大纲确认',
   append_chapters: '正在追加章节',
   write: '正在生成正文并审稿',
   review: '正在审稿',
   revise_review: '正在按审稿意见修改并复核',
   save_draft: '正在保存草稿',
   finalize: '正在定稿',
+  reopen_chapter: '正在撤回定稿',
 }
 
 function errorMessage(error: Error) {
@@ -112,6 +115,7 @@ export function NovelProjectPage() {
         return cover && cover.url !== p.cover?.url && updated.cover?.url === p.cover?.url ? { ...updated, cover } : updated
       })
       void cache.invalidateQueries({ queryKey: ['novel-books', ...scope] })
+      void cache.invalidateQueries({ queryKey: ['novel-finalized-chapters', ...scope, updated.id] })
     },
   })
   const actionStates = useMutationState({
@@ -152,11 +156,7 @@ export function NovelProjectPage() {
 
   return (
     <main className={coverURL ? 'novel-page novel-project-with-cover' : 'novel-page'}>
-      {coverURL && <div className="novel-cover-backdrop" aria-hidden="true">
-        <div className="novel-cover-backdrop-frame">
-          <img key={coverURL} src={coverURL} alt="" onError={(event) => { event.currentTarget.hidden = true }} />
-        </div>
-      </div>}
+      {coverURL && <ProjectCoverBackdrop url={coverURL} />}
       {project.isPending && <Spin aria-label="正在加载作品" />}
       {project.isError && <Alert type="error" title={errorMessage(project.error)} action={<Button onClick={() => void project.refetch()}>重试</Button>} />}
       {project.data && (
@@ -205,6 +205,7 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
   const [selectedIndex, setSelected] = useState(() => project.confirmed ? (firstUnfinished < 0 ? project.chapterCount - 1 : firstUnfinished) : -1)
   const selected = Math.min(selectedIndex, project.chapters.length - 1)
   const [chapterPage, setChapterPage] = useState(() => Math.floor(Math.max(selected, 0) / chapterPageSize) + 1)
+  const [beatPage, setBeatPage] = useState(1)
   const [selectedModel, setModel] = useState<string>()
   const [editingCover, setEditingCover] = useState(false)
   const [guidanceProject, setGuidanceProject] = useState<NovelProject>()
@@ -230,6 +231,7 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
   const savedInstruction = project.chapters[selected]?.authorInstruction ?? ''
   const chapterInstruction = instructionDraft?.index === selected && instructionDraft.saved === savedInstruction
     ? instructionDraft.value : savedInstruction
+  const chapterReady = (index: number) => project.confirmed && index <= project.finalizedChapterCount
 
   function switchSection(index: number) {
     if (selected === index || busy) return
@@ -309,9 +311,11 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
             title={dirty ? '请先保存当前草稿' : undefined} onClick={openAppend}><span><PlusOutlined /> 追加章节</span></button>}
           {!awaitingOpening && project.chapters.slice(chapterOffset, chapterOffset + chapterPageSize).map((chapter, pageIndex) => {
             const index = chapterOffset + pageIndex
-            const locked = !project.confirmed || (index > 0 && !project.chapters[index - 1].final)
+            const ready = chapterReady(index)
+            const hasDraft = !!chapter.body.trim()
+            const hint = chapter.final ? '已定稿' : ready ? (hasDraft ? '草稿' : '待写') : hasDraft ? '待复核' : '待解锁'
             return <div key={index}>
-              {sectionButton(index, `第 ${index + 1} 章`, chapter.final ? '已定稿' : locked ? '待解锁' : chapter.body ? '草稿' : '待写', locked)}
+              {sectionButton(index, `第 ${index + 1} 章`, hint, !ready && !chapter.final && !hasDraft)}
             </div>
           })}
           {project.chapterCount > chapterPageSize && <Pagination className="novel-chapter-pagination" aria-label="章节目录分页" size="small"
@@ -327,10 +331,12 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
               </div>
             : selected === -1
             ? <OutlineEditor key={project.version} project={project} modelCode={modelCode} busy={busy} run={run}
+                beatPage={beatPage} setBeatPage={setBeatPage}
                 dirty={dirty} markDirty={markDirty} onStart={() => switchSection(Math.max(0, firstUnfinished))} />
             : <ChapterEditor key={project.version + ':' + selected} project={project} index={selected}
                 instruction={chapterInstruction} setInstruction={(value) => setInstructionDraft({ index: selected, saved: savedInstruction, value })}
                 modelCode={modelCode} busy={busy} run={run} dirty={dirty} markDirty={markDirty}
+                ready={chapterReady(selected)} onPrerequisite={() => switchSection(project.confirmed ? Math.max(0, firstUnfinished) : -1)}
                 onNext={() => switchSection(selected + 1)} onAppend={canAppend ? openAppend : undefined} />}
         </Card>
       </div>
@@ -371,8 +377,9 @@ function NovelAuthorGuidance({ initialValue, saving, onClose, onSave }: {
   )
 }
 
-function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStart }: {
+function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStart, beatPage, setBeatPage }: {
   project: NovelProject; modelCode: string; busy: boolean; dirty: boolean; markDirty: (value: boolean) => void; run: RunAction; onStart: () => void
+  beatPage: number; setBeatPage: (page: number) => void
 }) {
   const serial = project.storyMode === 'serial'
   const [outline, setOutline] = useState<NovelOutline>(() => project.outline ?? {
@@ -380,15 +387,16 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
   })
   const [showOutlineFeedback, setShowOutlineFeedback] = useState(false)
   const [outlineFeedback, setOutlineFeedback] = useState('')
-  const [beatPage, setBeatPage] = useState(1)
-  const paginateBeats = project.confirmed && outline.beats.length > chapterPageSize
-  const beatOffset = (beatPage - 1) * chapterPageSize
+  const paginateBeats = outline.beats.length > chapterPageSize
+  const currentBeatPage = Math.min(beatPage, Math.max(1, Math.ceil(outline.beats.length / chapterPageSize)))
+  const beatOffset = (currentBeatPage - 1) * chapterPageSize
   const visibleBeats = paginateBeats ? outline.beats.slice(beatOffset, beatOffset + chapterPageSize) : outline.beats
   const complete = !!(outline.synopsis.trim() && outline.world.trim() && outline.characters.trim()
     && outline.beats.every((beat) => beat.title.trim() && beat.goal.trim()))
   const outlineCheck = dirty ? undefined : project.outlineCheck
-  const confirmTitle = outlineCheck?.status === 'needs_review' ? '部分因果待确认，仍要锁定当前大纲？'
-    : outlineCheck?.status === 'unavailable' ? '因果检查未完成，仍要锁定当前大纲？' : '确认后将锁定大纲，开始逐章写作？'
+  const confirmTitle = outlineCheck?.status === 'needs_review' ? '部分因果待核对，仍要确认当前大纲？'
+    : outlineCheck?.status === 'unavailable' ? '因果检查未完成，仍要确认当前大纲？' : '确认当前大纲并开放正文写作？'
+  const hasWrittenChapters = project.chapters.some((chapter) => chapter.body.trim())
   const generate = () => run({ kind: 'generate_outline', modelCode })
   const generateButton = <Button icon={<RobotOutlined />} disabled={busy || !modelCode} onClick={project.outline || dirty ? undefined : generate}>
     {project.outline ? '重新生成大纲' : serial ? '规划长篇开篇' : '生成大纲'}
@@ -407,11 +415,19 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
 
   return (
     <>
-      <h2>作品大纲</h2>
+      <header className="novel-chapter-title">
+        <h2>作品大纲</h2>
+        {project.confirmed && <Popconfirm title="撤回确认并修改大纲？"
+          description="已有正文和定稿会保留。重新确认大纲后即可继续写作。"
+          okText="撤回确认" cancelText="取消" onConfirm={() => run({ kind: 'reopen_outline' })}>
+          <Button className="novel-reopen-trigger" icon={<EditOutlined />} disabled={busy}>修改大纲</Button>
+        </Popconfirm>}
+      </header>
       {brief}
       {!project.confirmed && <p className="novel-hint">{project.outline
-        ? '重新生成会从最初的故事灵感出发。要在当前大纲上纠正或补充细节，可以按意见修改。'
-        : '可先生成大纲，也可手动填写。确认后开放第一章，并锁定大纲。'}</p>}
+        ? hasWrittenChapters ? '已有正文会保留。修改时请核对与定稿内容的衔接，重新确认后继续写作。'
+          : '重新生成会从最初的故事灵感出发。要在当前大纲上纠正或补充细节，可以按意见修改。'
+        : '可先生成大纲，也可手动填写。确认后开放第一章。'}</p>}
       {complete && (!project.confirmed || outlineCheck) && (
         <section className="novel-outline-check" aria-label="大纲因果检查">
           <div className="novel-outline-check-header">
@@ -467,7 +483,7 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
               onChange={(event) => changeOutline({ ...outline, [key]: event.target.value })} />
           </Form.Item>
         ))}
-        <h3>{serial && !project.confirmed ? `开篇蓝图 · AI 建议 ${project.chapterCount} 章` : '章节蓝图'}</h3>
+        <h3>{serial && !project.confirmed && !hasWrittenChapters && project.chapterCount <= 8 ? `开篇蓝图 · AI 建议 ${project.chapterCount} 章` : '章节蓝图'}</h3>
         {visibleBeats.map((beat, pageIndex) => {
           const index = paginateBeats ? beatOffset + pageIndex : pageIndex
           return (
@@ -484,7 +500,7 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
             </fieldset>
           )
         })}
-        {paginateBeats && <Pagination aria-label="章节蓝图分页" size="small" current={beatPage} total={outline.beats.length}
+        {paginateBeats && <Pagination aria-label="章节蓝图分页" size="small" current={currentBeatPage} total={outline.beats.length}
           pageSize={chapterPageSize} showSizeChanger={false} onChange={setBeatPage} />}
       </Form>
       <div className="novel-actions">
@@ -504,20 +520,22 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
   )
 }
 
-function ChapterEditor({ project, index, instruction, setInstruction, modelCode, busy, dirty, markDirty, run, onNext, onAppend }: {
+function ChapterEditor({ project, index, instruction, setInstruction, modelCode, busy, dirty, markDirty, run, ready, onPrerequisite, onNext, onAppend }: {
   project: NovelProject; index: number; modelCode: string; busy: boolean; dirty: boolean
   instruction: string; setInstruction: (value: string) => void
-  markDirty: (value: boolean) => void; run: RunAction; onNext: () => void; onAppend?: () => void
+  markDirty: (value: boolean) => void; run: RunAction; ready: boolean; onPrerequisite: () => void; onNext: () => void; onAppend?: () => void
 }) {
   const chapter = project.chapters[index]
   const beat = project.outline?.beats[index]
   const [body, setBody] = useState(chapter.body)
   const [summary, setSummary] = useState(chapter.summary)
   const number = index + 1
+  const editable = ready && !chapter.final
+  const laterFinalCount = Math.max(0, project.finalizedChapterCount - number)
   const summaryMissing = !!chapter.body.trim() && !chapter.summary.trim()
   const awaitingRecheck = chapter.reviewFailed && !!chapter.review
   const reviewPassed = chapter.reviewPassed && !dirty && !chapter.reviewFailed && !summaryMissing
-  const writeDisabled = busy || dirty || !modelCode
+  const writeDisabled = busy || dirty || !modelCode || !editable
   const generate = () => run({ kind: 'write', chapter: number, modelCode, instruction })
   const reviseFromReview = () => run({ kind: 'revise_review', chapter: number, modelCode })
   const writeButton = <Button icon={<RobotOutlined />} disabled={writeDisabled}
@@ -528,30 +546,38 @@ function ChapterEditor({ project, index, instruction, setInstruction, modelCode,
       <header className="novel-chapter-title">
         <p>第 {number} 章</p><h2>{beat?.title}</h2>
         {chapter.final && <Tag color="green">已定稿</Tag>}
+        {chapter.final && ready && <Popconfirm title="撤回本章定稿？"
+          description={laterFinalCount > 0
+            ? `本章及后续 ${laterFinalCount} 章已定稿内容会转为草稿。正文和摘要都会保留，请按顺序复核并重新定稿。`
+            : '正文和摘要会保留，可继续编辑并重新定稿。'}
+          okText="撤回定稿" cancelText="取消" onConfirm={() => run({ kind: 'reopen_chapter', chapter: number })}>
+          <Button className="novel-reopen-trigger" icon={<EditOutlined />} disabled={busy}>修改定稿</Button>
+        </Popconfirm>}
       </header>
       <p className="novel-goal">{beat?.goal}</p>
+      {!ready && <Alert type="info" showIcon title={project.confirmed ? '请先定稿前文，再修改本章。' : '请先确认大纲，再修改本章。'} />}
       <Form layout="vertical" disabled={busy}>
         <Form.Item label="正文" htmlFor="novel-body">
           <TextArea id="novel-body" className="novel-prose" autoSize={{ minRows: 12, maxRows: 25 }} value={body}
-            readOnly={chapter.final} maxLength={8000} showCount onChange={(event) => {
+            readOnly={!editable} maxLength={8000} showCount onChange={(event) => {
               setBody(event.target.value); markDirty(event.target.value !== chapter.body || summary !== chapter.summary)
             }} />
         </Form.Item>
         <Form.Item label="连续性摘要" htmlFor="novel-summary" extra="正文改动后请同步核对摘要。后续章节会引用这里定稿的事件、人物变化和未收束的伏笔。">
-          <TextArea id="novel-summary" rows={3} value={summary} readOnly={chapter.final} maxLength={500} onChange={(event) => {
+          <TextArea id="novel-summary" rows={3} value={summary} readOnly={!editable} maxLength={500} onChange={(event) => {
             setSummary(event.target.value); markDirty(body !== chapter.body || event.target.value !== chapter.summary)
           }} />
         </Form.Item>
-        {!chapter.final && <Form.Item label="本章写作要求（可选）" htmlFor="novel-instruction"
+        {editable && <Form.Item label="本章写作要求（可选）" htmlFor="novel-instruction"
           extra="生成正文或 AI 改写时会保存这些要求，用于本章后续写作和审稿。">
           <TextArea id="novel-instruction" rows={2} value={instruction} maxLength={1200} onChange={(event) => setInstruction(event.target.value)} />
         </Form.Item>}
       </Form>
-      {reviewPassed && !chapter.final && <Alert type="success" showIcon title="审稿通过，可以定稿" />}
+      {reviewPassed && editable && <Alert type="success" showIcon title="审稿通过，可以定稿" />}
       {chapter.review && !reviewPassed && <aside className="novel-review">
         <div className="novel-review-header">
           <h3>{dirty ? '上一版草稿的审稿意见' : awaitingRecheck ? '上轮意见待复核' : '审稿意见'}</h3>
-          {!chapter.final && !awaitingRecheck && !summaryMissing && <Popconfirm title="按这份审稿意见修改？"
+          {editable && !awaitingRecheck && !summaryMissing && <Popconfirm title="按这份审稿意见修改？"
             description="会更新本章草稿和连续性摘要，之后只核对原问题及本次修改引入的问题。"
             okText="开始修改" cancelText="取消" onConfirm={reviseFromReview}>
             <Button type="primary" size="small" icon={<RobotOutlined />} disabled={writeDisabled}>按审稿意见修改</Button>
@@ -559,20 +585,21 @@ function ChapterEditor({ project, index, instruction, setInstruction, modelCode,
         </div>
         <p>{chapter.review}</p>
       </aside>}
-      {summaryMissing && !chapter.final && <Alert type="warning" showIcon title="正文已保存，连续性摘要待补全"
+      {summaryMissing && editable && <Alert type="warning" showIcon title="正文已保存，连续性摘要待补全"
         description="可以点击下方「AI 补摘要并审稿」，保留已保存的正文。" />}
-      {chapter.reviewFailed && !chapter.final && !summaryMissing && <Alert type="warning" showIcon
+      {chapter.reviewFailed && editable && !summaryMissing && <Alert type="warning" showIcon
         title={awaitingRecheck ? '修改已保存，复核未完成' : '正文已保存，自动审稿未完成'}
         description={awaitingRecheck ? '可以点击下方「重试复核」核对上轮意见。' : '可以点击下方「AI 审稿」重新检查这版草稿。'} />}
       <div className="novel-actions">
-        {chapter.final ? number < project.chapterCount ? <Button type="primary" onClick={onNext}>进入下一章</Button>
+        {!ready ? <Button disabled={busy} onClick={onPrerequisite}>{project.confirmed ? '前往待定稿章节' : '返回作品大纲'}</Button>
+          : chapter.final ? number < project.chapterCount ? <Button type="primary" onClick={onNext}>进入下一章</Button>
           : onAppend && <Button type="primary" icon={<PlusOutlined />} disabled={busy} onClick={onAppend}>追加章节</Button> : <Space wrap>
           {chapter.body ? <Popconfirm title="用改写结果替换已保存的草稿？" onConfirm={generate}>{writeButton}</Popconfirm> : writeButton}
           <Button disabled={busy || !dirty || !body.trim()} onClick={() => run({ kind: 'save_draft', chapter: number, body, summary })}>保存草稿</Button>
           <Button disabled={busy || dirty || !chapter.body || !modelCode} onClick={() => run({ kind: 'review', chapter: number, modelCode })}>
             {summaryMissing ? 'AI 补摘要并审稿' : awaitingRecheck ? '重试复核' : 'AI 审稿'}
           </Button>
-          <Popconfirm title="定稿后本章将锁定，摘要会传给后续章节。确认定稿？"
+          <Popconfirm title="确认定稿并将摘要用于后续章节？"
             onConfirm={() => run({ kind: 'finalize', chapter: number, body, summary })}>
             <Button type="primary" disabled={busy || !body.trim() || !summary.trim()}>确认定稿</Button>
           </Popconfirm>

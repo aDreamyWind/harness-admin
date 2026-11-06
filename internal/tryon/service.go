@@ -24,12 +24,14 @@ const (
 )
 
 var (
-	ErrInvalid   = errors.New("试衣请求无效")
-	ErrNotFound  = errors.New("找不到这项试衣资料")
-	ErrBusy      = errors.New("已有试穿正在生成，请等待完成")
-	ErrModel     = errors.New("请选择可用的模型，并检查模型权限")
-	ErrInference = errors.New("模型未能完成请求，请查看模型调用日志后重试")
-	ErrDetection = errors.New("无法读取衣物识别结果，可以手动框选")
+	ErrInvalid          = errors.New("试衣请求无效")
+	ErrNotFound         = errors.New("找不到这项试衣资料")
+	ErrBuiltinAsset     = errors.New("内置样例不能删除")
+	ErrBusy             = errors.New("待处理的试穿任务已达上限，请等部分任务完成后再提交")
+	ErrModel            = errors.New("请选择可用的模型，并检查模型权限")
+	ErrInference        = errors.New("模型未能完成请求，请查看模型调用日志后重试")
+	ErrDetection        = errors.New("无法读取衣物识别结果，可以手动框选")
+	ErrDetectionTimeout = errors.New("衣物识别超时，请重试或切换识别模型。")
 )
 
 type Owner struct{ OrganizationID, UserID string }
@@ -41,6 +43,7 @@ type Asset struct {
 	Category  string    `json:"category,omitempty"`
 	Builtin   bool      `json:"builtin,omitempty"`
 	Retired   bool      `json:"retired,omitempty"`
+	Deleted   bool      `json:"deleted,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -70,21 +73,23 @@ type Models struct {
 }
 
 type Job struct {
-	ID        string    `json:"id"`
-	PersonID  string    `json:"personId"`
-	GarmentID string    `json:"garmentId"`
-	PoseID    string    `json:"poseId,omitempty"`
-	ModelCode string    `json:"modelCode"`
-	Status    string    `json:"status"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID         string    `json:"id"`
+	PersonID   string    `json:"personId"`
+	GarmentID  string    `json:"garmentId"`
+	GarmentIDs []string  `json:"garmentIds"`
+	PoseID     string    `json:"poseId,omitempty"`
+	ModelCode  string    `json:"modelCode"`
+	Status     string    `json:"status"`
+	Error      string    `json:"error,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 type JobInput struct {
-	PersonID  string `json:"personId"`
-	GarmentID string `json:"garmentId"`
-	PoseID    string `json:"poseId"`
-	ModelCode string `json:"modelCode"`
+	PersonID   string   `json:"personId"`
+	GarmentID  string   `json:"garmentId"`
+	GarmentIDs []string `json:"garmentIds"`
+	PoseID     string   `json:"poseId"`
+	ModelCode  string   `json:"modelCode"`
 }
 
 type PersonInput struct {
@@ -97,10 +102,10 @@ type PersonInput struct {
 type Repository interface {
 	ListAssets(context.Context, Owner) ([]Asset, error)
 	SaveAsset(context.Context, Owner, AssetImage) (Asset, error)
+	DeleteAsset(context.Context, Owner, string) error
 	Asset(context.Context, Owner, string) (AssetImage, error)
 	ListJobs(context.Context, Owner) ([]Job, error)
 	CreateJob(context.Context, Owner, Job, time.Time, []AssetImage) (Job, error)
-	FinishJob(context.Context, Owner, string, Image, string) error
 	Result(context.Context, Owner, string) (Image, error)
 }
 
@@ -111,9 +116,14 @@ type Engine interface {
 }
 
 type Service struct {
-	repo   Repository
-	engine Engine
-	logger *slog.Logger
+	repo        Repository
+	engine      Engine
+	logger      *slog.Logger
+	garmentJobs GarmentJobRepository
+	garmentWake chan struct{}
+	tryOnQueue  TryOnQueueRepository
+	tryOnWake   chan struct{}
+	outfits     OutfitRepository
 }
 
 func NewService(repo Repository, engine Engine, logger *slog.Logger) *Service {
@@ -174,6 +184,25 @@ func (s *Service) Asset(ctx context.Context, owner Owner, id string) (AssetImage
 	return stored, err
 }
 
+func (s *Service) DeleteAsset(ctx context.Context, owner Owner, id string) error {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return ErrNotFound
+	}
+	id = parsed.String()
+	for _, p := range presets {
+		if presetID(owner, p.file) == id {
+			return ErrBuiltinAsset
+		}
+	}
+	for _, file := range retiredPresetFiles {
+		if presetID(owner, file) == id {
+			return ErrBuiltinAsset
+		}
+	}
+	return s.repo.DeleteAsset(ctx, owner, id)
+}
+
 func isPerson(kind string) bool { return kind == Person2D || kind == PersonReal }
 
 func invalid(message string) error { return fmt.Errorf("%w：%s", ErrInvalid, message) }
@@ -221,7 +250,11 @@ func (s *Service) Detect(ctx context.Context, owner Owner, model string, data []
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	return s.engine.Detect(ctx, owner, model, im)
+	items, err := s.engine.Detect(ctx, owner, model, im)
+	if errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrDetectionTimeout) {
+		return nil, fmt.Errorf("%w %v", ErrDetectionTimeout, err)
+	}
+	return items, err
 }
 
 func (s *Service) GeneratePerson(ctx context.Context, owner Owner, in PersonInput) (Asset, error) {
@@ -256,90 +289,6 @@ func (s *Service) GeneratePerson(ctx context.Context, owner Owner, in PersonInpu
 
 func (s *Service) ListJobs(ctx context.Context, owner Owner) ([]Job, error) {
 	return s.repo.ListJobs(ctx, owner)
-}
-
-func (s *Service) Start(ctx context.Context, owner Owner, in JobInput) (Job, error) {
-	if !validModelCode(in.ModelCode) {
-		return Job{}, ErrModel
-	}
-	person, err := s.Asset(ctx, owner, in.PersonID)
-	if err != nil {
-		return Job{}, err
-	}
-	garment, err := s.Asset(ctx, owner, in.GarmentID)
-	if err != nil {
-		return Job{}, err
-	}
-	if !isPerson(person.Kind) || garment.Kind != Garment {
-		return Job{}, invalid("请选择一张人物图和一张衣物图")
-	}
-	assets := []AssetImage{person, garment}
-	if in.PoseID != "" {
-		pose, err := s.Asset(ctx, owner, in.PoseID)
-		if err != nil {
-			return Job{}, err
-		}
-		if pose.Kind != Pose {
-			return Job{}, invalid("请选择姿势参考图")
-		}
-		assets = append(assets, pose)
-		in.PoseID = pose.ID
-	}
-	models, err := s.engine.Models(ctx, owner)
-	if err != nil {
-		return Job{}, err
-	}
-	allowed := false
-	for _, model := range models.Image {
-		if model.Code == in.ModelCode {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
-		return Job{}, ErrModel
-	}
-	refs := make([]Image, 0, len(assets))
-	var builtinAssets []AssetImage
-	for _, asset := range assets {
-		refs = append(refs, asset.Image)
-		if asset.Builtin {
-			builtinAssets = append(builtinAssets, asset)
-		}
-	}
-	job, err := s.repo.CreateJob(ctx, owner, Job{
-		ID: uuid.NewString(), PersonID: person.ID, GarmentID: garment.ID, PoseID: in.PoseID, ModelCode: in.ModelCode,
-	}, time.Now().Add(jobTimeout+30*time.Second), builtinAssets)
-	if err != nil {
-		return Job{}, err
-	}
-	go s.run(context.WithoutCancel(ctx), owner, job, tryonPrompt(person.Kind, garment.Category, in.PoseID != ""), refs)
-	return job, nil
-}
-
-func (s *Service) run(parent context.Context, owner Owner, job Job, prompt string, refs []Image) {
-	ctx, cancel := context.WithTimeout(parent, jobTimeout)
-	defer cancel()
-	im, err := s.engine.Generate(ctx, owner, job.ModelCode, "tryon_generate", prompt, refs)
-	if err == nil {
-		_, err = imageInfo(im.Data, MaxResultBytes)
-	}
-	message := ""
-	if err != nil {
-		message = ErrInference.Error()
-		if errors.Is(err, ErrModel) {
-			message = ErrModel.Error()
-		} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			message = "试穿生成超时，请重试"
-		}
-		im = Image{}
-		s.logger.Warn("AI 试穿生成失败", "job_id", job.ID, "error", err)
-	}
-	saveCtx, saveCancel := context.WithTimeout(parent, 10*time.Second)
-	defer saveCancel()
-	if err := s.repo.FinishJob(saveCtx, owner, job.ID, im, message); err != nil {
-		s.logger.Error("保存 AI 试穿任务状态失败", "job_id", job.ID, "error", err)
-	}
 }
 
 func (s *Service) Result(ctx context.Context, owner Owner, id string) (Image, error) {

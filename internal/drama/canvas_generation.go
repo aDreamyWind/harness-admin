@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +20,9 @@ import (
 const (
 	maxCanvasReferenceImageBytes = 10 << 20
 	maxCanvasReferenceBytes      = 40 << 20
+	maxCanvasGenerationRunes     = 20000
+	CanvasResolution1K           = "1K"
+	CanvasResolution2K           = "2K"
 )
 
 type CanvasGenerationScope struct{ OrganizationID, UserID, ProjectID, NodeID string }
@@ -27,7 +31,9 @@ type CanvasGenerationInput struct {
 	ModelCode   string `json:"modelCode"`
 	Revision    int    `json:"revision"`
 	Prompt      string `json:"prompt"`
+	StyleID     string `json:"styleId"`
 	AspectRatio string `json:"aspectRatio"`
+	Resolution  string `json:"resolution"`
 	Duration    int    `json:"duration"`
 }
 
@@ -45,17 +51,19 @@ type CanvasGenerationJob struct {
 }
 
 type CanvasGenerationModel struct {
-	Code          string `json:"code"`
-	Name          string `json:"name"`
-	Kind          string `json:"kind"`
-	MinReferences int    `json:"minReferences"`
-	MaxReferences int    `json:"maxReferences"`
-	MinDuration   int    `json:"minDuration,omitempty"`
-	MaxDuration   int    `json:"maxDuration,omitempty"`
+	Code          string   `json:"code"`
+	Name          string   `json:"name"`
+	Kind          string   `json:"kind"`
+	MinReferences int      `json:"minReferences"`
+	MaxReferences int      `json:"maxReferences"`
+	Resolutions   []string `json:"resolutions,omitempty"`
+	MinDuration   int      `json:"minDuration,omitempty"`
+	MaxDuration   int      `json:"maxDuration,omitempty"`
 }
 
 type CanvasGenerationRequest struct {
 	OrganizationID, UserID, JobID, ModelCode, Kind, Prompt, AspectRatio string
+	Resolution                                                          string
 	Duration                                                            int
 	ReferenceImages, ReferenceIDs                                       []string
 }
@@ -168,26 +176,25 @@ func (s *Service) StartCanvasGeneration(ctx context.Context, org, user, project,
 	if err := validateCanvasGenerationModel(models, request, len(sources)); err != nil {
 		return CanvasGenerationJob{}, err
 	}
-	for i := range sources {
-		if sources[i].url != "" {
-			if _, local := canvasMediaReferenceID(project, sources[i].url); !local && !validCanvasExternalImage(sources[i].url) {
-				return CanvasGenerationJob{}, fmt.Errorf("%w：参考图「%s」请使用项目内的图片或公网 HTTPS 链接", ErrInvalidInput, sources[i].title)
-			}
-			continue
+	if styleID := strings.TrimSpace(in.StyleID); styleID != "" {
+		if s.styles == nil {
+			return CanvasGenerationJob{}, ErrStyleUnavailable
 		}
-		if sources[i].imageID != "" {
-			continue
-		}
-		sourceScope := scope
-		sourceScope.NodeID = sources[i].id
-		previous, err := s.canvasJobs.ReadCanvasGeneration(ctx, sourceScope)
+		style, err := s.styles.ResolveCatalogStyle(ctx, styleID)
 		if err != nil {
 			return CanvasGenerationJob{}, err
 		}
-		if previous == nil || previous.ResultMediaID == "" {
-			return CanvasGenerationJob{}, fmt.Errorf("%w：参考图「%s」还没有图片，请先上传或生成", ErrInvalidInput, sources[i].title)
+		stylePrompt := style.ImagePrompt
+		if request.Kind == "video" {
+			stylePrompt = style.VideoPrompt
 		}
-		sources[i].url = canvasGenerationResultURL(project, previous.ResultMediaID)
+		request.Prompt += fmt.Sprintf("\n\n画面风格：%s\n风格要求：%s", style.Name, stylePrompt)
+		if utf8.RuneCountInString(request.Prompt) > maxCanvasGenerationRunes {
+			return CanvasGenerationJob{}, fmt.Errorf("%w：提示词、参考素材和风格要求合计不能超过 %d 字", ErrInvalidInput, maxCanvasGenerationRunes)
+		}
+	}
+	if err := s.resolveCanvasGenerationSources(ctx, scope, sources); err != nil {
+		return CanvasGenerationJob{}, err
 	}
 	request.OrganizationID, request.UserID, request.JobID = org, user, uuid.NewString()
 	timeout := 12 * time.Minute
@@ -215,12 +222,14 @@ func planCanvasGeneration(canvas Canvas, node string, in CanvasGenerationInput) 
 	if canvas.Extras == nil {
 		return request, nil, ErrNotFound
 	}
-	cards := make(map[string]CanvasCard, len(canvas.Extras.Cards))
+	var target CanvasCard
 	for _, card := range canvas.Extras.Cards {
-		cards[card.ID] = card
+		if card.ID == node {
+			target = card
+			break
+		}
 	}
-	target, exists := cards[node]
-	if !exists {
+	if target.ID == "" {
 		return request, nil, ErrNotFound
 	}
 	if target.Kind != "image" && target.Kind != "video" {
@@ -229,16 +238,52 @@ func planCanvasGeneration(canvas Canvas, node string, in CanvasGenerationInput) 
 	request.Kind = target.Kind
 	request.ModelCode = strings.TrimSpace(in.ModelCode)
 	request.AspectRatio = strings.TrimSpace(in.AspectRatio)
+	request.Resolution = strings.TrimSpace(in.Resolution)
 	request.Duration = in.Duration
 	if request.AspectRatio == "" {
 		request.AspectRatio = "16:9"
 	}
 	if !validCanvasText(request.ModelCode, 160) || (request.AspectRatio != "16:9" && request.AspectRatio != "9:16" && request.AspectRatio != "1:1") ||
-		(request.Kind == "image" && request.Duration != 0) || strings.ContainsRune(in.Prompt, 0) || utf8.RuneCountInString(in.Prompt) > 10000 {
+		(request.Kind == "image" && request.Duration != 0) || strings.ContainsRune(in.Prompt, 0) || utf8.RuneCountInString(in.Prompt) > 10000 ||
+		(in.StyleID != "" && !validCanvasText(in.StyleID, 80)) {
 		return request, nil, ErrInvalidInput
+	}
+	if request.Resolution != "" && (request.Kind != "image" || (request.Resolution != CanvasResolution1K && request.Resolution != CanvasResolution2K)) {
+		return request, nil, fmt.Errorf("%w：分辨率只适用于图片节点，可选 1K 或 2K", ErrInvalidInput)
 	}
 	if request.Kind == "video" && request.Duration == 0 {
 		request.Duration = 5
+	}
+	texts, sources := canvasGenerationSources(canvas, node)
+	var parts []string
+	if own := strings.TrimSpace(in.Prompt); own != "" {
+		parts = append(parts, own)
+	}
+	parts = append(parts, texts...)
+	if len(parts) == 0 {
+		if len(sources) == 0 {
+			return request, nil, fmt.Errorf("%w：请填写提示词或连入文本、图片节点", ErrInvalidInput)
+		}
+		if request.Kind == "image" {
+			parts = append(parts, "根据参考图生成一张画面，保留主要人物与场景特征。")
+		} else {
+			parts = append(parts, "根据参考图生成一段连贯的视频，保留主要人物和场景特征。")
+		}
+	}
+	request.Prompt = strings.Join(parts, "\n\n") + canvasReferenceGuide(sources)
+	if utf8.RuneCountInString(request.Prompt) > maxCanvasGenerationRunes {
+		return request, nil, fmt.Errorf("%w：提示词与参考素材合计不能超过 %d 字", ErrInvalidInput, maxCanvasGenerationRunes)
+	}
+	return request, sources, nil
+}
+
+func canvasGenerationSources(canvas Canvas, node string) ([]string, []canvasGenerationSource) {
+	if canvas.Extras == nil {
+		return nil, nil
+	}
+	cards := make(map[string]CanvasCard, len(canvas.Extras.Cards))
+	for _, card := range canvas.Extras.Cards {
+		cards[card.ID] = card
 	}
 	hidden := make(map[string]bool, len(canvas.Extras.Hidden))
 	for _, id := range canvas.Extras.Hidden {
@@ -250,10 +295,7 @@ func planCanvasGeneration(canvas Canvas, node string, in CanvasGenerationInput) 
 			forms[form.ID] = form
 		}
 	}
-	var parts []string
-	if own := strings.TrimSpace(in.Prompt); own != "" {
-		parts = append(parts, own)
-	}
+	var texts []string
 	var sources []canvasGenerationSource
 	seen := make(map[string]bool)
 	// 画布以数组保存手工边。按连入顺序固定参考编号，同一节点只引用一次。
@@ -266,30 +308,64 @@ func planCanvasGeneration(canvas Canvas, node string, in CanvasGenerationInput) 
 			switch card.Kind {
 			case "text":
 				if content := strings.TrimSpace(card.Content); content != "" {
-					parts = append(parts, fmt.Sprintf("参考文案「%s」\n%s", card.Title, content))
+					texts = append(texts, fmt.Sprintf("参考文案「%s」\n%s", card.Title, content))
 				}
 			case "image":
 				sources = append(sources, canvasGenerationSource{id: card.ID, title: card.Title, url: card.Content})
 			}
 		} else if form, ok := forms[link.Source]; ok && form.CurrentImageID != "" {
-			sources = append(sources, canvasGenerationSource{id: form.ID, title: form.AssetName, imageID: form.CurrentImageID})
+			sources = append(sources, canvasGenerationSource{id: form.ID, title: canvasAssetReferenceTitle(form), imageID: form.CurrentImageID})
 		}
 	}
-	if len(parts) == 0 {
-		if len(sources) == 0 {
-			return request, nil, fmt.Errorf("%w：请填写提示词或连入文本、图片节点", ErrInvalidInput)
-		}
-		if request.Kind == "image" {
-			parts = append(parts, "根据参考图生成一张画面，保留主要人物与场景特征。")
-		} else {
-			parts = append(parts, "根据参考图生成一段连贯的视频，保留主要人物和场景特征。")
-		}
+	return texts, sources
+}
+
+func canvasAssetReferenceTitle(form AssetForm) string {
+	if form.ParentID != "" && form.Name != "" && form.Name != form.AssetName {
+		return form.AssetName + " · " + form.Name
 	}
-	request.Prompt = strings.Join(parts, "\n\n")
-	if utf8.RuneCountInString(request.Prompt) > 20000 {
-		return request, nil, fmt.Errorf("%w：提示词和连入文本合计不能超过 20000 字", ErrInvalidInput)
+	return form.AssetName
+}
+
+func canvasReferenceGuide(sources []canvasGenerationSource) string {
+	if len(sources) == 0 {
+		return ""
 	}
-	return request, sources, nil
+	var guide strings.Builder
+	guide.WriteString("\n\n参考图顺序：")
+	for i, source := range sources {
+		fmt.Fprintf(&guide, "\n图%d（Image %d）：%s", i+1, i+1, strings.Join(strings.Fields(source.title), " "))
+	}
+	return guide.String()
+}
+
+func (s *Service) resolveCanvasGenerationSources(ctx context.Context, scope CanvasGenerationScope, sources []canvasGenerationSource) error {
+	for i := range sources {
+		source := &sources[i]
+		if source.url != "" {
+			if _, local := canvasMediaReferenceID(scope.ProjectID, source.url); !local && !validCanvasExternalImage(source.url) {
+				return fmt.Errorf("%w：参考图「%s」请使用项目内的图片或公网 HTTPS 链接", ErrInvalidInput, source.title)
+			}
+			continue
+		}
+		if source.imageID != "" {
+			continue
+		}
+		if s.canvasJobs == nil {
+			return ErrModelUnavailable
+		}
+		sourceScope := scope
+		sourceScope.NodeID = source.id
+		previous, err := s.canvasJobs.ReadCanvasGeneration(ctx, sourceScope)
+		if err != nil {
+			return err
+		}
+		if previous == nil || previous.ResultMediaID == "" {
+			return fmt.Errorf("%w：参考图「%s」还没有图片，请先上传或生成", ErrInvalidInput, source.title)
+		}
+		source.url = canvasGenerationResultURL(scope.ProjectID, previous.ResultMediaID)
+	}
+	return nil
 }
 
 func validateCanvasGenerationModel(models []CanvasGenerationModel, request CanvasGenerationRequest, count int) error {
@@ -305,6 +381,9 @@ func validateCanvasGenerationModel(models []CanvasGenerationModel, request Canva
 		}
 		if request.Kind == "video" && (request.Duration < model.MinDuration || request.Duration > model.MaxDuration) {
 			return fmt.Errorf("%w：所选模型支持 %d 至 %d 秒", ErrInvalidInput, model.MinDuration, model.MaxDuration)
+		}
+		if request.Resolution != "" && !slices.Contains(model.Resolutions, request.Resolution) {
+			return fmt.Errorf("%w：所选模型不支持 %s 分辨率，请调整尺寸或更换模型", ErrInvalidInput, request.Resolution)
 		}
 		return nil
 	}

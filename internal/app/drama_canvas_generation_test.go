@@ -54,6 +54,45 @@ func TestDramaCanvasGenerationSendsImageReferencesAndLogsNodeIDs(t *testing.T) {
 	}
 }
 
+func TestDramaCanvasGenerationUsesModelSupportedImageResolution(t *testing.T) {
+	t.Parallel()
+	gateway := &visualGatewayStub{}
+	forwarder := &visualForwarderStub{body: `{"data":[{"b64_json":"` + visualPNG + `"}]}`}
+	engine := &dramaCanvasGenerationEngine{
+		catalog: canvasGenerationCatalogStub{
+			{Code: "qwen", ModelType: "image", ProviderKind: "aliyun_bailian", UpstreamModelID: "qwen-image-3.0-pro"},
+			{Code: "standard", ModelType: "image", ProviderKind: "openai_compatible", UpstreamModelID: "qwen-image-3.0-pro"},
+		},
+		image: &dramaImageEngine{gateway: gateway, forwarder: forwarder},
+	}
+	ctx := context.Background()
+	models, err := engine.CanvasGenerationModels(ctx, "org", "user")
+	if err != nil || len(models) != 2 || !slices.Equal(models[0].Resolutions, []string{"1K", "2K"}) || !slices.Equal(models[1].Resolutions, []string{"1K"}) {
+		t.Fatalf("模型目录应按供应商及模型报告已确认的分辨率：%+v，%v", models, err)
+	}
+	in := drama.CanvasGenerationRequest{OrganizationID: "org", UserID: "user", JobID: "canvas-job", ModelCode: "standard", Kind: "image", Prompt: "月光下的山谷", Resolution: "2K", AspectRatio: "9:16"}
+	if _, _, err := engine.GenerateCanvasMedia(ctx, in); !errors.Is(err, drama.ErrInvalidInput) || len(forwarder.payload) > 0 {
+		t.Fatalf("不支持的分辨率不应发起模型调用：%v", err)
+	}
+	in.ModelCode = "qwen"
+	for ratio, want := range map[string]string{"16:9": "2560x1440", "9:16": "1440x2560", "1:1": "2048x2048"} {
+		in.AspectRatio = ratio
+		if _, _, err := engine.GenerateCanvasMedia(ctx, in); err != nil {
+			t.Fatalf("生成 %s 图片失败：%v", ratio, err)
+		}
+		var sent, logged struct{ Size string }
+		if err := json.Unmarshal(forwarder.payload, &sent); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(gateway.record.RequestBody, &logged); err != nil {
+			t.Fatal(err)
+		}
+		if sent.Size != want || logged.Size != want {
+			t.Fatalf("%s 的模型请求和调用日志应保留尺寸 %s，实际为 %s 与 %s", ratio, want, sent.Size, logged.Size)
+		}
+	}
+}
+
 func TestDramaCanvasGenerationUsesVideoQueryAndAllowsTextOnlyWan3(t *testing.T) {
 	t.Parallel()
 	gateway, forwarder := &dramaVideoGatewayStub{}, &dramaVideoForwarderStub{}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,14 +29,13 @@ func main() {
 	}
 	defer application.Close()
 	workerCtx, stopWorker := context.WithCancel(context.Background())
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		application.RunAlertRefresh(workerCtx, logger)
-	}()
+	var workers sync.WaitGroup
+	workers.Go(func() { application.RunAlertRefresh(workerCtx, logger) })
+	workers.Go(func() { application.RunGarmentJobs(workerCtx) })
+	workers.Go(func() { application.RunTryOnJobs(workerCtx) })
 	defer func() {
 		stopWorker()
-		<-workerDone
+		workers.Wait()
 	}()
 
 	errCh := make(chan error, 1)

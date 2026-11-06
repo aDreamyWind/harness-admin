@@ -26,6 +26,8 @@ type DramaService interface {
 	ReanalyzeOverview(context.Context, string, string, string) (drama.Project, error)
 	List(context.Context, string, string) ([]drama.Project, error)
 	Get(context.Context, string, string, string) (drama.Project, error)
+	RenameProject(context.Context, string, string, string, string) (drama.ProjectTitle, error)
+	UpdateProjectVisualSettings(context.Context, string, string, string, drama.ProjectVisualSettingsInput) (drama.ProjectVisualSettings, error)
 	GetSource(context.Context, string, string, string) (string, error)
 	SourcePage(context.Context, string, string, string, int, int) (drama.SourceRange, error)
 	ListBatches(context.Context, string, string, string) ([]drama.Batch, error)
@@ -129,6 +131,36 @@ func registerDramaRoutes(router *gin.Engine, deps Dependencies) {
 			return
 		}
 		httpx.OK(ctx, http.StatusOK, project)
+	})
+	group.PATCH("/projects/:id/title", requireCSRF(deps), func(ctx *gin.Context) {
+		var input struct {
+			Title string `json:"title"`
+		}
+		if err := ctx.ShouldBindJSON(&input); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "请填写有效的漫剧标题")
+			return
+		}
+		session := currentSession(ctx)
+		title, err := deps.Drama.RenameProject(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), input.Title)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, title)
+	})
+	group.PATCH("/projects/:id/visual-settings", requireCSRF(deps), func(ctx *gin.Context) {
+		var input drama.ProjectVisualSettingsInput
+		if err := ctx.ShouldBindJSON(&input); err != nil {
+			httpx.Fail(ctx, http.StatusBadRequest, "invalid_request", "漫剧画面设置格式无效")
+			return
+		}
+		session := currentSession(ctx)
+		settings, err := deps.Drama.UpdateProjectVisualSettings(ctx.Request.Context(), session.User.OrganizationID, session.User.ID, ctx.Param("id"), input)
+		if err != nil {
+			handleDramaError(ctx, deps, err)
+			return
+		}
+		httpx.OK(ctx, http.StatusOK, settings)
 	})
 	group.POST("/projects/:id/retry", requireCSRF(deps), func(ctx *gin.Context) {
 		session := currentSession(ctx)

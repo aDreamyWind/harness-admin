@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -60,16 +61,49 @@ type CanvasLayout struct {
 	Extras    *CanvasExtras    `json:"extras,omitempty"`
 }
 type FormEdit struct {
-	Revision    int    `json:"revision"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Gender      string `json:"gender"`
-	StyleID     string `json:"styleId"`
-	Style       string `json:"style"`
-	AspectRatio string `json:"aspectRatio"`
+	Revision       int          `json:"revision"`
+	Name           string       `json:"name"`
+	Description    string       `json:"description"`
+	Gender         string       `json:"gender"`
+	StyleID        string       `json:"styleId"`
+	Style          string       `json:"style"`
+	AspectRatio    string       `json:"aspectRatio"`
+	CanvasRevision *int         `json:"canvasRevision,omitempty"`
+	MentionLinks   []CanvasLink `json:"mentionLinks,omitempty"`
 }
+
+// MergeCanvasFormMentions 保留已有布局，将新引用合并为指向当前形象的入线。
+func MergeCanvasFormMentions(project, form string, extras CanvasExtras, links []CanvasLink) (CanvasExtras, error) {
+	if len(links) > 100 {
+		return CanvasExtras{}, fmt.Errorf("%w：一次最多添加 100 条引用连线", ErrInvalidInput)
+	}
+	hidden := make(map[string]bool, len(extras.Hidden))
+	for _, id := range extras.Hidden {
+		hidden[id] = true
+	}
+	seen := make(map[string]bool)
+	for _, link := range extras.Links {
+		if link.Target == form {
+			seen[link.Source] = true
+		}
+	}
+	extras.Links = slices.Clone(extras.Links)
+	for _, link := range links {
+		if link.Target != form || hidden[link.Source] || hidden[link.Target] {
+			return CanvasExtras{}, fmt.Errorf("%w：引用连线须连接到当前形象，且两端都可见", ErrInvalidInput)
+		}
+		if !seen[link.Source] {
+			extras.Links = append(extras.Links, link)
+			seen[link.Source] = true
+		}
+	}
+	return normalizeCanvasExtras(project, extras)
+}
+
 type ImageInput struct {
-	Prompt string `json:"prompt"`
+	Prompt         string `json:"prompt"`
+	CanvasRevision *int   `json:"canvasRevision,omitempty"`
+	ReferenceGuide string `json:"-"`
 }
 type ImageJob struct {
 	ID             string `json:"id"`
@@ -87,6 +121,7 @@ type ImageJob struct {
 	ByteSize       int    `json:"-"`
 	OrganizationID string `json:"-"`
 	UserID         string `json:"-"`
+	canvasSources  []canvasGenerationSource
 }
 
 // 图片供应商可能在错误中回显请求，普通任务状态仅暴露经过分类的短消息。
@@ -178,6 +213,19 @@ func (s *Service) EditForm(ctx context.Context, org, user, project, form string,
 	if in.AspectRatio != "9:16" && in.AspectRatio != "16:9" && in.AspectRatio != "1:1" {
 		return ErrInvalidInput
 	}
+	if in.CanvasRevision != nil && *in.CanvasRevision < 1 {
+		return ErrInvalidInput
+	}
+	if len(in.MentionLinks) > 0 {
+		if in.CanvasRevision == nil {
+			return ErrInvalidInput
+		}
+		extras, err := MergeCanvasFormMentions(project, form, CanvasExtras{}, in.MentionLinks)
+		if err != nil {
+			return err
+		}
+		in.MentionLinks = extras.Links
+	}
 	style, err := s.resolveStyle(ctx, in.StyleID, in.Style)
 	if err != nil {
 		return err
@@ -192,7 +240,8 @@ func (s *Service) DeriveForm(ctx context.Context, org, user, project, parent str
 	return s.visual.DeriveAssetForm(ctx, org, user, project, parent, uuid.NewString())
 }
 func (s *Service) StartImage(ctx context.Context, org, user, project, form string, in ImageInput) (ImageJob, error) {
-	if s.visual == nil || s.images == nil || !validVisualIDs(project, form) || utf8.RuneCountInString(in.Prompt) > 10000 {
+	if s.visual == nil || s.images == nil || !validVisualIDs(project, form) || strings.ContainsRune(in.Prompt, 0) || utf8.RuneCountInString(in.Prompt) > 10000 ||
+		(in.CanvasRevision != nil && *in.CanvasRevision < 1) {
 		return ImageJob{}, ErrInvalidInput
 	}
 	settings, err := s.repository.GetSettings(ctx, org, user)
@@ -215,8 +264,69 @@ func (s *Service) StartImage(ctx context.Context, org, user, project, form strin
 	if !available {
 		return ImageJob{}, ErrModelUnavailable
 	}
-	return s.visual.QueueImage(ctx, org, user, project, form, settings.ImageModelCode, in)
+	var sources []canvasGenerationSource
+	if in.CanvasRevision != nil {
+		scope := CanvasGenerationScope{OrganizationID: org, UserID: user, ProjectID: project, NodeID: form}
+		sources, err = s.prepareAssetCanvasSources(ctx, scope, *in.CanvasRevision, settings.ImageModelCode)
+		if err != nil {
+			return ImageJob{}, err
+		}
+		in.ReferenceGuide = canvasReferenceGuide(sources)
+	}
+	job, err := s.visual.QueueImage(ctx, org, user, project, form, settings.ImageModelCode, in)
+	if err != nil {
+		return job, err
+	}
+	if len(sources) > 0 && job.ReferenceID != "" {
+		// 父图以入队事务中读取的图片版本为准。
+		sources[0].imageID = job.ReferenceID
+	}
+	job.canvasSources = sources
+	return job, nil
 }
+
+func (s *Service) prepareAssetCanvasSources(ctx context.Context, scope CanvasGenerationScope, revision int, model string) ([]canvasGenerationSource, error) {
+	canvas, err := s.Canvas(ctx, scope.OrganizationID, scope.UserID, scope.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if canvas.Revision != revision {
+		return nil, ErrCanvasConflict
+	}
+	formIndex := slices.IndexFunc(canvas.Forms, func(form AssetForm) bool { return form.ID == scope.NodeID })
+	if formIndex == -1 {
+		return nil, ErrNotFound
+	}
+	form := canvas.Forms[formIndex]
+	_, sources := canvasGenerationSources(canvas, scope.NodeID)
+	sources = slices.DeleteFunc(sources, func(source canvasGenerationSource) bool { return source.id == form.ParentID })
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	if s.canvasEngine == nil || s.canvasMedia == nil {
+		return nil, ErrModelUnavailable
+	}
+	if err := s.resolveCanvasGenerationSources(ctx, scope, sources); err != nil {
+		return nil, err
+	}
+	if form.ParentID != "" {
+		parentIndex := slices.IndexFunc(canvas.Forms, func(parent AssetForm) bool { return parent.ID == form.ParentID })
+		title := "原始形象"
+		if parentIndex != -1 {
+			title = canvasAssetReferenceTitle(canvas.Forms[parentIndex])
+		}
+		sources = append([]canvasGenerationSource{{id: form.ParentID, title: title}}, sources...)
+	}
+	models, err := s.ListCanvasGenerationModels(ctx, scope.OrganizationID, scope.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCanvasGenerationModel(models, CanvasGenerationRequest{Kind: "image", ModelCode: model}, len(sources)); err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
 func (s *Service) GenerateImage(job ImageJob) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
@@ -224,34 +334,22 @@ func (s *Service) GenerateImage(job ImageJob) error {
 	if err != nil || !claimed {
 		return err
 	}
-	req := ImageRequest{OrganizationID: job.OrganizationID, UserID: job.UserID, ModelCode: job.ModelCode, Prompt: job.Prompt, AspectRatio: job.AspectRatio}
-	if job.ReferenceID != "" {
-		ref, readErr := s.visual.ReadImage(ctx, job.OrganizationID, job.UserID, job.ProjectID, job.ReferenceID)
-		err = readErr
-		if err == nil {
-			var data []byte
-			var mime string
-			data, mime, err = s.files.Get(ctx, ref.StorageKey)
-			if err == nil {
-				req.ReferenceDataURI = imageDataURI(mime, data)
-			}
-		}
-	}
+	data, mime, err := s.generateAssetImage(ctx, job)
 	if err == nil {
-		var data []byte
-		data, job.MIME, err = s.images.Generate(ctx, req)
-		if err == nil {
-			job.ByteSize = len(data)
-			job.StorageKey, err = s.files.Put(ctx, job.ID, data, job.MIME)
-		}
+		job.MIME = mime
+		job.ByteSize = len(data)
+		job.StorageKey, err = s.files.Put(ctx, job.ID, data, job.MIME)
 	}
 	job.Status = "succeeded"
 	if err != nil {
 		job.Status = "failed"
 		job.Error = "图片生成或保存失败，请查看调用记录和服务日志。"
 		var public *ImageFailure
+		var referenceFailure *CanvasGenerationFailure
 		if errors.As(err, &public) {
 			job.Error = public.Message
+		} else if errors.As(err, &referenceFailure) {
+			job.Error = referenceFailure.Message
 		}
 	}
 	saveCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
@@ -260,6 +358,29 @@ func (s *Service) GenerateImage(job ImageJob) error {
 		return fmt.Errorf("保存图片任务结果失败: %w（生成结果：%v）", saveErr, err)
 	}
 	return err
+}
+
+func (s *Service) generateAssetImage(ctx context.Context, job ImageJob) ([]byte, string, error) {
+	if len(job.canvasSources) > 0 {
+		request := CanvasGenerationRequest{
+			OrganizationID: job.OrganizationID, UserID: job.UserID, JobID: job.ID,
+			Kind: "image", ModelCode: job.ModelCode, Prompt: job.Prompt, AspectRatio: job.AspectRatio,
+		}
+		scope := CanvasGenerationScope{OrganizationID: job.OrganizationID, UserID: job.UserID, ProjectID: job.ProjectID, NodeID: job.FormID}
+		if err := s.loadCanvasGenerationSources(ctx, scope, &request, job.canvasSources); err != nil {
+			return nil, "", err
+		}
+		return s.canvasEngine.GenerateCanvasMedia(ctx, request)
+	}
+	request := ImageRequest{OrganizationID: job.OrganizationID, UserID: job.UserID, ModelCode: job.ModelCode, Prompt: job.Prompt, AspectRatio: job.AspectRatio}
+	if job.ReferenceID != "" {
+		data, mime, err := s.ImageContent(ctx, job.OrganizationID, job.UserID, job.ProjectID, job.ReferenceID)
+		if err != nil {
+			return nil, "", err
+		}
+		request.ReferenceDataURI = imageDataURI(mime, data)
+	}
+	return s.images.Generate(ctx, request)
 }
 func (s *Service) ImageContent(ctx context.Context, org, user, project, id string) ([]byte, string, error) {
 	if s.visual == nil || !validVisualIDs(project, id) {

@@ -14,11 +14,13 @@ import (
 )
 
 type dramaServiceStub struct {
-	videoScope    []string
-	videoError    error
-	created       drama.CreateInput
-	savedSettings drama.Settings
-	started       chan struct{}
+	videoScope           []string
+	videoError           error
+	created              drama.CreateInput
+	savedSettings        drama.Settings
+	started              chan struct{}
+	renameProject        func(string, string, string, string) (drama.ProjectTitle, error)
+	updateVisualSettings func(string, string, string, drama.ProjectVisualSettingsInput) (drama.ProjectVisualSettings, error)
 }
 
 func (s *dramaServiceStub) AvailableModels(context.Context, string, string) ([]drama.Model, error) {
@@ -46,6 +48,12 @@ func (s *dramaServiceStub) List(context.Context, string, string) ([]drama.Projec
 }
 func (s *dramaServiceStub) Get(context.Context, string, string, string) (drama.Project, error) {
 	return drama.Project{Title: "测试漫剧"}, nil
+}
+func (s *dramaServiceStub) RenameProject(_ context.Context, organizationID, ownerID, id, title string) (drama.ProjectTitle, error) {
+	return s.renameProject(organizationID, ownerID, id, title)
+}
+func (s *dramaServiceStub) UpdateProjectVisualSettings(_ context.Context, organizationID, ownerID, id string, input drama.ProjectVisualSettingsInput) (drama.ProjectVisualSettings, error) {
+	return s.updateVisualSettings(organizationID, ownerID, id, input)
 }
 func (s *dramaServiceStub) GetSource(context.Context, string, string, string) (string, error) {
 	return "完整原文", nil
@@ -120,6 +128,110 @@ func TestDramaCreateRequiresSessionAndCSRF(t *testing.T) {
 		t.Fatalf("创建时未绑定登录用户或原文丢失: %+v", service.created)
 	}
 	<-service.started
+}
+
+func TestDramaProjectTitleRequiresSessionAndCSRF(t *testing.T) {
+	id := "b6e6da1c-7c27-4f72-babf-34a7c4e19617"
+	session := accountTestSession()
+	var calls int
+	service := &dramaServiceStub{renameProject: func(org, owner, project, title string) (drama.ProjectTitle, error) {
+		calls++
+		if org != session.User.OrganizationID || owner != session.User.ID || project != id {
+			t.Fatalf("项目改名未绑定当前会话和请求路径: %q %q %q", org, owner, project)
+		}
+		if title == "不可见" {
+			return drama.ProjectTitle{}, drama.ErrNotFound
+		}
+		return drama.ProjectTitle{Title: title}, nil
+	}}
+	router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &csrfCheckingAuthStub{&accountAuthStub{session: session}}, Drama: service, SessionCookie: "test_session"})
+	for _, tc := range []struct {
+		name, body   string
+		cookie, csrf bool
+		status       int
+	}{
+		{"未登录", `{"title":"新标题"}`, false, false, http.StatusUnauthorized},
+		{"无 CSRF", `{"title":"新标题"}`, true, false, http.StatusForbidden},
+		{"无效格式", `{"title":123}`, true, true, http.StatusBadRequest},
+		{"项目不可见", `{"title":"不可见"}`, true, true, http.StatusNotFound},
+		{"保存成功", `{"title":"新标题"}`, true, true, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPatch, "/api/v1/ai-drama/projects/"+id+"/title", bytes.NewBufferString(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			if tc.cookie {
+				request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+			}
+			if tc.csrf {
+				request.Header.Set("X-CSRF-Token", "csrf-token")
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != tc.status || (response.Code == http.StatusOK && !bytes.Contains(response.Body.Bytes(), []byte(`"title":"新标题"`))) {
+				t.Fatalf("返回异常: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if calls != 2 {
+		t.Fatalf("只有校验成功的请求可进入业务层，实际调用 %d 次", calls)
+	}
+}
+
+func TestDramaProjectVisualSettingsRequireSessionAndCSRF(t *testing.T) {
+	id := "b6e6da1c-7c27-4f72-babf-34a7c4e19617"
+	session := accountTestSession()
+	calls := 0
+	service := &dramaServiceStub{updateVisualSettings: func(org, owner, project string, input drama.ProjectVisualSettingsInput) (drama.ProjectVisualSettings, error) {
+		calls++
+		if org != session.User.OrganizationID || owner != session.User.ID || project != id {
+			t.Fatalf("画面设置未绑定当前会话和请求路径：%q %q %q", org, owner, project)
+		}
+		if input.StyleID != nil {
+			return drama.ProjectVisualSettings{}, drama.ErrStyleUnavailable
+		}
+		if input.AspectRatio == nil {
+			return drama.ProjectVisualSettings{}, drama.ErrInvalidInput
+		}
+		return drama.ProjectVisualSettings{AspectRatio: *input.AspectRatio}, nil
+	}}
+	router := New(Dependencies{AppName: "Harness Admin", Environment: "test", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: &csrfCheckingAuthStub{&accountAuthStub{session: session}}, Drama: service, SessionCookie: "test_session"})
+	for _, tc := range []struct {
+		name, body   string
+		cookie, csrf bool
+		status       int
+	}{
+		{"未登录", `{"aspectRatio":"16:9"}`, false, false, http.StatusUnauthorized},
+		{"无 CSRF", `{"aspectRatio":"16:9"}`, true, false, http.StatusForbidden},
+		{"无效格式", `{"aspectRatio":16}`, true, true, http.StatusBadRequest},
+		{"无更新字段", `{}`, true, true, http.StatusBadRequest},
+		{"无效风格", `{"styleId":"不可用"}`, true, true, http.StatusBadRequest},
+		{"独立保存比例", `{"aspectRatio":"16:9"}`, true, true, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPatch, "/api/v1/ai-drama/projects/"+id+"/visual-settings", bytes.NewBufferString(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			if tc.cookie {
+				request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+			}
+			if tc.csrf {
+				request.Header.Set("X-CSRF-Token", "csrf-token")
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != tc.status {
+				t.Fatalf("返回异常：%d %s", response.Code, response.Body.String())
+			}
+			if tc.status == http.StatusOK && (!bytes.Contains(response.Body.Bytes(), []byte(`"aspectRatio":"16:9"`)) ||
+				bytes.Contains(response.Body.Bytes(), []byte(`"style"`))) {
+				t.Fatalf("响应应只包含更新的画面设置：%s", response.Body.String())
+			}
+		})
+	}
+	if calls != 3 {
+		t.Fatalf("只有会话、CSRF 与 JSON 校验通过的请求可进入业务层，实际调用 %d 次", calls)
+	}
 }
 
 func TestDramaSourceRequiresSession(t *testing.T) {

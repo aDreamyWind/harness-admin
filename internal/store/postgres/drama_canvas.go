@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,6 +23,22 @@ func (r *DramaRepository) visualProject(ctx context.Context, tx pgx.Tx, org, use
 	}
 	return err
 }
+
+func lockCanvasBoardRevision(ctx context.Context, tx pgx.Tx, org, user, project string) (int, error) {
+	var revision int
+	err := tx.QueryRow(ctx, `SELECT b.revision FROM drama_canvas_boards b
+		JOIN drama_projects p ON p.id=b.project_id
+		WHERE p.id=$1 AND p.organization_id=$2 AND p.owner_id=$3
+		FOR UPDATE OF b`, project, org, user).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, drama.ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("锁定漫剧画布版本失败: %w", err)
+	}
+	return revision, nil
+}
+
 func (r *DramaRepository) ReadCanvas(ctx context.Context, org, user, project string) (drama.Canvas, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -182,6 +199,14 @@ func (r *DramaRepository) EditAssetForm(ctx context.Context, org, user, project,
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var mentions drama.CanvasExtras
+	if len(in.MentionLinks) > 0 {
+		// 布局保存先锁画布，再更新节点位置。引用保存保持同一锁顺序。
+		mentions, err = lockCanvasFormMentions(ctx, tx, org, user, project, form, in)
+		if err != nil {
+			return err
+		}
+	}
 	f, err := lockVisualForm(ctx, tx, org, user, project, form)
 	if err != nil {
 		return err
@@ -211,6 +236,11 @@ func (r *DramaRepository) EditAssetForm(ctx context.Context, org, user, project,
 	_, err = tx.Exec(ctx, `UPDATE drama_asset_forms SET name=$2,description=$3,gender=$4,style=$5,aspect_ratio=$6,style_id=COALESCE(NULLIF($7::text,''),(SELECT id FROM drama_visual_styles WHERE name=$5 AND enabled)),revision=revision+1,updated_at=now() WHERE id=$1`, form, in.Name, in.Description, in.Gender, in.Style, in.AspectRatio, in.StyleID)
 	if err != nil {
 		return err
+	}
+	if len(in.MentionLinks) > 0 {
+		if err := saveCanvasFormMentions(ctx, tx, project, mentions); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -250,6 +280,16 @@ func (r *DramaRepository) QueueImage(ctx context.Context, org, user, project, fo
 		return drama.ImageJob{}, err
 	}
 	defer tx.Rollback(ctx)
+	if in.CanvasRevision != nil {
+		// 与布局保存使用相同锁顺序，确保请求所引用的连线仍是该版本。
+		revision, err := lockCanvasBoardRevision(ctx, tx, org, user, project)
+		if err != nil {
+			return drama.ImageJob{}, err
+		}
+		if revision != *in.CanvasRevision {
+			return drama.ImageJob{}, drama.ErrCanvasConflict
+		}
+	}
 	f, err := lockVisualForm(ctx, tx, org, user, project, form)
 	if err != nil {
 		return drama.ImageJob{}, err
@@ -270,8 +310,17 @@ func (r *DramaRepository) QueueImage(ctx context.Context, org, user, project, fo
 	if description == "" {
 		description = f.Description
 	}
+	if description == "" && in.ReferenceGuide != "" {
+		description = "根据参考图生成画面，保留主要视觉特征。"
+	}
 	if description == "" {
 		return job, drama.ErrInvalidInput
+	}
+	if in.ReferenceGuide != "" {
+		description += in.ReferenceGuide
+		if utf8.RuneCountInString(description) > 10000 {
+			return job, fmt.Errorf("%w：生成描述和参考图名称合计最多 10000 字", drama.ErrInvalidInput)
+		}
 	}
 	style, err := readVisualStyle(tx.QueryRow(ctx, `SELECT id,COALESCE(catalog_name,name),category,preview_url,preview_x,preview_y,image_prompt,video_prompt
 		FROM drama_visual_styles WHERE enabled AND (id=NULLIF($1::text,'') OR ($1::text='' AND (name=$2 OR catalog_name=$2)))

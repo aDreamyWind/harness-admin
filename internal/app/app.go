@@ -45,6 +45,7 @@ type Application struct {
 	DB           *pgxpool.Pool
 	Redis        *cache.Client
 	alertService *modelgateway.Service
+	tryOnService *tryon.Service
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Application, error) {
@@ -93,10 +94,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	modelGatewayService := modelgateway.NewService(modelGatewayRepository, cache.NewGatewayRequestLimiter(redisClient), modelPolicyRepository)
 	modelPolicyService := modelgateway.NewPolicyService(modelPolicyRepository)
 	modelForwarder := modelprovider.NewGatewayForwarder(cfg.ModelPrivateHosts)
-	tryOnService := tryon.NewService(pgstore.NewTryOnRepository(db), &tryOnEngine{
+	tryOnRepository := pgstore.NewTryOnRepository(db)
+	tryOnService := tryon.NewService(tryOnRepository, &tryOnEngine{
 		gateway: modelGatewayService, forwarder: modelForwarder,
 		image: &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder, source: "ai_tryon"},
-	}, logger)
+	}, logger).WithGarmentJobs(tryOnRepository).WithTryOnQueue(tryOnRepository).WithOutfits(tryOnRepository)
 	dramaRepository := pgstore.NewDramaRepository(db)
 	novelModel := &novelWriter{
 		completion: dramaWriter{
@@ -111,6 +113,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		WithCoverStyles(novelModel).WithCoverGeneration(novelCoverStore)
 	dramaMedia := &dramaMediaFiles{directory: cfg.DramaMediaDirectory}
 	dramaImages := &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}
+	generateDramaCover := func(ctx context.Context, jobID string, request drama.ImageRequest) ([]byte, error) {
+		data, _, err := dramaImages.Generate(modelgateway.WithCallRequestID(ctx, jobID), request)
+		return data, err
+	}
 	dramaVideos := &dramaVideoEngine{gateway: modelGatewayService, forwarder: modelForwarder}
 	canvasGeneration := &dramaCanvasGenerationEngine{
 		catalog: modelGatewayService, image: dramaImages, video: dramaVideos,
@@ -119,6 +125,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	}
 	dramaService := drama.NewService(dramaRepository, &dramaWriter{gateway: modelGatewayService, forwarder: modelForwarder}).
 		WithVisuals(dramaRepository, dramaImages, dramaMedia).
+		WithProjectCovers(dramaRepository, generateDramaCover, composeDramaCover).
 		WithCanvasMedia(dramaMedia).
 		WithCanvasGeneration(dramaRepository, canvasGeneration).
 		WithStyles(dramaRepository).
@@ -185,6 +192,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		Novel:                 novelService,
 		TryOn:                 tryOnService,
 		Drama:                 dramaService,
+		DramaProjectCover:     dramaService,
 		DramaVisual:           dramaService,
 		DramaCanvasMedia:      dramaService,
 		DramaCanvasGeneration: dramaService,
@@ -215,7 +223,16 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		DB:           db,
 		Redis:        redisClient,
 		alertService: modelGatewayService,
+		tryOnService: tryOnService,
 	}, nil
+}
+
+func (a *Application) RunGarmentJobs(ctx context.Context) {
+	a.tryOnService.RunGarmentJobs(ctx)
+}
+
+func (a *Application) RunTryOnJobs(ctx context.Context) {
+	a.tryOnService.RunTryOnJobs(ctx)
 }
 
 // RunAlertRefresh 在本进程内定时计算已开启的企业预警；跨实例使用 PostgreSQL 事务锁避免重复扫描。

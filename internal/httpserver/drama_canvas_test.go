@@ -16,6 +16,7 @@ type visualServiceStub struct {
 	err       error
 	generated chan string
 	extras    *drama.CanvasExtras
+	image     drama.ImageInput
 }
 
 func (s *visualServiceStub) Canvas(_ context.Context, o, u, p string) (drama.Canvas, error) {
@@ -61,8 +62,9 @@ func (s *visualServiceStub) DeriveForm(_ context.Context, o, u, p, f string) (st
 	s.scope = []string{o, u, p, f}
 	return "child", s.err
 }
-func (s *visualServiceStub) StartImage(_ context.Context, o, u, p, f string, _ drama.ImageInput) (drama.ImageJob, error) {
+func (s *visualServiceStub) StartImage(_ context.Context, o, u, p, f string, in drama.ImageInput) (drama.ImageJob, error) {
 	s.scope = []string{o, u, p, f}
+	s.image = in
 	return drama.ImageJob{ID: "job", Status: "queued", Prompt: "PRIVATE_STYLE_TEMPLATE"}, s.err
 }
 func (s *visualServiceStub) GenerateImage(job drama.ImageJob) error {
@@ -81,7 +83,7 @@ func TestDramaCanvasRoutesRequireSessionCSRFAndUseCallerScope(t *testing.T) {
 	for _, tc := range []struct {
 		method, path, body string
 		status             int
-	}{{"GET", "/canvas", "", 200}, {"PUT", "/canvas/layout", `{"revision":1,"zoom":1}`, 200}, {"PUT", "/forms/form", `{"revision":1}`, 200}, {"POST", "/forms/form/derive", "", 201}, {"POST", "/forms/form/images", `{}`, 202}, {"GET", "/images/image/content", "", 200}} {
+	}{{"GET", "/canvas", "", 200}, {"PUT", "/canvas/layout", `{"revision":1,"zoom":1}`, 200}, {"PUT", "/forms/form", `{"revision":1}`, 200}, {"POST", "/forms/form/derive", "", 201}, {"POST", "/forms/form/images", `{"canvasRevision":5,"prompt":"调整光线"}`, 202}, {"GET", "/images/image/content", "", 200}} {
 		call := func(auth, csrf bool) *httptest.ResponseRecorder {
 			req := httptest.NewRequest(tc.method, base+tc.path, strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -118,4 +120,7 @@ func TestDramaCanvasRoutesRequireSessionCSRFAndUseCallerScope(t *testing.T) {
 		service.err = nil
 	}
 	<-service.generated
+	if service.image.CanvasRevision == nil || *service.image.CanvasRevision != 5 || service.image.Prompt != "调整光线" {
+		t.Fatalf("资产生图未传递画布版本与提示词：%+v", service.image)
+	}
 }

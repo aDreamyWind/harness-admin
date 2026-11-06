@@ -255,13 +255,13 @@ func (s *Service) Apply(ctx context.Context, owner Owner, id string, action Acti
 			}
 			return current, nil
 		}
-	case "generate_outline", "check_outline", "save_outline", "confirm_outline":
+	case "generate_outline", "check_outline", "save_outline", "confirm_outline", "reopen_outline":
 		err = s.applyOutline(ctx, owner, &p, action)
 	case "save_author_guidance":
 		err = applyAuthorGuidance(&p, action.AuthorGuidance)
 	case "append_chapters":
 		err = appendChapters(&p, action.Beats)
-	case "write", "revise_review", "save_draft", "review", "finalize":
+	case "write", "revise_review", "save_draft", "review", "finalize", "reopen_chapter":
 		err = s.applyChapter(ctx, owner, &p, action)
 	default:
 		err = ErrInvalid
@@ -275,9 +275,17 @@ func (s *Service) Apply(ctx context.Context, owner Owner, id string, action Acti
 }
 
 func (s *Service) applyOutline(ctx context.Context, owner Owner, p *Project, action Action) error {
-	if p.Confirmed {
-		return fmt.Errorf("%w，作品大纲已确认", ErrState)
+	if action.Kind == "reopen_outline" {
+		if !p.Confirmed || p.Outline == nil {
+			return fmt.Errorf("%w，当前大纲可以直接修改", ErrState)
+		}
+		p.Confirmed = false
+		return nil
 	}
+	if p.Confirmed {
+		return fmt.Errorf("%w，请先撤回大纲确认", ErrState)
+	}
+	previousOutline := p.Outline
 	switch action.Kind {
 	case "generate_outline":
 		prompt, err := outlineGenerationPrompt(p, action)
@@ -365,6 +373,14 @@ func (s *Service) applyOutline(ctx context.Context, owner Owner, p *Project, act
 		p.Outline = action.Outline
 		p.Confirmed = action.Kind == "confirm_outline"
 	}
+	if !equalOutlines(previousOutline, p.Outline) {
+		// 草稿审阅依赖本章目标和全书设定，大纲改变后应基于新大纲复核。
+		for i := range p.Chapters {
+			if !p.Chapters[i].Final {
+				clearChapterReview(&p.Chapters[i])
+			}
+		}
+	}
 	return nil
 }
 
@@ -378,10 +394,28 @@ func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, act
 		return ErrInvalid
 	}
 	index := action.Chapter - 1
-	if !p.Confirmed || p.Chapters[index].Final || (index > 0 && !p.Chapters[index-1].Final) {
-		return fmt.Errorf("%w，请先确认大纲并定稿前一章，已定稿章节只读", ErrState)
+	if !p.Confirmed || p.Outline == nil || index >= len(p.Outline.Beats) {
+		return fmt.Errorf("%w，请先确认作品大纲", ErrState)
+	}
+	if index > p.finalizedCount() {
+		return fmt.Errorf("%w，请先定稿前文", ErrState)
 	}
 	chapter := &p.Chapters[index]
+	if action.Kind == "reopen_chapter" {
+		if !chapter.Final {
+			return fmt.Errorf("%w，本章可以直接修改", ErrState)
+		}
+		chapter.Final = false
+		// 后续正文和摘要留作草稿，在新的前文基础上重新确认。
+		for i := index + 1; i < len(p.Chapters); i++ {
+			p.Chapters[i].Final = false
+			clearChapterReview(&p.Chapters[i])
+		}
+		return nil
+	}
+	if chapter.Final {
+		return fmt.Errorf("%w，请先撤回本章定稿", ErrState)
+	}
 	switch action.Kind {
 	case "write", "revise_review":
 		instruction := strings.TrimSpace(action.Instruction)
@@ -455,6 +489,12 @@ func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, act
 		return s.reviewChapter(ctx, owner, p, index, action.ModelCode, previous)
 	}
 	return nil
+}
+
+func clearChapterReview(chapter *Chapter) {
+	chapter.Review = ""
+	chapter.ReviewFailed = false
+	chapter.ReviewPassed = false
 }
 
 func (s *Service) reviewAfterDraftChange(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter, summaryErr error) {

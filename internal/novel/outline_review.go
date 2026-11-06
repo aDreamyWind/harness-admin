@@ -49,11 +49,12 @@ previousBeats 是本次变动章节的旧计划，其余章节与修订版相同
 `
 
 type outlineCheckMaterial struct {
-	Brief          string  `json:"brief"`
-	StoryMode      string  `json:"storyMode,omitempty"`
-	AuthorGuidance string  `json:"authorGuidance,omitempty"`
-	Instruction    string  `json:"instruction,omitempty"`
-	Outline        Outline `json:"outline"`
+	Brief             string         `json:"brief"`
+	StoryMode         string         `json:"storyMode,omitempty"`
+	AuthorGuidance    string         `json:"authorGuidance,omitempty"`
+	Instruction       string         `json:"instruction,omitempty"`
+	Outline           Outline        `json:"outline"`
+	FinalizedChapters []priorChapter `json:"finalizedChapters,omitempty"`
 }
 
 type outlineFinding struct {
@@ -91,11 +92,16 @@ func (s *Service) checkOutline(ctx context.Context, owner Owner, p *Project, mod
 	material := outlineCheckMaterial{
 		Brief: p.Brief, StoryMode: p.StoryMode, AuthorGuidance: p.AuthorGuidance,
 		Instruction: strings.TrimSpace(instruction), Outline: *outline,
+		FinalizedChapters: priorChapters(*p, p.finalizedCount(), false),
 	}
 	var review struct {
 		Issues []outlineFinding `json:"issues"`
 	}
-	if err := s.completeJSON(ctx, owner, modelCode, outlineCheckPrompt+asJSON(material), &review); err != nil {
+	guidance := ""
+	if len(material.FinalizedChapters) > 0 {
+		guidance = finalizedOutlineGuidance
+	}
+	if err := s.completeJSON(ctx, owner, modelCode, outlineCheckPrompt+guidance+asJSON(material), &review); err != nil {
 		return failed("review", err)
 	}
 	if err := validateOutlineFindings(*outline, review.Issues); err != nil {
@@ -120,7 +126,7 @@ func (s *Service) checkOutline(ctx context.Context, owner Owner, p *Project, mod
 		outlineCheckMaterial
 		Issues []outlineFinding `json:"issues"`
 	}{material, review.Issues}
-	if err := s.completeJSON(ctx, owner, modelCode, outlineRepairPrompt+asJSON(repairMaterial), &patch); err != nil {
+	if err := s.completeJSON(ctx, owner, modelCode, outlineRepairPrompt+guidance+asJSON(repairMaterial), &patch); err != nil {
 		return failed("repair", err)
 	}
 	if patch.Changes != nil && len(patch.Changes) == 0 {
@@ -137,7 +143,7 @@ func (s *Service) checkOutline(ctx context.Context, owner Owner, p *Project, mod
 		PreviousBeats []outlineChange  `json:"previousBeats"`
 	}{material, review.Issues, previousBeats}
 	var verification outlineVerification
-	if err := s.completeJSON(ctx, owner, modelCode, outlineVerifyPrompt+asJSON(verifyMaterial), &verification); err != nil {
+	if err := s.completeJSON(ctx, owner, modelCode, outlineVerifyPrompt+guidance+asJSON(verifyMaterial), &verification); err != nil {
 		return failed("verify", err)
 	}
 	passed, err := verifyOutlineChanges(*outline, updated, review.Issues, verification)

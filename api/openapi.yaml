@@ -35,7 +35,7 @@ paths:
       security: [{ sessionCookie: [] }]
       responses:
         '200':
-          description: 素材列表，用户保存的素材按创建时间倒序。内置样例可直接用于试穿。
+          description: 素材列表，用户保存的素材按创建时间倒序。内置样例可直接用于试穿。标记为已删除的素材仅用于展示试穿记录。
           content:
             application/json:
               schema:
@@ -101,6 +101,39 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '502': { $ref: '#/components/responses/TryOnInferenceFailure' }
+  /ai-tryon/assets/{id}:
+    delete:
+      summary: 删除当前用户的试衣素材
+      description: 素材从素材库和新试穿选项移除。已有试穿记录保留其参考图与结果。
+      operationId: deleteTryOnAsset
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 素材已删除。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [deleted]
+                    properties:
+                      deleted: { type: boolean, const: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 内置素材不能删除。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   /ai-tryon/assets/{id}/content:
     get:
       summary: 查看当前用户拥有的试衣素材图片
@@ -158,6 +191,117 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '502': { $ref: '#/components/responses/TryOnInferenceFailure' }
+        '504':
+          description: 衣物识别超时，可重试或切换识别模型。错误码为 tryon_detection_timeout。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /ai-tryon/garment-jobs:
+    get:
+      summary: 查询当前用户的衣物生成任务
+      operationId: listTryOnGarmentJobs
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/TryOnGarmentJobList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: 批量提交衣物单品图生成任务
+      description: 从同一张参考图选择一至八件衣物，后台分别生成完整单品图。生成结果需要确认后才入库。
+      operationId: startTryOnGarmentJobs
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, modelCode, items]
+              properties:
+                file: { type: string, format: binary, description: '不超过 6 MB 的 JPG、PNG 或 WebP 参考图。' }
+                modelCode: { type: string, maxLength: 120, description: 来自试衣模型列表 image 分组的图片模型。 }
+                items:
+                  type: string
+                  description: JSON 编码的衣物数组。框选只用于定位目标。
+                  contentMediaType: application/json
+                  contentSchema:
+                    type: array
+                    minItems: 1
+                    maxItems: 8
+                    items:
+                      type: object
+                      required: [name, category]
+                      properties:
+                        name: { type: string, minLength: 1, maxLength: 80 }
+                        category: { type: string }
+                        box:
+                          description: 左、上、右、下四个归一化坐标。
+                          type: array
+                          minItems: 4
+                          maxItems: 4
+                          items: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        '202': { $ref: '#/components/responses/TryOnGarmentJobList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/TryOnGarmentJobConflict' }
+  /ai-tryon/garment-jobs/{id}/result:
+    get:
+      summary: 查看衣物生成任务的结果图
+      operationId: getTryOnGarmentJobResult
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 生成后的单品图，仅任务所有者可访问。
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/TryOnGarmentJobConflict' }
+  /ai-tryon/garment-jobs/{id}/save:
+    post:
+      summary: 确认衣物生成结果并入库
+      description: 已保存的素材仍在衣物库时，重复确认返回同一素材。
+      operationId: saveTryOnGarmentJob
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201': { $ref: '#/components/responses/TryOnAssetResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/TryOnGarmentJobConflict' }
+  /ai-tryon/garment-jobs/{id}/retry:
+    post:
+      summary: 重新提交失败的衣物生成任务
+      operationId: retryTryOnGarmentJob
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202':
+          description: 衣物任务已重新排队。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/TryOnGarmentJob' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/TryOnGarmentJobConflict' }
   /ai-tryon/people/generate:
     post:
       summary: 生成人物全身参考图并保存到人物库
@@ -181,6 +325,73 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '502': { $ref: '#/components/responses/TryOnInferenceFailure' }
+  /ai-tryon/outfits:
+    get:
+      summary: 查询当前用户保存的套装
+      operationId: listTryOnOutfits
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 套装及其有序衣物列表。
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/TryOnOutfit' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      summary: 将选中的衣物保存为套装
+      operationId: createTryOnOutfit
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TryOnOutfitInput' }
+      responses:
+        '201':
+          description: 套装已保存。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/TryOnOutfit' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-tryon/outfits/{id}:
+    delete:
+      summary: 删除当前用户保存的套装
+      description: 删除套装不会删除衣物素材。
+      operationId: deleteTryOnOutfit
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 套装已删除。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [deleted]
+                    properties:
+                      deleted: { type: boolean, const: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-tryon/jobs:
     get:
       summary: 列出当前用户的试穿状态和历史
@@ -189,6 +400,9 @@ paths:
       responses:
         '200':
           description: 最近五十条试穿记录，按创建时间倒序。
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
           content:
             application/json:
               schema:
@@ -199,6 +413,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       summary: 提交一次异步试穿生成
+      description: 支持一至四件衣物，可同时提交多次试穿任务。
       operationId: startTryOnJob
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -208,7 +423,7 @@ paths:
             schema: { $ref: '#/components/schemas/TryOnInput' }
       responses:
         '202':
-          description: 任务已建立，可通过试穿记录接口查询状态。
+          description: 任务已进入后台队列，可通过试穿记录接口查询状态。
           content:
             application/json:
               schema:
@@ -221,7 +436,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: 当前用户已有试穿正在生成。
+          description: 当前用户已有八个未完成的试穿任务。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -643,6 +858,7 @@ paths:
         AI 生成大纲后会独立检查关键行动的前提和跨章因果。尚未确认的大纲也可发起检查并保存提交的大纲。检查最多尝试一次自动修正，只采用复核通过的修改。初次检查失败时保留大纲并返回未完成状态。是否确认大纲由作者决定。
         长篇连载首次生成大纲时，模型规划全书主线及 3 到 8 章的开篇，作品计划章数随之更新。大纲确认后可分批追加新章，每次最多 30 章，作品最多 500 章。
         定稿会保存作者确认的正文与连续性摘要，并开放下一章。
+        reopen_outline 撤回大纲确认并保留已有章节和定稿，重新确认后开放正文写作。reopen_chapter 撤回本章及后续章节的定稿，保留正文和摘要，重新按章节顺序定稿。
       operationId: applyNovelAction
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -865,7 +1081,7 @@ paths:
       - { name: nodeId, in: path, required: true, schema: { type: string, format: uuid } }
     post:
       summary: 提交画布图片或视频节点生成任务
-      description: 读取已保存的节点及其直接入边，将连接的文本和图片分别用作提示词及参考图。相同节点已有生成中任务时返回该任务。
+      description: 读取已保存的节点及其直接入边，将连接的文本和图片分别用作提示词及参考图。可指定风格库中的画风；图片可使用所选模型支持的分辨率。相同节点已有生成中任务时返回该任务。
       operationId: startDramaCanvasGeneration
       security: [{ sessionCookie: [], csrfHeader: [] }]
       requestBody:
@@ -914,7 +1130,7 @@ paths:
       - { name: formId, in: path, required: true, schema: { type: string, format: uuid } }
     put:
       summary: 编辑资产形象（生成中禁止编辑）
-      description: 原始形象的名称与项目资产同步修改。派生形象保留独立名称。
+      description: 原始形象的名称与项目资产同步修改。派生形象保留独立名称。附带引用连线时，形象和连线在同一次保存中提交，画布版本加一。
       operationId: editDramaAssetForm
       security: [{ sessionCookie: [] }]
       parameters:
@@ -938,7 +1154,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: CSRF 校验失败。 }
         '404': { description: 项目或形象不存在，或不属于当前用户。 }
-        '409': { description: 内容版本冲突、正在生成，或项目内已有同名的同类资产。 }
+        '409': { description: 形象或画布版本冲突、正在生成，或项目内已有同名的同类资产。 }
   /ai-drama/projects/{id}/forms/{formId}/derive:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1143,6 +1359,123 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/DramaProject' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/title:
+    patch:
+      summary: 修改漫剧项目标题
+      operationId: renameDramaProject
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 120, description: 项目标题，保存前去除首尾空白。 }
+      responses:
+        '200':
+          description: 返回当前用户拥有的项目的新标题和更新时间。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [title, updatedAt]
+                    properties:
+                      title: { type: string }
+                      updatedAt: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/cover/generation:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 查询漫剧封面的后台任务和候选封面
+      operationId: getDramaProjectCoverGeneration
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: 返回当前封面、最新任务和待选择的候选。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DramaCoverGenerationEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: 按项目当前风格后台生成带标题的漫剧封面
+      description: 首张封面生成成功时自动使用。已有封面时生成候选，等待用户选择。已有运行任务或待选候选时返回当前状态。
+      operationId: startDramaProjectCoverGeneration
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                modelCode: { type: string, maxLength: 160, description: 本次使用的图片模型编码。省略时使用漫剧设置中的图片模型。 }
+      responses:
+        '202':
+          description: 封面任务已接受。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DramaCoverGenerationEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: CSRF 校验失败。 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 当前用户尚未配置图片模型。 }
+  /ai-drama/projects/{id}/cover/selection:
+    post:
+      summary: 保留当前封面或应用新的候选封面
+      operationId: selectDramaProjectCover
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jobId, choice]
+              properties:
+                jobId: { type: string, format: uuid }
+                choice: { type: string, enum: [current, candidate], description: 保留当前封面或应用候选封面。 }
+      responses:
+        '200':
+          description: 封面选择已保存，候选已清除。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DramaCoverGenerationEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: CSRF 校验失败。 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 候选已变化或已经选择了其他封面。 }
+  /ai-drama/projects/{id}/cover/images/{revision}:
+    get:
+      summary: 读取当前封面或待选候选封面的图片
+      operationId: getDramaProjectCoverImage
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: revision, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 服务端合成的竖版海报，包含项目标题和生成底图。
+          content:
+            image/svg+xml:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/retry:
     post:
@@ -1748,6 +2081,7 @@ paths:
   /ai-drama/projects/{id}/overview:
     put:
       summary: 修改漫剧项目概览
+      description: 五个故事字段按提交内容整体保存。画面设置可通过独立的更新接口保存。兼容旧客户端在概览中同时提交画面设置。
       operationId: updateDramaOverview
       security: [{ sessionCookie: [], csrfHeader: [] }]
       parameters:
@@ -1767,6 +2101,47 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/DramaProject' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-drama/projects/{id}/visual-settings:
+    patch:
+      summary: 更新漫剧项目的画面风格或画面比例
+      description: 按提交字段更新项目默认值，支持独立提交风格和画面比例。
+      operationId: updateDramaVisualSettings
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              anyOf:
+                - required: [styleId]
+                - required: [aspectRatio]
+              properties:
+                styleId: { type: string, minLength: 1, maxLength: 80, description: 当前可选的 2D 风格目录标识。 }
+                aspectRatio: { type: string, enum: ['9:16', '16:9'] }
+      responses:
+        '200':
+          description: 返回本次提交的画面设置和项目更新时间。提交风格时一并返回其目录名称。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [updatedAt]
+                    properties:
+                      styleId: { type: string }
+                      style: { type: string }
+                      aspectRatio: { type: string, enum: ['9:16', '16:9'] }
+                      updatedAt: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /ai-drama/projects/{id}/source:
     get:
@@ -4513,6 +4888,23 @@ components:
       scheme: bearer
       bearerFormat: JWT
   responses:
+    TryOnGarmentJobList:
+      description: 当前用户的衣物生成任务列表。
+      headers:
+        Cache-Control:
+          schema: { type: string, const: 'private, no-store' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { type: array, items: { $ref: '#/components/schemas/TryOnGarmentJob' } }
+    TryOnGarmentJobConflict:
+      description: 衣物生成任务状态不允许此操作，或已达待处理任务上限。
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     TryOnAssetResponse:
       description: 新保存的试衣素材。
       content:
@@ -4616,23 +5008,63 @@ components:
         category: { type: string }
         builtin: { type: boolean, description: 内置样例时为 true。 }
         retired: { type: boolean, description: 已下架的内置样例时为 true，仅用于保留历史参考。 }
+        deleted: { type: boolean, description: 已删除且仍被试穿记录引用时为 true，仅用于展示历史参考。 }
         createdAt: { type: string, format: date-time }
+    TryOnGarmentJob:
+      type: object
+      required: [id, name, category, modelCode, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        category: { type: string }
+        modelCode: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed, saved] }
+        error: { type: string }
+        createdAt: { type: string, format: date-time }
+    TryOnGarmentSelection:
+      type: array
+      description: 衣物素材编号，按选择顺序排列。
+      minItems: 1
+      maxItems: 4
+      uniqueItems: true
+      items: { type: string, format: uuid }
+    TryOnOutfitInput:
+      type: object
+      required: [name, garmentIds]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        garmentIds:
+          $ref: '#/components/schemas/TryOnGarmentSelection'
+          minItems: 2
+    TryOnOutfit:
+      allOf:
+        - $ref: '#/components/schemas/TryOnOutfitInput'
+        - type: object
+          required: [id, createdAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
     TryOnInput:
       type: object
-      required: [personId, garmentId, modelCode]
+      required: [personId, modelCode]
+      anyOf:
+        - required: [garmentIds]
+        - required: [garmentId]
       properties:
         personId: { type: string, format: uuid }
-        garmentId: { type: string, format: uuid }
+        garmentIds: { $ref: '#/components/schemas/TryOnGarmentSelection' }
+        garmentId: { type: string, format: uuid, description: 兼容旧客户端的单件衣物编号。与 garmentIds 同时提供时必须等于列表第一件。 }
         poseId: { type: string, format: uuid, description: 留空时保留人物当前姿势。 }
         modelCode: { type: string, maxLength: 120 }
     TryOnJob:
       allOf:
         - $ref: '#/components/schemas/TryOnInput'
         - type: object
-          required: [id, status, createdAt]
+          required: [id, garmentIds, garmentId, status, createdAt]
           properties:
             id: { type: string, format: uuid }
-            status: { type: string, enum: [running, succeeded, failed] }
+            garmentId: { type: string, format: uuid, description: 所选第一件衣物编号，用于兼容旧客户端。 }
+            status: { type: string, enum: [queued, running, succeeded, failed] }
             error: { type: string }
             createdAt: { type: string, format: date-time }
     NovelCover:
@@ -4754,8 +5186,8 @@ components:
       properties:
         kind:
           type: string
-          enum: [rename, suggest_title, generate_outline, check_outline, save_outline, confirm_outline, save_author_guidance, append_chapters, write, revise_review, save_draft, review, finalize]
-          description: rename 保存手填书名。suggest_title 用所选模型根据灵感及已有大纲拟定并保存新书名。两种改名操作也适用于已确认大纲的作品。check_outline 检查尚未确认的大纲。
+          enum: [rename, suggest_title, generate_outline, check_outline, save_outline, confirm_outline, reopen_outline, save_author_guidance, append_chapters, write, revise_review, save_draft, review, finalize, reopen_chapter]
+          description: rename 保存手填书名。suggest_title 用所选模型根据灵感及已有大纲拟定并保存新书名。两种改名操作也适用于已确认大纲的作品。check_outline 检查尚未确认的大纲。reopen_outline 撤回确认。reopen_chapter 撤回指定章节及后续章节的定稿，保留正文和摘要。
         version: { type: integer, minimum: 1, description: 客户端读取到的作品版本。 }
         title: { type: string, minLength: 1, maxLength: 120, description: 手动改名时提交并保存的新书名。 }
         authorGuidance: { type: string, maxLength: 2000, description: 保存全书写作约定时提交。空字符串清除约定。 }
@@ -4801,7 +5233,7 @@ components:
             required: [beats]
         - if:
             properties:
-              kind: { enum: [write, revise_review, save_draft, review, finalize] }
+              kind: { enum: [write, revise_review, save_draft, review, finalize, reopen_chapter] }
           then:
             required: [chapter]
         - if:
@@ -4908,7 +5340,9 @@ components:
         modelCode: { type: string, minLength: 1, maxLength: 160 }
         revision: { type: integer, minimum: 1, description: 已保存的画布版本，避免其他会话修改连线后用错参考素材。 }
         prompt: { type: string, maxLength: 10000, description: 在连接的文本之外补充的生成要求。 }
+        styleId: { type: string, maxLength: 80, description: 可选的漫剧风格库 ID；省略或传空字符串时不附加风格模板。 }
         aspectRatio: { type: string, enum: ['9:16', '16:9', '1:1'], default: '16:9' }
+        resolution: { type: string, enum: ['1K', '2K'], description: 仅图片节点可指定。省略时使用 1K；2K 需由所选模型支持，实际发送的像素尺寸随画面比例而变。 }
         duration: { type: integer, description: 视频时长，单位为秒。省略时视频默认 5 秒，图片须省略或填 0。允许范围由所选模型决定。 }
     DramaCanvasGenerationModel:
       type: object
@@ -4919,6 +5353,7 @@ components:
         kind: { type: string, enum: [image, video] }
         minReferences: { type: integer, minimum: 0 }
         maxReferences: { type: integer, minimum: 0 }
+        resolutions: { type: array, items: { type: string, enum: ['1K', '2K'] }, description: 图片模型可选的分辨率档位；视频模型不返回此字段。 }
         minDuration: { type: integer, minimum: 1, description: 视频模型的最小时长，单位为秒。 }
         maxDuration: { type: integer, minimum: 1, description: 视频模型的最大时长，单位为秒。 }
     DramaCanvasGenerationJob:
@@ -4981,6 +5416,12 @@ components:
       type: object
       required: [revision, name, description, gender, aspectRatio]
       anyOf: [{ required: [styleId] }, { required: [style] }]
+      if:
+        required: [mentionLinks]
+        properties:
+          mentionLinks: { minItems: 1 }
+      then:
+        required: [canvasRevision]
       properties:
         styleId: { type: string, maxLength: 80, description: 服务端风格目录主键。 }
         revision: { type: integer, minimum: 1 }
@@ -4989,10 +5430,25 @@ components:
         gender: { type: string, enum: [unspecified, male, female, other] }
         style: { type: string, maxLength: 120 }
         aspectRatio: { type: string, enum: ['9:16', '16:9', '1:1'] }
+        canvasRevision: { type: integer, minimum: 1, description: 同时保存引用连线时传入当前画布版本。 }
+        mentionLinks:
+          type: array
+          maxItems: 100
+          description: 当前画布上可见节点指向所编辑形象的入线。同一来源只保留一条引用。
+          items:
+            type: object
+            required: [id, source, target]
+            properties:
+              id: { type: string, minLength: 1, maxLength: 240 }
+              source: { type: string, format: uuid }
+              target: { type: string, format: uuid }
+              sourceHandle: { type: [string, 'null'], maxLength: 80 }
+              targetHandle: { type: [string, 'null'], maxLength: 80 }
     DramaImageInput:
       type: object
       properties:
         prompt: { type: string, maxLength: 10000, description: 本次描述覆盖，省略或留空时使用形象描述，不修改长期形象内容。 }
+        canvasRevision: { type: integer, minimum: 1, description: 画布入口传入已保存的版本，生成时读取直接连入的图片和已出图形象。省略时沿用资产列表的生图方式。 }
     DramaVisualSaved:
       type: object
       required: [saved]
@@ -5575,6 +6031,8 @@ components:
         sourceMode: { type: string, enum: [upload, generate] }
         style: { type: string }
         aspectRatio: { type: string, enum: ['9:16', '16:9'] }
+        coverUrl: { type: string, description: 当前生效的版本化封面图片地址。 }
+        coverGenerationStatus: { type: string, enum: [running], description: 正在生成封面时返回。 }
         modelCode: { type: string }
         status: { type: string, enum: [queued, running, ready, failed] }
         phase: { type: string }
@@ -5586,6 +6044,21 @@ components:
         episodes: { type: array, items: { $ref: '#/components/schemas/DramaEpisode' } }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    DramaCoverGenerationEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/DramaCoverGeneration' }
+    DramaCoverGeneration:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [idle, running, succeeded, failed] }
+        jobId: { type: string, format: uuid }
+        modelCode: { type: string }
+        coverUrl: { type: string, description: 当前生效的封面图片地址。 }
+        candidateUrl: { type: string, description: 等待用户选择的候选封面图片地址。 }
+        error: { type: string, description: 本次任务失败时显示的说明。 }
     MCPConnectionInput:
       type: object
       required: [serviceId, name, purpose, authMode]

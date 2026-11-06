@@ -28,7 +28,7 @@
 .drama-creation-options { display: flex; flex: 1; min-width: 0; align-items: center; gap: 14px; flex-wrap: wrap; }
 .drama-ratio-select { min-width: 125px; }
 .drama-create-button { min-width: 134px; height: 36px; border-radius: 8px; font-weight: 600; }
-.drama-library { margin-top: 24px; }
+.drama-library { container: drama-library / inline-size; margin-top: 24px; }
 .drama-library-tabs { display: flex; gap: 22px; margin-bottom: 18px; border-bottom: 1px solid #dce4eb; }
 .drama-library-tabs button { position: relative; min-height: 42px; padding: 0 2px 11px; border: 0; background: transparent; color: #6d7b8f; font-size: 15px; font-weight: 550; cursor: pointer; }
 .drama-library-tabs button.active { color: #1c4dbd; font-weight: 650; }
@@ -38,17 +38,53 @@
 .drama-empty > .anticon { margin-bottom: 10px; color: #9fb2cc; font-size: 30px; }
 .drama-empty strong { color: #40516a; font-weight: 600; }
 .drama-empty span { font-size: 12px; }
-.drama-project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.drama-project-card { border: 1px solid #dce4eb !important; border-radius: 10px; overflow: hidden; cursor: pointer; box-shadow: none; }
-.drama-project-card .ant-card-body { padding: 0 0 17px; }
-.drama-project-art { height: 90px; display: flex; align-items: center; justify-content: space-between; padding: 17px 20px; background: linear-gradient(115deg, #e3ecf8, #d9e6f2 55%, #e7e8f6); color: #5276a4; }
-.drama-project-art .anticon { font-size: 27px; }
-.drama-project-art span { font-size: 11px; }
-.drama-project-meta, .drama-project-card h3, .drama-project-card p, .drama-project-foot { margin-left: 17px; margin-right: 17px; }
-.drama-project-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 15px; color: #99a3b0; font-size: 12px; }
-.drama-project-card h3 { margin-top: 10px; margin-bottom: 5px; font-size: 16px; }
-.drama-project-card p { min-height: 36px; margin-top: 0; color: #748296; font-size: 12px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.drama-project-foot { padding-top: 10px; border-top: 1px solid #edf1f5; color: #8a97a7; font-size: 12px; }
+.drama-project-grid {
+  --poster-width: clamp(216px, 13cqi, 252px);
+  --poster-gap: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, min(100%, var(--poster-width)));
+  gap: var(--poster-gap);
+}
+.drama-project-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #dce4eb;
+  border-radius: 11px;
+  background: #fff;
+  color: #17243a;
+  text-decoration: none;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.drama-project-card:hover { border-color: #9db4d0; color: #17243a; box-shadow: 0 8px 22px #243d601a; transform: translateY(-2px); }
+.drama-project-card:focus-visible { outline: 2px solid #3969da; outline-offset: 3px; }
+.drama-project-art { position: relative; }
+.drama-project-card:nth-child(3n+2) .drama-project-poster { --poster-ink: #192d32; --poster-mid: #315450; --poster-light: #a8c1a0; }
+.drama-project-card:nth-child(3n+3) .drama-project-poster { --poster-ink: #2f243c; --poster-mid: #604259; --poster-light: #c79a9b; }
+.drama-project-status {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid #ffffff26;
+  border-radius: 5px;
+  background: #101b2bde;
+  color: #f0f5fa;
+  font-size: 10px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drama-project-status[data-state='ready'] { color: #dcf5e9; }
+.drama-project-status[data-state='failed'] { color: #ffddd8; }
+.drama-project-status[data-state='running'] { color: #dbe8ff; }
+.drama-project-meta { display: grid; flex: 1; align-content: space-between; gap: 6px; padding: 11px 13px 12px; }
+.drama-project-meta h3 { display: -webkit-box; margin: 0; overflow: hidden; font-size: 15px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.drama-project-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px 8px; color: #61718a; font-size: 12px; line-height: 1.3; }
+.drama-project-foot time { color: #697990; font-variant-numeric: tabular-nums; }
 .drama-asset-filter { margin-bottom: 14px; }
 .drama-asset-library { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 14px; }
 .drama-asset-item { min-width: 0; overflow: hidden; border: 1px solid #dce4eb; border-radius: 10px; background: #fff; }
@@ -73,6 +109,18 @@
 .drama-settings-field p { margin: 4px 0 10px; color: #8794a5; font-size: 12px; }
 .drama-settings-field .ant-select { width: 100%; }
 .drama-settings-footnote { margin-top: 28px; padding-top: 17px; border-top: 1px solid #e7edf2; color: #94a0ae; font-size: 12px; line-height: 1.7; }
-@media (max-width: 950px) { .drama-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 680px) { .drama-title-input { width: 100%; min-width: 0; flex: 1 1 100%; } .drama-home-tools { justify-content: flex-start; } .drama-composer-tabs { padding-left: 10px; } .drama-composer-tabs button { padding: 0 12px; font-size: 12px; } .drama-composer-body { padding: 17px; } .drama-composer-footer { align-items: stretch; flex-direction: column; padding: 13px 17px; } .drama-create-button { width: 100%; } .drama-project-grid { grid-template-columns: 1fr; } .drama-asset-library { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
+@container drama-library (max-width: 560px) {
+  .drama-project-grid {
+    --poster-gap: 12px;
+    --poster-width: clamp(116px, (100cqi - var(--poster-gap)) / 2, 194px);
+  }
+  .drama-project-meta { padding: 9px 10px 10px; }
+  .drama-project-meta h3 { font-size: 14px; }
+  .drama-project-foot { font-size: 11px; }
+}
+@media (max-width: 680px) { .drama-title-input { width: 100%; min-width: 0; flex: 1 1 100%; } .drama-home-tools { justify-content: flex-start; } .drama-composer-tabs { padding-left: 10px; } .drama-composer-tabs button { padding: 0 12px; font-size: 12px; } .drama-composer-body { padding: 17px; } .drama-composer-footer { align-items: stretch; flex-direction: column; padding: 13px 17px; } .drama-create-button { width: 100%; } .drama-asset-library { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
+@media (prefers-reduced-motion: reduce) {
+  .drama-project-card { transition: none; }
+  .drama-project-card:hover { transform: none; }
+}
 @media (prefers-reduced-motion: reduce) { .drama-home * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"harness-admin/internal/drama"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"harness-admin/internal/drama"
 )
 
 func TestDramaCanvasFormsIsolationAndImageLifecycle(t *testing.T) {
@@ -160,9 +163,15 @@ func TestDramaCanvasFormsIsolationAndImageLifecycle(t *testing.T) {
 	if _, err = repo.QueueImage(ctx, org, user, project, child, "painter", drama.ImageInput{}); !errors.Is(err, drama.ErrParentImageMissing) {
 		t.Fatal("缺少父图片不得生成派生形象")
 	}
-	job, err := repo.QueueImage(ctx, org, user, project, root, "painter", drama.ImageInput{})
+	if _, err = repo.QueueImage(ctx, org, user, project, root, "painter", drama.ImageInput{CanvasRevision: new(board.Revision - 1)}); !errors.Is(err, drama.ErrCanvasConflict) {
+		t.Fatal("资产生图入队时未拦截过期的画布版本", err)
+	}
+	job, err := repo.QueueImage(ctx, org, user, project, root, "painter", drama.ImageInput{CanvasRevision: &board.Revision, ReferenceGuide: "\n\n参考图顺序：\n图1（Image 1）：城堡"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(job.Prompt, "图1（Image 1）：城堡") {
+		t.Fatalf("资产生图未保留参考图名称顺序：%s", job.Prompt)
 	}
 	if _, err = repo.QueueImage(ctx, org, user, project, root, "painter", drama.ImageInput{}); !errors.Is(err, drama.ErrImageBusy) {
 		t.Fatal("重复生成未拒绝")

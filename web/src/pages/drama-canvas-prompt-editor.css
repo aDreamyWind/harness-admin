@@ -1,0 +1,69 @@
+.drama-canvas-prompt-editor {
+  position: relative;
+  min-width: 0;
+  min-height: 54px;
+  max-height: 160px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 4px 2px;
+  border-radius: 6px;
+  color: #253450;
+  font-size: 13px;
+  line-height: 26px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+
+.drama-canvas-prompt-editor[data-empty="true"]::before {
+  position: absolute;
+  color: #8290a5;
+  pointer-events: none;
+  content: attr(data-placeholder);
+}
+
+.drama-canvas-prompt-editor:focus { outline: none; }
+.drama-canvas-prompt-editor:focus-visible { box-shadow: 0 1px 0 #b7a9e7; }
+.drama-canvas-prompt-editor[aria-disabled="true"] { cursor: default; }
+
+.drama-canvas-prompt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(240px, 100%);
+  height: 23px;
+  margin-inline: 1px 4px;
+  padding-inline: 3px 4px;
+  border: 1px solid #d9cdf7;
+  border-radius: 5px;
+  background: #f4efff;
+  color: #5635a6;
+  font-size: 12px;
+  line-height: 18px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.drama-canvas-prompt-chip:is([data-kind="image"], [data-kind="scene"]) {
+  border-color: #c3e1e9;
+  background: #edf9fb;
+  color: #246379;
+}
+
+.drama-canvas-prompt-chip-name { overflow: hidden; text-overflow: ellipsis; }
+.drama-canvas-prompt-chip img { flex: none; width: 17px; height: 17px; border-radius: 3px; object-fit: cover; }
+.drama-canvas-prompt-chip button {
+  flex: none;
+  width: 14px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+.drama-canvas-prompt-chip button:hover, .drama-canvas-prompt-chip button:focus-visible { background: #6a54a21f; }
+.drama-canvas-prompt-editor[aria-disabled="true"] .drama-canvas-prompt-chip button { display: none; }

@@ -28,6 +28,8 @@ export interface DramaProject {
   sourceMode: 'upload' | 'generate'
   styleId?: string
   style: string
+  coverUrl?: string
+  coverGenerationStatus?: 'running'
   aspectRatio: '9:16' | '16:9'
   modelCode: string
   status: 'queued' | 'running' | 'ready' | 'failed'
@@ -41,6 +43,10 @@ export interface DramaProject {
   createdAt: string
   updatedAt: string
 }
+export type DramaStoryOverview = Pick<DramaOverview, 'protagonist' | 'genre' | 'synopsis' | 'background' | 'setting'>
+export type DramaVisualSettingsInput = Partial<Pick<DramaProject, 'styleId' | 'aspectRatio'>>
+export type DramaVisualSettings = DramaVisualSettingsInput & { style?: string; updatedAt: string }
+
 export interface CreateDramaInput {
   title: string
   sourceName: string
@@ -68,6 +74,29 @@ export const saveDramaSettings = (input: DramaSettings) => request<DramaSettings
 })
 export const listDramaProjects = () => request<DramaProject[]>('/api/v1/ai-drama/projects')
 export const getDramaProject = (id: string) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}`)
+
+export interface DramaCoverGeneration {
+  status: 'idle' | 'running' | 'succeeded' | 'failed'
+  jobId?: string
+  modelCode?: string
+  coverUrl?: string
+  candidateUrl?: string
+  error?: string
+}
+
+export const getDramaCoverGeneration = (id: string, signal?: AbortSignal) =>
+  request<DramaCoverGeneration>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/generation`, { signal })
+
+export const startDramaCoverGeneration = (id: string, modelCode: string) =>
+  request<DramaCoverGeneration>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/generation`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ modelCode }), keepalive: true,
+  })
+
+export const chooseDramaCover = (id: string, jobId: string, choice: 'current' | 'candidate') =>
+  request<DramaCoverGeneration>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/cover/selection`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ jobId, choice }),
+  })
+
 export const getDramaSource = (id: string) => request<{ sourceText: string }>(`/api/v1/ai-drama/projects/${id}/source`)
 export const retryDramaProject = (id: string) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/retry`, {
   method: 'POST', headers: csrfHeaders(),
@@ -81,8 +110,19 @@ export const createDramaProject = (input: CreateDramaInput) => request<DramaProj
 export const createDramaProjectFromNovel = (input: CreateDramaFromNovelInput) => request<DramaProject>('/api/v1/ai-drama/projects/from-novel', {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
 })
-export const updateDramaOverview = (id: string, overview: DramaOverview) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/overview`, {
-  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(overview),
+export const updateDramaOverview = (id: string, overview: DramaStoryOverview) => request<DramaProject>(`/api/v1/ai-drama/projects/${id}/overview`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
+  body: JSON.stringify({
+    protagonist: overview.protagonist, genre: overview.genre, synopsis: overview.synopsis,
+    background: overview.background, setting: overview.setting,
+  }),
+})
+export const updateDramaVisualSettings = (id: string, input: DramaVisualSettingsInput) =>
+  request<DramaVisualSettings>(`/api/v1/ai-drama/projects/${encodeURIComponent(id)}/visual-settings`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
+  })
+export const renameDramaProject = (id: string, title: string) => request<Pick<DramaProject, 'title' | 'updatedAt'>>(`/api/v1/ai-drama/projects/${id}/title`, {
+  method: 'PATCH', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ title }),
 })
 
 export interface DramaSourceRange {
@@ -218,12 +258,15 @@ export interface DramaAssetForm {
 }
 export type DramaCanvasCardKind = 'text' | 'image' | 'video' | 'audio'
 export type DramaCanvasGenerationKind = Extract<DramaCanvasCardKind, 'image' | 'video'>
+export type DramaCanvasImageResolution = '1K' | '2K'
 export interface DramaCanvasGenerationModel {
   code: string; name: string; kind: DramaCanvasGenerationKind
   minReferences: number; maxReferences: number; minDuration?: number; maxDuration?: number
+  resolutions?: DramaCanvasImageResolution[]
 }
 export interface DramaCanvasGenerationInput {
   modelCode: string; prompt?: string; aspectRatio?: '16:9' | '9:16' | '1:1'; duration?: number
+  styleId?: string; resolution?: DramaCanvasImageResolution
 }
 export interface DramaCanvasGenerationJob {
   id: string; nodeId: string; kind: DramaCanvasGenerationKind; modelCode: string
@@ -263,12 +306,12 @@ export const createDramaCanvasAsset = (projectId: string, input: { kind: DramaAs
   request<{ id: string; revision: number }>(`${visualBase(projectId)}/canvas/assets`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify(input),
   })
-export const editDramaForm = (id: string, form: DramaAssetForm) => request<{ saved: boolean }>(`${visualBase(id)}/forms/${form.id}`, {
-  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision: form.revision, name: form.name, description: form.description, gender: form.gender, ...(form.styleId ? { styleId: form.styleId } : { style: form.style }), aspectRatio: form.aspectRatio }),
+export const editDramaForm = (id: string, form: DramaAssetForm, mentions?: { canvasRevision: number; mentionLinks: DramaCanvasLink[] }) => request<{ saved: boolean }>(`${visualBase(id)}/forms/${form.id}`, {
+  method: 'PUT', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ revision: form.revision, name: form.name, description: form.description, gender: form.gender, ...(form.styleId ? { styleId: form.styleId } : { style: form.style }), aspectRatio: form.aspectRatio, ...mentions }),
 })
 export const deriveDramaForm = (id: string, formId: string) => request<{ id: string }>(`${visualBase(id)}/forms/${formId}/derive`, { method: 'POST', headers: csrfHeaders() })
-export const generateDramaImage = (id: string, formId: string, prompt = '') => request<DramaImageJob>(`${visualBase(id)}/forms/${formId}/images`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ prompt }),
+export const generateDramaImage = (id: string, formId: string, prompt = '', canvasRevision?: number) => request<DramaImageJob>(`${visualBase(id)}/forms/${formId}/images`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', ...csrfHeaders() }, body: JSON.stringify({ prompt, canvasRevision }),
 })
 
 export interface DramaStyleOption { id: string; name: string; category: string; previewUrl: string; previewX: number; previewY: number }

@@ -82,7 +82,8 @@ func registerNovelRoutes(router *gin.Engine, deps Dependencies) {
 	})
 	group.POST("/projects/:id/actions", requireCSRF(deps), func(c *gin.Context) {
 		var input novel.Action
-		if !bindNovelInput(c, &input) {
+		// 长篇连载撤回确认后可提交完整的 500 章大纲。
+		if !bindNovelInputUpTo(c, &input, 4<<20) {
 			return
 		}
 		p, err := deps.Novel.Apply(c.Request.Context(), novelOwner(c), c.Param("id"), input)
@@ -92,7 +93,11 @@ func registerNovelRoutes(router *gin.Engine, deps Dependencies) {
 }
 
 func bindNovelInput(c *gin.Context, input any) bool {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512*1024)
+	return bindNovelInputUpTo(c, input, 512<<10)
+}
+
+func bindNovelInputUpTo(c *gin.Context, input any, limit int64) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	if err := c.ShouldBindJSON(input); err != nil {
 		httpx.Fail(c, http.StatusBadRequest, "invalid_novel_input", "小说请求格式无效或内容过长")
 		return false

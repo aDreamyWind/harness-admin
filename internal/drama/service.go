@@ -25,29 +25,36 @@ const ParseRuneLimit = 100000
 const OverviewChunkRuneLimit = 20000
 
 type Project struct {
-	ID             string          `json:"id"`
-	OrganizationID string          `json:"-"`
-	OwnerID        string          `json:"-"`
-	Title          string          `json:"title"`
-	SourceName     string          `json:"sourceName"`
-	SourceText     string          `json:"-"`
-	ForceOverview  bool            `json:"-"`
-	SourceLength   int             `json:"sourceLength"`
-	SourceMode     string          `json:"sourceMode"`
-	StyleID        string          `json:"styleId"`
-	Style          string          `json:"style"`
-	AspectRatio    string          `json:"aspectRatio"`
-	ModelCode      string          `json:"modelCode"`
-	Status         string          `json:"status"`
-	Phase          string          `json:"phase"`
-	Error          string          `json:"error,omitempty"`
-	Overview       json.RawMessage `json:"overview"`
-	Characters     json.RawMessage `json:"characters"`
-	Scenes         json.RawMessage `json:"scenes"`
-	Props          json.RawMessage `json:"props"`
-	Episodes       json.RawMessage `json:"episodes"`
-	CreatedAt      time.Time       `json:"createdAt"`
-	UpdatedAt      time.Time       `json:"updatedAt"`
+	ID                    string          `json:"id"`
+	OrganizationID        string          `json:"-"`
+	OwnerID               string          `json:"-"`
+	Title                 string          `json:"title"`
+	SourceName            string          `json:"sourceName"`
+	SourceText            string          `json:"-"`
+	ForceOverview         bool            `json:"-"`
+	SourceLength          int             `json:"sourceLength"`
+	SourceMode            string          `json:"sourceMode"`
+	StyleID               string          `json:"styleId"`
+	Style                 string          `json:"style"`
+	AspectRatio           string          `json:"aspectRatio"`
+	CoverURL              string          `json:"coverUrl,omitempty"`
+	CoverGenerationStatus string          `json:"coverGenerationStatus,omitempty"`
+	ModelCode             string          `json:"modelCode"`
+	Status                string          `json:"status"`
+	Phase                 string          `json:"phase"`
+	Error                 string          `json:"error,omitempty"`
+	Overview              json.RawMessage `json:"overview"`
+	Characters            json.RawMessage `json:"characters"`
+	Scenes                json.RawMessage `json:"scenes"`
+	Props                 json.RawMessage `json:"props"`
+	Episodes              json.RawMessage `json:"episodes"`
+	CreatedAt             time.Time       `json:"createdAt"`
+	UpdatedAt             time.Time       `json:"updatedAt"`
+}
+
+type ProjectTitle struct {
+	Title     string    `json:"title"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type CreateInput struct {
@@ -80,6 +87,7 @@ type Repository interface {
 	Create(context.Context, Project) (Project, error)
 	List(context.Context, string, string) ([]Project, error)
 	Get(context.Context, string, string, string) (Project, error)
+	RenameProject(context.Context, string, string, string, string) (ProjectTitle, error)
 	GetSource(context.Context, string, string, string) (string, error)
 	GetSourceRange(context.Context, string, string, string, int, int) (SourceRange, error)
 	ListBatches(context.Context, string, string, string) ([]Batch, error)
@@ -105,6 +113,7 @@ type Repository interface {
 	SaveAnalysis(context.Context, string, string, string, string, string, json.RawMessage) error
 	FailAnalysis(context.Context, string, string, string, string) error
 	UpdateOverview(context.Context, string, string, string, json.RawMessage) (Project, error)
+	UpdateProjectVisualSettings(context.Context, string, string, string, ProjectVisualSettings) (ProjectVisualSettings, error)
 	FailInterrupted(context.Context) error
 	SaveGeneratedScript(context.Context, string, string, string, string) error
 	RetryFailed(context.Context, string, string, string, string) (Project, error)
@@ -125,20 +134,23 @@ type Model struct {
 }
 
 type Service struct {
-	repository     Repository
-	writer         Writer
-	visual         VisualRepository
-	images         ImageGenerator
-	files          ImageFiles
-	canvasMedia    CanvasMediaFiles
-	canvasJobs     CanvasGenerationRepository
-	canvasEngine   CanvasGenerationEngine
-	styles         StyleRepository
-	storyboards    StoryboardRepository
-	repairs        RepairRepository
-	segmentVideos  SegmentVideoRepository
-	videoGenerator SegmentVideoGenerator
-	videoMedia     SegmentVideoMedia
+	repository      Repository
+	writer          Writer
+	visual          VisualRepository
+	images          ImageGenerator
+	files           ImageFiles
+	canvasMedia     CanvasMediaFiles
+	canvasJobs      CanvasGenerationRepository
+	canvasEngine    CanvasGenerationEngine
+	styles          StyleRepository
+	storyboards     StoryboardRepository
+	repairs         RepairRepository
+	segmentVideos   SegmentVideoRepository
+	videoGenerator  SegmentVideoGenerator
+	videoMedia      SegmentVideoMedia
+	coverRepository CoverRepository
+	coverGenerator  CoverGenerator
+	coverComposer   CoverComposer
 }
 
 func NewService(repository Repository, writer Writer) *Service {
@@ -281,6 +293,17 @@ func (s *Service) Get(ctx context.Context, organizationID, ownerID, id string) (
 		return Project{}, ErrInvalidInput
 	}
 	return s.repository.Get(ctx, organizationID, ownerID, id)
+}
+
+func (s *Service) RenameProject(ctx context.Context, organizationID, ownerID, id, title string) (ProjectTitle, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return ProjectTitle{}, ErrInvalidInput
+	}
+	title = strings.TrimSpace(title)
+	if title == "" || !utf8.ValidString(title) || strings.ContainsRune(title, '\x00') || utf8.RuneCountInString(title) > 120 {
+		return ProjectTitle{}, fmt.Errorf("%w：标题须为 1 到 120 个字符", ErrInvalidInput)
+	}
+	return s.repository.RenameProject(ctx, organizationID, ownerID, id, title)
 }
 
 // Retry 只重试上传的失败项目；原文从数据库读取，沿用当前用户配置的文本模型。

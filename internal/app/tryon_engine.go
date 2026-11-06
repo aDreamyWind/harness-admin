@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"harness-admin/internal/modelgateway"
 	"harness-admin/internal/tryon"
 )
+
+const garmentDetectionMinTimeoutMS = 45_000
 
 type tryOnGateway interface {
 	dramaImageGateway
@@ -31,10 +34,15 @@ func (e *tryOnEngine) Models(ctx context.Context, owner tryon.Owner) (tryon.Mode
 		return tryon.Models{}, err
 	}
 	result := tryon.Models{Detection: []tryon.Model{}, Image: []tryon.Model{}, Person: []tryon.Model{}}
+	var preferredDetection []tryon.Model
 	for _, model := range models {
 		item := tryon.Model{Code: model.Code, Name: model.Name}
 		switch model.ModelType {
 		case "chat":
+			if model.UpstreamModelID == "qwen3-vl-plus" {
+				preferredDetection = append(preferredDetection, item)
+				continue
+			}
 			if slices.Contains(model.Capabilities, "vision") || strings.HasPrefix(model.UpstreamModelID, "qwen3-vl-") {
 				result.Detection = append(result.Detection, item)
 			}
@@ -46,6 +54,9 @@ func (e *tryOnEngine) Models(ctx context.Context, owner tryon.Owner) (tryon.Mode
 				result.Person = append(result.Person, item)
 			}
 		}
+	}
+	if len(preferredDetection) > 0 {
+		result.Detection = append(preferredDetection, result.Detection...)
 	}
 	return result, nil
 }
@@ -90,10 +101,12 @@ func (e *tryOnEngine) Detect(ctx context.Context, owner tryon.Owner, code string
 	if err != nil {
 		return nil, errors.Join(tryon.ErrModel, err)
 	}
+	// 视觉识别可能超过普通对话的供应商超时。仅放宽本次衣物识别调用。
+	prepared.Route.ProviderTimeoutMS = max(prepared.Route.ProviderTimeoutMS, garmentDetectionMinTimeoutMS)
 	logErr := modelgateway.ExecuteRecordedCall(ctx, e.gateway, prepared, modelgateway.CallLogOptions{
 		Source: "ai_tryon", Operation: "garment_detect",
 	}, func() modelgateway.CallOutcome {
-		outcome := modelgateway.CallOutcome{HTTPStatus: http.StatusBadGateway}
+		outcome := modelgateway.CallOutcome{}
 		candidates, err = e.detectFromProvider(ctx, prepared, &outcome)
 		if err != nil {
 			outcome.Result = "failed"
@@ -114,14 +127,14 @@ func (e *tryOnEngine) detectFromProvider(ctx context.Context, prepared modelgate
 		outcome.HTTPStatus = response.StatusCode
 	}
 	if err != nil || response == nil {
-		return nil, errors.Join(tryon.ErrInference, err)
+		return nil, garmentDetectionFailure(outcome, err)
 	}
 	const limit = 1 << 20
 	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	outcome.ResponseBody = body[:min(len(body), limit)]
 	outcome.ResponseTruncated = len(body) > limit
 	if err != nil || outcome.ResponseTruncated || response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, errors.Join(tryon.ErrInference, err)
+		return nil, garmentDetectionFailure(outcome, err)
 	}
 	var result struct {
 		Choices []struct {
@@ -160,6 +173,19 @@ func (e *tryOnEngine) detectFromProvider(ctx context.Context, prepared modelgate
 		content = joined.String()
 	}
 	return tryon.ParseDetection(content)
+}
+
+func garmentDetectionFailure(outcome *modelgateway.CallOutcome, err error) error {
+	var transportErr net.Error
+	if (errors.As(err, &transportErr) && transportErr.Timeout()) ||
+		outcome.HTTPStatus == http.StatusRequestTimeout || outcome.HTTPStatus == http.StatusGatewayTimeout {
+		if outcome.HTTPStatus == 0 {
+			outcome.HTTPStatus = http.StatusGatewayTimeout
+		}
+		outcome.ErrorCode = "tryon_detection_timeout"
+		return errors.Join(tryon.ErrDetectionTimeout, err)
+	}
+	return errors.Join(tryon.ErrInference, err)
 }
 
 func (e *tryOnEngine) Generate(ctx context.Context, owner tryon.Owner, code, operation, prompt string, images []tryon.Image) (tryon.Image, error) {

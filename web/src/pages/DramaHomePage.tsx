@@ -1,17 +1,18 @@
 import {
   BookOutlined, ClockCircleOutlined, CloudUploadOutlined, DeleteOutlined,
   FileTextOutlined, FolderOpenOutlined, PictureOutlined,
-  SettingOutlined, VideoCameraOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
-import { Button, Card, Drawer, Empty, Input, Segmented, Select, Skeleton, Tag, message } from 'antd'
+import { Button, Drawer, Empty, Input, Segmented, Select, Skeleton, Tag, message } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 import {
   createDramaProject, createDramaProjectFromNovel, getDramaSettings, listDramaModels, listDramaProjects, saveDramaSettings,
   type DramaAsset, type DramaAssetKind, type DramaModel, type DramaProject, type DramaSettings,
 } from '../api/drama'
 import { DramaStylePicker } from './DramaStylePicker'
+import { DramaProjectPoster } from './DramaProjectPoster'
 import { NovelCreateDialog } from './NovelCreateDialog'
 import { NovelDramaSource, type NovelDramaSelection } from './NovelDramaSource'
 import './drama-home.css'
@@ -35,6 +36,31 @@ function statusTag(project: DramaProject) {
   if (project.status === 'ready') return <Tag color="success">概览已完成</Tag>
   if (project.status === 'failed') return <Tag color="error">解析失败</Tag>
   return <Tag color="processing">{phaseNames[project.phase] ?? '解析中'}</Tag>
+}
+
+function hasActiveTask(project: DramaProject) {
+  return project.status === 'queued' || project.status === 'running' || project.coverGenerationStatus === 'running'
+}
+
+function DramaProjectCard({ project }: { project: DramaProject }) {
+  const coverRunning = project.coverGenerationStatus === 'running'
+  let status = phaseNames[project.phase] ?? '解析中'
+  if (project.status === 'ready') status = '概览已完成'
+  if (project.status === 'failed') status = '解析失败'
+  if (coverRunning) status = '封面生成中'
+  return <Link className="drama-project-card" to={`/ai-apps/drama/projects/${project.id}`}>
+    <div className="drama-project-art">
+      <DramaProjectPoster title={project.title} url={project.coverUrl} lazy />
+      <span className="drama-project-status" data-state={coverRunning ? 'running' : project.status}>{status}</span>
+    </div>
+    <div className="drama-project-meta">
+      <h3 title={project.title}>{project.title}</h3>
+      <div className="drama-project-foot">
+        <span>{project.episodes.length} 集 · {project.characters.length} 个角色</span>
+        <time dateTime={project.updatedAt} title="最近更新">{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</time>
+      </div>
+    </div>
+  </Link>
 }
 
 function AssetThumbnail({ url }: { url?: string }) {
@@ -83,6 +109,7 @@ export function DramaHomePage() {
   const [settings, setSettings] = useState<DramaSettings>(emptySettings)
   const [settingsDraft, setSettingsDraft] = useState<DramaSettings>(emptySettings)
   const [projects, setProjects] = useState<DramaProject[]>([])
+  const hasActiveProjects = projects.some(hasActiveTask)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
@@ -147,10 +174,13 @@ export function DramaHomePage() {
   }, [messageApi])
 
   useEffect(() => {
-    if (!projects.some((item) => item.status === 'queued' || item.status === 'running')) return
-    const timer = window.setInterval(() => { listDramaProjects().then(setProjects).catch(() => {}) }, 4000)
-    return () => window.clearInterval(timer)
-  }, [projects])
+    if (!hasActiveProjects) return
+    let active = true
+    const timer = window.setInterval(() => {
+      void listDramaProjects().then((items) => { if (active) setProjects(items) }).catch(() => {})
+    }, 4000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [hasActiveProjects])
 
   async function readFile(file: File) {
     if (!/\.(txt|md)$/i.test(file.name)) { messageApi.error('当前支持 TXT、MD 文本文件，也可以直接粘贴原文'); return }
@@ -219,7 +249,7 @@ export function DramaHomePage() {
       ...project.props.map((item) => ({ ...item, ...info, kind: 'prop' as const })),
     ]
   }), [projects])
-  const activeTasks = projects.filter((item) => item.status === 'queued' || item.status === 'running').length
+  const activeTasks = projects.filter(hasActiveTask).length
 
   return <main className="drama-home">
     {contextHolder}
@@ -260,7 +290,7 @@ export function DramaHomePage() {
       </div>
       {loading ? <Skeleton active /> : libraryTab === 'assets' ? <DramaAssetLibrary assets={assets} /> : projects.length === 0 ? (
         <div className="drama-empty"><FolderOpenOutlined /><strong>暂无项目</strong><span>上传原文或选用 AI 小说后，项目会出现在这里。</span></div>
-      ) : <div className="drama-project-grid">{projects.map((project) => <Card key={project.id} className="drama-project-card" variant="borderless" onClick={() => navigate(`/ai-apps/drama/projects/${project.id}`)} hoverable><div className="drama-project-art"><VideoCameraOutlined /><span>{project.aspectRatio}</span></div><div className="drama-project-meta">{statusTag(project)}<span>{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</span></div><h3>{project.title}</h3><p>{project.overview?.synopsis || (project.sourceMode === 'generate' ? '正在生成剧本' : '等待解析故事内容')}</p><div className="drama-project-foot">{project.episodes.length} 集 · {project.characters.length} 个角色</div></Card>)}</div>}
+      ) : <div className="drama-project-grid">{projects.map((project) => <DramaProjectCard key={project.id} project={project} />)}</div>}
     </section>
 
     {creatingNovel && <NovelCreateDialog source="drama" onClose={() => setCreatingNovel(false)} />}
@@ -273,6 +303,6 @@ export function DramaHomePage() {
       ] as const).map((field) => <div className="drama-settings-field" key={field.key}><label htmlFor={`drama-${field.key}`}>{field.label}</label><p>{field.help}</p><Select id={`drama-${field.key}`} value={settingsDraft[field.key] || undefined} allowClear placeholder={`选择已启用的${field.label}`} options={models.filter((item) => item.modelType === field.kind).map((item) => ({ label: item.name, value: item.code }))} onChange={(value) => setSettingsDraft((current) => ({ ...current, [field.key]: value || '' }))} notFoundContent="暂无当前账号可用的模型" /></div>)}
       <p className="drama-settings-footnote">模型来自模型目录，并受当前账号的模型策略限制。修改设置不会改变已有项目保存的模型。</p>
     </Drawer>
-    <Drawer title="生成任务" open={tasksOpen} onClose={() => setTasksOpen(false)} width={420}>{projects.length === 0 ? <Empty description="暂无生成任务" /> : <div className="drama-drawer-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => { setTasksOpen(false); navigate(`/ai-apps/drama/projects/${project.id}`) }}><strong>{project.title}</strong>{statusTag(project)}<small>{phaseNames[project.phase] ?? project.phase}</small></button>)}</div>}</Drawer>
+    <Drawer title="生成任务" open={tasksOpen} onClose={() => setTasksOpen(false)} width={420}>{projects.length === 0 ? <Empty description="暂无生成任务" /> : <div className="drama-drawer-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => { setTasksOpen(false); navigate(`/ai-apps/drama/projects/${project.id}`) }}><strong>{project.title}</strong>{statusTag(project)}<small>{project.coverGenerationStatus === 'running' ? '封面后台生成中' : phaseNames[project.phase] ?? project.phase}</small></button>)}</div>}</Drawer>
   </main>
 }

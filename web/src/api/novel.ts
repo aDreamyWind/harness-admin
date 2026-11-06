@@ -77,9 +77,11 @@ export type NovelAction =
   | { kind: 'suggest_title'; modelCode: string }
   | { kind: 'save_author_guidance'; authorGuidance: string }
   | { kind: 'save_outline' | 'confirm_outline'; outline: NovelOutline }
+  | { kind: 'reopen_outline' }
   | { kind: 'append_chapters'; beats: NovelBeat[] }
   | { kind: 'write'; chapter: number; modelCode: string; instruction: string }
   | { kind: 'review' | 'revise_review'; chapter: number; modelCode: string }
+  | { kind: 'reopen_chapter'; chapter: number }
   | { kind: 'save_draft' | 'finalize'; chapter: number; body: string; summary: string }
 
 const base = '/api/v1/ai-novel'

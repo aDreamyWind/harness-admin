@@ -19,7 +19,7 @@
 }
 
 .tryon-page > .ant-alert { margin-bottom: 12px; }
-.tryon-workspace { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(310px, 1fr); gap: 16px; align-items: start; }
+.tryon-workspace { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(295px, 1fr); gap: 16px; align-items: stretch; }
 .tryon-stage,
 .tryon-controls,
 .tryon-library {
@@ -29,16 +29,36 @@
   background: #fff;
   padding: 16px;
 }
-.tryon-stage { background: var(--tryon-paper); }
+.tryon-stage { display: flex; flex-direction: column; background: var(--tryon-paper); }
 .tryon-stage-header { min-height: 48px; }
 .tryon-stage-header span, .tryon-control-heading span { color: var(--tryon-mute); font-size: 12px; }
 .tryon-stage-header h2, .tryon-control-heading h2 { margin: 3px 0; font-size: 19px; }
-.tryon-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-block: 14px 4px; }
-.tryon-comparison figure { min-width: 0; margin: 0; }
+.tryon-stage-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 5px; }
+.tryon-viewing-label { color: var(--tryon-mute); overflow-wrap: anywhere; }
+.tryon-empty-stage {
+  display: grid;
+  flex: 1;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  min-height: 168px;
+  margin-top: 14px;
+  padding: 20px 12px;
+  border: 1px dashed #b0cac6;
+  border-radius: 8px;
+  background: #fafcfb;
+  text-align: center;
+  color: var(--tryon-mute);
+}
+.tryon-empty-stage > .anticon { font-size: 27px; color: var(--tryon-teal); }
+.tryon-empty-stage > strong { color: var(--tryon-ink); font-size: 16px; }
+.tryon-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; }
+.tryon-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 1; gap: 12px; min-height: clamp(320px, 48vh, 485px); margin-top: 14px; }
+.tryon-comparison figure { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; margin: 0; }
 .tryon-comparison figcaption { margin: 0 0 8px; color: var(--tryon-mute); font-size: 13px; }
 .tryon-stage-picture {
-  min-height: 180px;
-  height: clamp(260px, 52vh, 520px);
+  min-height: 0;
+  position: relative;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -54,41 +74,184 @@
 .tryon-placeholder > .anticon { color: var(--tryon-teal); font-size: 30px; }
 .tryon-stage-picture > .ant-image,
 .tryon-thumb > .ant-image,
-.tryon-library-image > .ant-image { display: block; min-width: 0; min-height: 0; width: 100%; height: 100%; }
+.tryon-slot-image > .ant-image,
+.tryon-library-image > .ant-image,
+.tryon-picker-image > .ant-image,
+.tryon-outfit-images .ant-image { display: block; min-width: 0; min-height: 0; width: 100%; height: 100%; }
+.tryon-stage-picture > .ant-image { position: absolute; inset: 0; }
 .tryon-stage-picture .ant-image .ant-image-img,
 .tryon-thumb .ant-image .ant-image-img,
-.tryon-library-image .ant-image .ant-image-img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.tryon-slot-image .ant-image .ant-image-img,
+.tryon-library-image .ant-image .ant-image-img,
+.tryon-picker-image .ant-image .ant-image-img,
+.tryon-outfit-images .ant-image .ant-image-img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.tryon-person-cover .ant-image .ant-image-img {
+  object-fit: cover;
+  object-position: center 5%;
+  transform: scale(1.14);
+  transform-origin: center top;
+}
+.tryon-person-cover-builtin .ant-image .ant-image-img {
+  object-position: center top;
+  transform: scale(2.24);
+}
 .tryon-stage > .ant-alert { margin-top: 14px; }
-.tryon-controls { display: grid; gap: 13px; }
+.tryon-controls { display: flex; flex-direction: column; gap: 12px; }
+.tryon-control-footer { display: grid; gap: 10px; margin-top: auto; }
 .tryon-reference {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 58px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   padding: 9px;
   border: 1px solid var(--tryon-line);
   border-radius: 8px;
 }
-.tryon-thumb { height: 86px; display: grid; place-items: center; overflow: hidden; background: var(--tryon-paper); color: var(--tryon-teal); border-radius: 4px; }
-.tryon-reference-info { min-width: 0; display: grid; gap: 8px; }
-.tryon-reference-heading { display: flex; align-items: start; justify-content: space-between; gap: 5px; }
-.tryon-reference-info small { color: var(--tryon-mute); display: block; }
-.tryon-picker { display: flex; gap: 5px; }
-.tryon-picker .ant-select { flex: 1; min-width: 0; }
+.tryon-thumb { height: 58px; display: grid; place-items: center; overflow: hidden; background: var(--tryon-paper); color: var(--tryon-teal); border-radius: 4px; }
+.tryon-reference[data-empty='true'] { grid-template-columns: 42px minmax(0, 1fr); }
+.tryon-reference[data-empty='true'] .tryon-thumb { height: 42px; }
+.tryon-reference-info { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+.tryon-reference-info small { color: var(--tryon-mute); display: block; overflow-wrap: anywhere; }
+.tryon-reference-actions { display: flex; flex-wrap: wrap; gap: 3px; }
+.tryon-garment-strip { display: grid; gap: 8px; padding: 9px; border: 1px solid var(--tryon-line); border-radius: 8px; }
+.tryon-garment-strip-title { display: flex; align-items: center; justify-content: space-between; }
+.tryon-garment-strip-title small { color: var(--tryon-mute); }
+.tryon-garment-slots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; align-items: start; }
+.tryon-garment-slots[data-empty='true'] { grid-template-columns: minmax(0, 68px); }
+.tryon-garment-slot { margin: 0; min-width: 0; }
+.tryon-slot-image, .tryon-add-slot { aspect-ratio: 1; display: grid; place-items: center; border-radius: 6px; }
+.tryon-slot-image { position: relative; overflow: hidden; background: var(--tryon-paper); }
+.tryon-slot-image > .ant-image { position: absolute; inset: 0; }
+.tryon-garment-slot figcaption { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-top: 3px; font-size: 12px; }
+.tryon-slot-image .tryon-remove-garment { position: absolute; top: 3px; right: 3px; z-index: 1; }
+.tryon-add-slot {
+  width: 100%;
+  align-content: center;
+  gap: 2px;
+  padding: 0;
+  border: 1px dashed #82aaa7;
+  background: #f8fbfa;
+  color: var(--tryon-teal);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tryon-add-slot:hover { background: #e4f2ef; border-color: var(--tryon-teal); }
+.tryon-add-slot > .anticon { font-size: 16px; }
 .tryon-model { display: grid; gap: 4px; }
 .tryon-library-tools { margin-bottom: 18px; flex-wrap: wrap; }
 .tryon-library-tools > span { color: var(--tryon-mute); }
+.tryon-filters { display: flex; flex: 1; min-width: 0; gap: 4px; overflow-x: auto; padding: 3px; scrollbar-width: thin; }
+.tryon-filters > button { flex-shrink: 0; }
+.tryon-picker-content { display: grid; gap: 10px; }
+.tryon-picker-content > small { color: #546971; }
+.tryon-picker-grid, .tryon-outfit-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+.tryon-picker-grid { max-height: min(48vh, 430px); overflow-y: auto; padding: 2px; }
+.tryon-outfit-grid { grid-template-columns: repeat(auto-fill, minmax(182px, 1fr)); }
+.tryon-picker-grid > article, .tryon-outfit-grid > article, .tryon-outfit-choice {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid #d7e3e2;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.tryon-picker-grid > article > small, .tryon-outfit-choice > small { color: #546971; }
+.tryon-picker-image { height: 110px; background: #f2f7f6; border-radius: 5px; overflow: hidden; }
+.tryon-outfit-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; color: #546971; }
+.tryon-outfit-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
+.tryon-outfit-images > div { height: 65px; display: grid; place-items: center; background: #f2f7f6; overflow: hidden; border-radius: 4px; }
+.tryon-outfit-choice { cursor: pointer; }
+.tryon-outfit-choice:focus-within { outline: 2px solid #176c68; }
+.tryon-outfit-choice[data-checked='true'] { border-color: #176c68; background: #f0f7f6; }
+.tryon-outfit-choice input { accent-color: #176c68; }
+.tryon-garment-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  margin-inline-start: 6px;
+  padding-inline: 5px;
+  border-radius: 9px;
+  background: #e2efed;
+  color: #195b59;
+  font-size: 12px;
+  line-height: 18px;
+}
+.tryon-garment-jobs { display: grid; gap: 10px; margin-bottom: 12px; }
+.tryon-garment-job-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.tryon-garment-job-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--tryon-line);
+  border-radius: 8px;
+  background: #fafcfb;
+}
+.tryon-garment-job-info { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }
+.tryon-garment-job-info small, .tryon-garment-job-empty { color: var(--tryon-mute); }
+.tryon-garment-job-info .tryon-garment-job-error { color: #a61d24; }
+.tryon-garment-job-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.tryon-garment-job-actions .ant-tag { margin: 0; }
+.tryon-garment-result { display: grid; justify-items: center; gap: 8px; }
+.tryon-garment-result p { margin: 0; }
+.tryon-garment-result img { display: block; max-width: 100%; max-height: 60vh; object-fit: contain; }
 .tryon-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 12px; }
 .tryon-library-grid article { min-width: 0; border: 1px solid var(--tryon-line); border-radius: 8px; padding: 8px; }
 .tryon-library-image { height: 178px; background: var(--tryon-paper); overflow: hidden; border-radius: 4px; }
 .tryon-library-meta { display: grid; gap: 2px; padding-block: 8px; }
-.tryon-library-meta strong, .tryon-history-item strong { overflow-wrap: anywhere; }
-.tryon-library-meta small, .tryon-history-item small { color: var(--tryon-mute); display: block; }
-.tryon-history { display: grid; gap: 8px; }
-.tryon-history-item { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px; text-align: left; font: inherit; color: inherit; background: #fff; border: 1px solid var(--tryon-line); border-radius: 8px; cursor: pointer; }
-.tryon-history-item:hover { background: var(--tryon-paper); }
-.tryon-history-item img, .tryon-history-icon { width: 56px; height: 56px; object-fit: contain; background: var(--tryon-paper); border-radius: 5px; }
-.tryon-history-icon { display: grid; place-items: center; color: var(--tryon-teal); }
+.tryon-library-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.tryon-library-actions > :first-child { flex: 1; }
+.tryon-library-meta strong { overflow-wrap: anywhere; }
+.tryon-library-meta small { color: var(--tryon-mute); display: block; }
+.tryon-task-panel { margin-top: 16px; display: grid; gap: 10px; }
+.tryon-task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 165px), 1fr)); gap: 12px; align-items: stretch; }
+.tryon-task-card { min-width: 0; border: 1px solid var(--tryon-line); border-radius: 9px; overflow: hidden; background: #fff; }
+.tryon-task-preview {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.tryon-task-preview:hover .tryon-task-info { background: var(--tryon-paper); }
+.tryon-task-cover {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: var(--tryon-paper);
+  color: var(--tryon-teal);
+}
+.tryon-task-cover > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center top; }
+.tryon-task-cover > .anticon { font-size: 27px; }
+.tryon-task-cover .tryon-task-badge { position: absolute; top: 7px; right: 7px; margin: 0; box-shadow: 0 0 0 1px #fff; }
+.tryon-task-progress { position: absolute; left: 7px; bottom: 7px; padding: 5px; border-radius: 6px; background: #fff; }
+.tryon-task-info { display: grid; gap: 3px; padding: 8px 9px; }
+.tryon-task-info strong {
+  display: -webkit-box;
+  min-height: 2.75em;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.375;
+}
+.tryon-task-info time, .tryon-task-retry small { color: var(--tryon-mute); font-size: 12px; }
+.tryon-task-garments { display: flex; gap: 3px; }
+.tryon-task-garments:empty { display: none; }
+.tryon-task-garments img { width: 22px; height: 22px; border: 1px solid var(--tryon-line); border-radius: 3px; object-fit: contain; }
+.tryon-task-retry { display: grid; gap: 4px; padding: 0 9px 9px; }
+.tryon-task-retry small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tryon-dialog { display: grid; gap: 12px; padding-block: 8px; }
 .tryon-dialog label { display: grid; gap: 4px; min-width: 0; }
 .tryon-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 10px; }
@@ -116,14 +279,34 @@
 .tryon-crop img { display: block; width: auto; height: auto; max-width: 100%; max-height: 380px; pointer-events: none; }
 .tryon-crop-box { position: absolute; pointer-events: none; box-sizing: border-box; border: 2px solid #00a69c; box-shadow: 0 0 0 1px #fff; }
 .tryon-crop-box.is-secondary { border: 1px dashed #fff; box-shadow: 0 0 0 1px #176c68; }
-.tryon-drop:focus-visible, .tryon-history-item:focus-visible { outline: 2px solid #176c68; outline-offset: 2px; }
-@media (max-width: 1080px) {
+.tryon-crop-box.is-selected { background: rgb(0 166 156 / 14%); }
+.tryon-crop-box.is-submitted { border: 1px dashed #76888a; box-shadow: none; }
+.tryon-crop-box > span {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 0 5px;
+  border-radius: 0 0 4px 0;
+  background: #fff;
+  color: #194647;
+  font-size: 11px;
+  line-height: 16px;
+}
+.tryon-crop-box.is-selected > span { color: #fff; background: #176c68; }
+.tryon-crop-box.is-submitted > span { color: #fff; background: #66797c; }
+.tryon-garment-candidates { display: grid; gap: 6px; }
+.tryon-garment-checkboxes { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.tryon-garment-checkboxes label { display: inline-flex; gap: 0; }
+.tryon-drop:focus-visible, .tryon-add-slot:focus-visible { outline: 2px solid #176c68; outline-offset: 2px; }
+.tryon-task-preview:focus-visible { outline: 2px solid #176c68; outline-offset: -2px; }
+@media (max-width: 880px) {
   .tryon-workspace { grid-template-columns: minmax(0, 1fr); }
   .tryon-controls { grid-row: 1; }
 }
 @media (max-width: 540px) {
   .tryon-stage, .tryon-controls, .tryon-library { padding: 10px; }
-  .tryon-stage-picture { height: clamp(180px, 60vw, 300px); }
-  .tryon-comparison { gap: 7px; }
+  .tryon-comparison { min-height: clamp(200px, 60vw, 300px); gap: 7px; }
+  .tryon-task-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 142px), 1fr)); gap: 8px; }
   .tryon-fields { grid-template-columns: 1fr; }
+  .tryon-garment-job-actions { flex-wrap: wrap; justify-content: flex-end; flex-shrink: 1; }
 }

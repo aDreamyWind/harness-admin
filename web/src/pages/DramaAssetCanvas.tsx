@@ -1,6 +1,6 @@
-import { ArrowLeftOutlined, CopyOutlined, DeleteOutlined, EditOutlined, EllipsisOutlined, EyeOutlined, GiftOutlined, PictureOutlined, PlusOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, EditOutlined, EllipsisOutlined, EyeOutlined, GiftOutlined, PictureOutlined, PlusOutlined, ThunderboltOutlined, UploadOutlined, UserOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Dropdown, Empty, Input, Modal, Select, Skeleton, Tag, Tooltip, message } from 'antd'
+import { Alert, Button, Dropdown, Empty, Modal, Select, Skeleton, Tag, Tooltip, message } from 'antd'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Background, Handle, MiniMap, Position, ReactFlow, ReactFlowProvider, SelectionMode, applyNodeChanges, useNodesInitialized, useReactFlow, type Connection, type OnConnectEnd, type Node, type NodeProps, type Viewport, type NodeChange, type Edge, type XYPosition } from '@xyflow/react'
@@ -9,12 +9,15 @@ import { ApiError } from '../api/client'
 import { createDramaCanvasAsset, deriveDramaForm, editDramaForm, generateDramaImage, getDramaCanvas, listDramaCanvasGenerations, saveDramaCanvasLayout, startDramaCanvasGeneration, uploadDramaCanvasMedia, type DramaAssetForm, type DramaAssetKind, type DramaCanvas, type DramaCanvasCard as MediaCard, type DramaCanvasCardKind as CardKind, type DramaCanvasExtras as CanvasExtras, type DramaCanvasGenerationInput, type DramaCanvasGenerationJob, type DramaCanvasGenerationKind, type DramaCanvasLayout, type DramaCanvasLink, type DramaProject } from '../api/drama'
 import { DramaCanvasCreateMenu, type CanvasCreateKind } from './DramaCanvasCreateMenu'
 import { DramaCanvasInlineEditor, type DramaCanvasInlineInput } from './DramaCanvasInlineEditor'
+import { DramaCanvasPromptEditor, canvasPromptParts, canvasPromptText, type CanvasPromptPart, type CanvasPromptRefChanges, type DramaCanvasPromptHandle } from './DramaCanvasPromptEditor'
+import type { DramaCanvasMentionOption } from './DramaCanvasReferencePicker'
 import { DramaCanvasFloatingPanel } from './DramaCanvasFloatingPanel'
-import { DramaCanvasMediaGeneration, type CanvasGenerationReference } from './DramaCanvasMediaGeneration'
+import { DramaCanvasComposerAnchor, DramaCanvasComposerReferences, DramaCanvasComposerSources, DramaCanvasMediaGeneration, type CanvasGenerationReference, type CanvasMediaDraft } from './DramaCanvasMediaGeneration'
 import { DramaCanvasNodeToolbar, DramaCanvasToolDock, DramaCanvasViewTools, type DramaCanvasTool } from './DramaCanvasTools'
 import { DramaImageModelSelect, useDramaCanvas } from './DramaImageTools'
+import { DramaProjectTitle } from './DramaProjectTitle'
 import { DramaStylePicker } from './DramaStylePicker'
-import { arrangeCanvasNodes, canvasNodeSize, findCanvasNodePosition, revealCanvasNode } from './drama-canvas-geometry'
+import { arrangeCanvasNodes, canvasNodeSize, findCanvasNodePosition, findCanvasReferencePosition, revealCanvasNode } from './drama-canvas-geometry'
 import { useCanvasHistory } from './drama-canvas-history'
 import './drama-canvas.css'
 
@@ -27,33 +30,34 @@ const emptyExtras: CanvasExtras = { hidden: [], cards: [], links: [] }
 type ConnectionStart = { nodeId: string; type: 'source' | 'target'; handleId?: string | null }
 type CanvasMenu = { point: XYPosition; node?: CanvasNode; edge?: Edge; connection?: ConnectionStart; toolbar?: boolean }
 type CanvasSnapshot = { extras: CanvasExtras; formPositions: Map<string, XYPosition> }
-type InlineEdit = { id: string; kind: NodeKind; title: string; content: string } & (
+type InlineEditTarget = { id: string; kind: NodeKind; title: string; content: string } & (
   { mode: 'media' } | { mode: 'asset'; form: DramaAssetForm }
 )
+type InlineEdit = InlineEditTarget & { mentions: { link: DramaCanvasLink; title: string }[] }
+type AssetGenerationDraft = { prompt?: CanvasPromptPart[]; style?: { id: string; name: string }; ratio?: DramaAssetForm['aspectRatio'] }
+type ComposerUpload = { target: string } & ({ mode: 'reference' } | { mode: 'replace'; kind: DramaCanvasGenerationKind })
 type NodeEditorProps = ComponentProps<typeof DramaCanvasInlineEditor>
 const CanvasCardControls = createContext<{
-  activeAsset: string
+  savingId: string
   edit: (id: string) => void
-  imageSettings: (id: string) => void
   derive: (id: string) => void
   preview: (id: string) => void
   duplicate: (id: string) => void
   remove: (id: string) => void
 } | null>(null)
-const CanvasMedia = createContext<{
-  jobs: Map<string, DramaCanvasGenerationJob>
-  active?: { id: string; references: CanvasGenerationReference[]; submitting: boolean; error?: string }
-  open: (id: string) => void
-  close: () => void
-  edit: (id: string) => void
-  generate: (id: string, input: DramaCanvasGenerationInput) => void
-  adopt: (id: string, url: string) => void
-} | null>(null)
+const CanvasMedia = createContext<ReadonlyMap<string, DramaCanvasGenerationJob>>(new Map())
+const emptyMediaDraft: CanvasMediaDraft = { prompt: [], ratio: '16:9' }
+const imageUploadTypes = 'image/png,image/jpeg,image/gif,image/webp'
+const videoUploadTypes = 'video/mp4,video/webm'
 const kindNames = { character: '角色', scene: '图片', prop: '道具' }
 const kindIcons = { character: <UserOutlined />, scene: <PictureOutlined />, prop: <GiftOutlined /> }
 
 function assetFormLabel(form: DramaAssetForm) {
   return form.parentId ? `${form.assetName} · ${form.name}` : form.assetName
+}
+
+function canvasNodeTitle(node: CanvasNode) {
+  return node.type === 'asset' ? assetFormLabel(node.data.form) : node.data.title
 }
 
 function isGenerationKind(kind: NodeKind): kind is DramaCanvasGenerationKind {
@@ -96,17 +100,18 @@ function sameConnection(link: DramaCanvasLink, connection: Pick<Connection, 'sou
   return link.source === connection.source && link.target === connection.target
 }
 
+function newMentionLinks(links: DramaCanvasLink[], mentions: DramaCanvasLink[]) {
+  return mentions.filter((mention) => !links.some((link) => sameConnection(link, mention)))
+}
+
 function MediaCanvasNode({ id, data, selected }: NodeProps<MediaNode>) {
   const [failedURL, setFailedURL] = useState('')
   const controls = useContext(CanvasCardControls)
-  const generation = useContext(CanvasMedia)
-  const job = generation?.jobs.get(id)
+  const job = useContext(CanvasMedia).get(id)
   const content = data.content || job?.resultUrl || ''
   const failed = Boolean(content) && failedURL === content
-  const active = generation?.active?.id === id ? generation.active : undefined
   const canGenerate = isGenerationKind(data.kind)
-  const showGeneration = active && canGenerate
-  return <div className={`drama-canvas-node scene media ${data.kind}${selected ? ' selected' : ''}${showGeneration ? ' is-generating' : ''}`}>
+  return <div className={`drama-canvas-node scene media ${data.kind}${selected ? ' selected' : ''}`}>
     <div className="drama-canvas-node-caption"><span>{data.title === cardNames[data.kind] ? data.title : `${cardNames[data.kind]} · ${data.title}`}</span></div>
     <div className="drama-canvas-node-body">
       <Handle type="target" position={Position.Left} />
@@ -115,17 +120,17 @@ function MediaCanvasNode({ id, data, selected }: NodeProps<MediaNode>) {
       {!failed && content && data.kind === 'audio' && <audio className="nodrag nowheel" controls preload="metadata" src={content} aria-label={data.title} onError={() => setFailedURL(content)} />}
       {!failed && content && data.kind === 'image' && <div className="drama-canvas-node-image"><img src={content} alt={data.title} loading="lazy" onError={() => setFailedURL(content)} /></div>}
       {data.kind === 'text' && content && <div className="drama-canvas-text nodrag nowheel">{content}</div>}
-      {!content && !showGeneration && <div className={`drama-canvas-media-placeholder ${data.kind}`}>
+      {!content && <div className={`drama-canvas-media-placeholder ${data.kind}`}>
         {canGenerate && <PictureOutlined />}
-        <span>{job?.status === 'running' ? '后台生成中' : job?.status === 'failed' ? '生成失败' : data.kind === 'text' ? '还没有文本内容' : `暂无${cardNames[data.kind]}`}</span>
+        <span>{job?.status === 'running' ? '后台生成中' : job?.status === 'failed' ? '生成失败' : data.kind === 'text' ? '还没有文本内容'
+          : selected && canGenerate ? `上传或输入提示词生成${cardNames[data.kind]}` : `暂无${cardNames[data.kind]}`}</span>
       </div>}
-      {content && !showGeneration && (job?.status === 'running' || job?.status === 'failed' || (job?.resultUrl && job.resultUrl !== content)) &&
+      {content && (job?.status === 'running' || job?.status === 'failed' || (job?.resultUrl && job.resultUrl !== content)) &&
         <div className="drama-canvas-media-empty" role="status">{job.status === 'running' ? '后台生成中' : job.status === 'failed' ? '生成失败' : '生成结果待查看'}</div>}
-      {!showGeneration && controls && <div className="drama-canvas-card-actions nodrag" aria-label={`${data.title}操作`}>
-        <Button size="small" type="text" icon={<EditOutlined />} onClick={() => controls.edit(id)}>
+      {controls && <div className="drama-canvas-card-actions nodrag" aria-label={`${data.title}操作`}>
+        <Button size="small" type="text" icon={<EditOutlined />} disabled={controls.savingId === id} onClick={() => controls.edit(id)}>
           {data.kind === 'text' ? '编辑文本' : !content && data.kind === 'audio' ? '导入音频' : '编辑节点'}
         </Button>
-        {canGenerate && <Button size="small" type="text" className="drama-canvas-card-generate" icon={<PictureOutlined />} onClick={() => generation?.open(id)}>{job ? '查看生成' : 'AI 生成'}</Button>}
         <Dropdown trigger={['click']} menu={{ items: [
           ...(data.kind !== 'text' && content ? [{ key: 'preview', icon: <EyeOutlined />, label: '预览' }] : []),
           { key: 'copy', icon: <CopyOutlined />, label: '复制节点' }, { key: 'remove', icon: <DeleteOutlined />, label: '删除节点', danger: true },
@@ -133,10 +138,6 @@ function MediaCanvasNode({ id, data, selected }: NodeProps<MediaNode>) {
           <Button size="small" type="text" className="drama-canvas-card-more" icon={<EllipsisOutlined />} aria-label="更多节点操作" />
         </Dropdown>
       </div>}
-      {showGeneration && generation && active && isGenerationKind(data.kind) &&
-        <DramaCanvasMediaGeneration kind={data.kind} content={data.content} job={job} references={active.references} busy={active.submitting}
-          error={active.error} onGenerate={(input) => generation.generate(id, input)} onAdopt={(url) => generation.adopt(id, url)}
-          onImport={() => generation.edit(id)} onClose={generation.close} />}
       <Handle type="source" position={Position.Right} />
     </div>
   </div>
@@ -161,8 +162,7 @@ function AssetCanvasNode({ data, selected }: NodeProps<AssetNode>) {
         {f.imageError && <Tooltip title={f.imageError}><span className="drama-canvas-node-error">生成失败，可在生图设置中重试</span></Tooltip>}
       </div>
       {controls && <div className="drama-canvas-card-actions nodrag" aria-label={`${title}操作`}>
-        <Button type="text" size="small" icon={<EditOutlined />} disabled={busy(f)} onClick={() => controls.edit(f.id)}>{f.kind === 'scene' ? '编辑图片' : '编辑形象'}</Button>
-        <Button type="text" size="small" className="drama-canvas-card-generate" icon={<PictureOutlined />} aria-pressed={controls.activeAsset === f.id} onClick={() => controls.imageSettings(f.id)}>生图设置</Button>
+        <Button type="text" size="small" icon={<EditOutlined />} disabled={busy(f) || controls.savingId === f.id} onClick={() => controls.edit(f.id)}>{f.kind === 'scene' ? '编辑图片' : '编辑形象'}</Button>
         <Dropdown trigger={['click']} menu={{ items: [
           { key: 'derive', icon: <PlusOutlined />, label: f.kind === 'scene' ? '添加派生图片' : '添加派生形象' },
           { key: 'hide', icon: <DeleteOutlined />, label: f.kind === 'scene' ? '隐藏图片' : '隐藏形象', danger: true },
@@ -177,8 +177,12 @@ function AssetCanvasNode({ data, selected }: NodeProps<AssetNode>) {
 
 const nodeTypes = { asset: AssetCanvasNode, media: MediaCanvasNode }
 
-export function DramaAssetCanvas({ project }: { project: DramaProject }) { return <ReactFlowProvider><AssetCanvas key={project.id} project={project} /></ReactFlowProvider> }
-function AssetCanvas({ project }: { project: DramaProject }) {
+type AssetCanvasProps = { project: DramaProject; onRenameProject: (title: string) => Promise<void> }
+
+export function DramaAssetCanvas(props: AssetCanvasProps) {
+  return <ReactFlowProvider><AssetCanvas key={props.project.id} {...props} /></ReactFlowProvider>
+}
+function AssetCanvas({ project, onRenameProject }: AssetCanvasProps) {
   const [params, setParams] = useSearchParams()
   const query = useDramaCanvas(project.id)
   const cache = useQueryClient()
@@ -191,7 +195,6 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   const formPositions = useRef(new Map<string, XYPosition>())
   const history = useCanvasHistory<CanvasSnapshot>()
   const revealAfterAdd = useRef('')
-  const revealEditor = useRef('')
   const [tool, setTool] = useState<DramaCanvasTool>(() => window.matchMedia('(pointer: coarse)').matches ? 'pan' : 'select')
   const [spacePan, setSpacePan] = useState(false)
   const [showMinimap, setShowMinimap] = useState(() => window.innerWidth > 1050)
@@ -202,7 +205,9 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   const extrasKey = `drama-canvas-extras:${project.id}`
   const [extras, setExtras] = useState(emptyExtras)
   const extrasRef = useRef(emptyExtras)
-  const [mediaGeneratorId, setMediaGeneratorId] = useState('')
+  const [generationNodeId, setGenerationNodeId] = useState('')
+  const [mediaDrafts, setMediaDrafts] = useState<Record<string, CanvasMediaDraft>>({})
+  const [assetDrafts, setAssetDrafts] = useState<Record<string, AssetGenerationDraft>>({})
   const mediaSubmitting = useRef(new Set<string>())
   const [submittingMedia, setSubmittingMedia] = useState<Set<string>>(new Set())
   const [mediaErrors, setMediaErrors] = useState<Record<string, string>>({})
@@ -212,8 +217,8 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null)
   const inlineRef = useRef<InlineEdit | null>(null)
   const [inlineError, setInlineError] = useState('')
-  const [inlineSaving, setInlineSaving] = useState(false)
-  const inlineSavingRef = useRef(false)
+  const [savingEditorId, setSavingEditorId] = useState('')
+  const inlineSavingRef = useRef('')
   const [contextMenu, setContextMenu] = useState<CanvasMenu | null>(null)
   const [selectedId, setSelectedId] = useState('')
   const selectionURL = useRef('')
@@ -225,15 +230,15 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   const [uploading, setUploading] = useState(false)
   const uploadInProgress = useRef(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const composerFileInput = useRef<HTMLInputElement>(null)
+  const uploadIntent = useRef<ComposerUpload>(null)
+  const [composerUpload, setComposerUpload] = useState<ComposerUpload | null>(null)
+  const assetMention = useRef<DramaCanvasPromptHandle>(null)
   const addButton = useRef<HTMLButtonElement>(null)
   const filePickerPoint = useRef<XYPosition | undefined>(undefined)
   const [dragOver, setDragOver] = useState(false)
   const dragDepth = useRef(0)
   const shell = useRef<HTMLDivElement>(null)
-  const [prompt, setPrompt] = useState('')
-  const [generationForId, setGenerationForId] = useState('')
-  const [style, setStyle] = useState({ id: '', name: '' })
-  const [ratio, setRatio] = useState<DramaAssetForm['aspectRatio']>('9:16')
   const [saveStatus, setSaveStatus] = useState('加载中…')
   const [saveError, setSaveError] = useState('')
   const [conflict, setConflict] = useState(false)
@@ -254,6 +259,34 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     refetchInterval: (query) => query.state.data?.some((job) => job.status === 'running') ? 2500 : false,
   })
   const generationJobs = useMemo(() => new Map((generations.data ?? []).map((job) => [job.nodeId, job])), [generations.data])
+
+  const mentionOptions = useMemo<DramaCanvasMentionOption[]>(() => nodes.map((node) => {
+    const title = canvasNodeTitle(node)
+    if (node.type === 'asset') return { id: node.id, title, kind: node.data.form.kind, imageUrl: node.data.form.imageUrl }
+    const imageUrl = node.data.kind === 'image' ? node.data.content || generationJobs.get(node.id)?.resultUrl : undefined
+    return { id: node.id, title, kind: node.data.kind, imageUrl }
+  }), [nodes, generationJobs])
+
+  const referencesByNode = useMemo(() => {
+    const refs = new Map<string, CanvasGenerationReference>()
+    for (const node of nodes) {
+      const title = canvasNodeTitle(node)
+      if (node.type === 'asset' && node.data.form.imageUrl) {
+        refs.set(node.id, { id: node.id, title, kind: 'image', url: node.data.form.imageUrl })
+      } else if (node.type === 'media' && node.data.kind === 'text' && node.data.content.trim()) {
+        refs.set(node.id, { id: node.id, title, kind: 'text', content: node.data.content })
+      } else if (node.type === 'media' && node.data.kind === 'image') {
+        refs.set(node.id, { id: node.id, title, kind: 'image', url: node.data.content || generationJobs.get(node.id)?.resultUrl })
+      }
+    }
+    return refs
+  }, [nodes, generationJobs])
+
+  const generationMentionOptions = useMemo(() => mentionOptions.filter((option) => referencesByNode.has(option.id)), [mentionOptions, referencesByNode])
+  const incomingGenerationReferences = useCallback((target: string) => {
+    const sources = new Set(extras.links.filter((link) => link.target === target).map((link) => link.source))
+    return Array.from(sources).flatMap((id) => referencesByNode.get(id) ?? [])
+  }, [extras.links, referencesByNode])
 
   function snapshot(): CanvasSnapshot {
     return { extras: extrasRef.current, formPositions: new Map(formPositions.current) }
@@ -276,7 +309,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     const bounds = shell.current?.getBoundingClientRect()
     const width = bounds?.width ?? window.innerWidth
     const height = bounds?.height ?? window.innerHeight
-    return { x: 75, y: 112, width: Math.max(1, width - 100), height: Math.max(1, height - (generationForId ? 270 : 180)) }
+    return { x: 75, y: 112, width: Math.max(1, width - 100), height: Math.max(1, height - 180) }
   }
 
   function visibleCanvasArea() {
@@ -290,25 +323,46 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     fileInput.current?.click()
   }
 
-  function setEditor(next: InlineEdit | null) {
-    inlineRef.current = next
-    setInlineEdit(next)
+  function openComposerFilePicker(intent: ComposerUpload) {
+    const input = composerFileInput.current
+    if (!input || uploadInProgress.current || blocked.current) return
+    uploadIntent.current = intent
+    input.accept = intent.mode === 'replace' && intent.kind === 'video' ? videoUploadTypes : imageUploadTypes
+    input.click()
   }
 
-  function openEditor(next: InlineEdit) {
-    setContextMenu(null)
-    const current = inlineRef.current
-    if (current) {
-      if (current.id !== next.id) messageApi.info('请先保存或取消正在编辑的节点')
-      return
-    }
+  const setEditor = useCallback((next: InlineEdit | null) => {
+    inlineRef.current = next
+    setInlineEdit(next)
+  }, [])
+
+  const cancelEditor = useCallback(() => {
+    setEditor(null)
     setInlineError('')
-    setGenerationForId('')
-    setMediaGeneratorId('')
+  }, [setEditor])
+
+  const editorOpen = Boolean(inlineEdit)
+  useEffect(() => {
+    if (!editorOpen) return
+    const closeOutside = (event: Event) => {
+      const target = event.target
+      if (target instanceof Element && !target.closest('.drama-canvas-floating-panel, .drama-canvas-mention-picker, .drama-canvas-editor-select-popup')) cancelEditor()
+    }
+    document.addEventListener('click', closeOutside, true)
+    document.addEventListener('contextmenu', closeOutside, true)
+    return () => {
+      document.removeEventListener('click', closeOutside, true)
+      document.removeEventListener('contextmenu', closeOutside, true)
+    }
+  }, [cancelEditor, editorOpen])
+
+  function openEditor(next: InlineEditTarget) {
+    setContextMenu(null)
+    if (inlineRef.current?.id === next.id || inlineSavingRef.current === next.id) return
+    setInlineError('')
     setTool('select')
-    revealEditor.current = ''
     choose(next.id)
-    setEditor(next)
+    setEditor({ ...next, mentions: [] })
   }
 
   function startEditing(id: string) {
@@ -322,26 +376,48 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     }
   }
 
-  function cancelEditor() {
-    if (inlineSavingRef.current) return
-    revealEditor.current = ''
-    setEditor(null)
+  function mentionLink(target: string, source: string): DramaCanvasLink | undefined {
+    if (source === target || !nodesRef.current.some((node) => node.id === source)) return
+    const targetNode = nodesRef.current.find((node) => node.id === target)
+    if (!targetNode || (targetNode.type === 'asset' && targetNode.data.form.parentId === source)) return
+    const link = { id: crypto.randomUUID(), source, target }
+    if (!extrasRef.current.links.some((existing) => sameConnection(existing, link))) return link
   }
 
-  function openMediaGenerator(id: string) {
-    if (inlineRef.current) { messageApi.info('请先保存或取消正在编辑的节点'); return }
-    setTool('select')
-    choose(id)
-    setMediaGeneratorId(id)
-    revealEditor.current = id
+  function addInlineMention(source: string) {
+    const edit = inlineRef.current
+    const node = nodesRef.current.find((item) => item.id === source)
+    if (!edit || !node) return
+    const link = mentionLink(edit.id, source)
+    if (link && !edit.mentions.some((existing) => sameConnection(existing.link, link))) {
+      setEditor({ ...edit, mentions: [...edit.mentions, { link, title: canvasNodeTitle(node) }] })
+    }
   }
 
-  function openAssetGeneration(id: string) {
-    if (inlineRef.current) { messageApi.info('请先保存或取消正在编辑的节点'); return }
-    setTool('select')
-    choose(id)
-    setMediaGeneratorId('')
-    setGenerationForId(generationForId === id ? '' : id)
+  function updateInlineMentions(value: string) {
+    const edit = inlineRef.current
+    if (!edit?.mentions.length) return
+    const mentions = edit.mentions.filter(({ title }) => value.includes(`@${title}`))
+    if (mentions.length !== edit.mentions.length) setEditor({ ...edit, mentions })
+  }
+
+  function updateGenerationMentions(target: string, { added, removed }: CanvasPromptRefChanges) {
+    if (!added.length && !removed.length) return true
+    if (blocked.current) return false
+    const graph = extrasRef.current
+    const removedSources = new Set(removed)
+    const links = graph.links.filter((link) => link.target !== target || !removedSources.has(link.source))
+    const removedAny = links.length !== graph.links.length
+    const linkedSources = new Set(links.filter((link) => link.target === target).map((link) => link.source))
+    for (const source of added) {
+      if (linkedSources.has(source)) continue
+      const link = mentionLink(target, source)
+      if (!link) return false
+      links.push(link)
+      linkedSources.add(source)
+    }
+    if (removedAny || links.length !== graph.links.length) saveExtras({ ...graph, links })
+    return true
   }
 
   function previewCard(card: MediaCard) {
@@ -356,7 +432,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   }
 
   async function generateMedia(id: string, input: DramaCanvasGenerationInput) {
-    if (mediaSubmitting.current.has(id) || generationJobs.get(id)?.status === 'running') return
+    if (inlineSavingRef.current === id || mediaSubmitting.current.has(id) || generationJobs.get(id)?.status === 'running') return
     mediaSubmitting.current.add(id)
     setSubmittingMedia(new Set(mediaSubmitting.current))
     setMediaErrors((errors) => ({ ...errors, [id]: '' }))
@@ -416,8 +492,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     if (selectionURL.current === id) return
     selectionURL.current = id
     setSelectedId(id)
-    setGenerationForId('')
-    setMediaGeneratorId((current) => current === id ? current : '')
+    setGenerationNodeId((current) => current === id ? current : '')
     setParams((current) => {
       const next = new URLSearchParams(current)
       next.delete('focus')
@@ -440,8 +515,14 @@ function AssetCanvas({ project }: { project: DramaProject }) {
 
   function choose(id: string) { chooseNodes(id ? [id] : []) }
 
+  function selectCard(node: CanvasNode) {
+    choose(node.id)
+    if (node.type === 'asset' || isGenerationKind(node.data.kind)) setGenerationNodeId(node.id)
+  }
+
   function restoreHistory(direction: 'undo' | 'redo') {
-    if (inlineRef.current || working || uploadInProgress.current || nodesRef.current.some((node) => node.dragging) || blocked.current) return
+    if (working || inlineSavingRef.current || uploadInProgress.current || nodesRef.current.some((node) => node.dragging) || blocked.current) return
+    cancelEditor()
     const state = history[direction](snapshot())
     if (!state) return
     formPositions.current = new Map([...formPositions.current, ...state.formPositions])
@@ -451,9 +532,47 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     saveExtras(state.extras, false)
   }
 
-  const selected = nodes.some((node) => node.id === selectedId && node.selected) ? query.data?.forms.find((f) => f.id === selectedId) : undefined
-  const selectedRef = useRef(selected)
-  selectedRef.current = selected
+  const selectedNodes = nodes.filter((node) => node.selected)
+  const selectedNode = selectedNodes.length === 1 ? selectedNodes[0] : undefined
+  const activeGenerator = !inlineEdit && !selecting && selectedNode?.id === generationNodeId ? selectedNode : undefined
+  const activeGeneratorId = activeGenerator?.id
+  const selected = activeGenerator?.type === 'asset' ? activeGenerator.data.form : undefined
+  const activeMedia = activeGenerator?.type === 'media' ? activeGenerator.data : undefined
+  const assetDraft = selected ? assetDrafts[selected.id] : undefined
+  const style = assetDraft?.style ?? { id: selected?.styleId ?? '', name: selected?.style ?? '' }
+  const ratio = assetDraft?.ratio ?? selected?.aspectRatio ?? '9:16'
+
+  useEffect(() => {
+    const host = shell.current
+    if (!host || !activeGeneratorId) return
+    let observer: ResizeObserver | undefined
+    const frame = requestAnimationFrame(() => {
+      const panel = host.querySelector('.drama-canvas-composer-anchor')
+      const card = host.querySelector(`.react-flow__node[data-id="${CSS.escape(activeGeneratorId)}"]`)
+      const upload = host.querySelector('.drama-canvas-replace-anchor')
+      if (!panel || !card) return
+      observer = new ResizeObserver(() => {
+        const bounds = host.getBoundingClientRect()
+        const composer = panel.getBoundingClientRect()
+        const node = card.getBoundingClientRect()
+        const top = upload?.getBoundingClientRect().top ?? node.top
+        const gutter = bounds.width > 760 ? 70 : 12
+        const dx = Math.max(bounds.left + gutter - composer.left, Math.min(0, bounds.right - 12 - composer.right))
+        const dy = Math.min(Math.max(0, bounds.top + 72 - top), Math.max(0, bounds.bottom - 62 - composer.bottom))
+          + Math.min(0, bounds.bottom - 62 - composer.bottom)
+        if (dx || dy) {
+          const current = flow.getViewport()
+          void flow.setViewport({ ...current, x: current.x + dx, y: current.y + dy })
+        }
+      })
+      observer.observe(panel)
+    })
+    return () => { cancelAnimationFrame(frame); observer?.disconnect() }
+  }, [activeGeneratorId, flow])
+
+  function updateAssetDraft(id: string, patch: AssetGenerationDraft) {
+    setAssetDrafts((drafts) => ({ ...drafts, [id]: { ...drafts[id], ...patch } }))
+  }
   const drain = useCallback(async () => {
     if (saving.current) return saving.current
     if (blocked.current || topologyChanging.current) return
@@ -537,7 +656,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       void drain()
     }
   }
-  async function saveInlineCard(id: string, kind: CardKind, input: DramaCanvasInlineInput) {
+  async function saveInlineCard(id: string, kind: CardKind, input: DramaCanvasInlineInput, mentions: DramaCanvasLink[]) {
     let content = input.content
     if (input.file) {
       if (uploadInProgress.current) throw new Error('请等本次素材上传完成')
@@ -552,31 +671,52 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     }
     const graph = extrasRef.current
     if (!graph.cards.some((card) => card.id === id)) throw new Error('当前节点已经移除')
-    saveExtras({ ...graph, cards: graph.cards.map((card) => card.id === id ? { ...card, title: input.title, content } : card) })
+    saveExtras({ ...graph, cards: graph.cards.map((card) => card.id === id ? { ...card, title: input.title, content } : card),
+      links: [...graph.links, ...newMentionLinks(graph.links, mentions)] })
   }
 
   async function saveInline(input: DramaCanvasInlineInput) {
     const edit = inlineRef.current
     if (!edit || inlineSavingRef.current) return
-    inlineSavingRef.current = true
-    setInlineSaving(true)
+    inlineSavingRef.current = edit.id
+    setSavingEditorId(edit.id)
     setInlineError('')
+    let ownsTopology = false
     try {
+      const mentions = edit.mentions.map(({ link }) => link)
       if (edit.mode === 'asset') {
-        await editDramaForm(project.id, { ...edit.form, name: input.title, description: input.content })
+        const updated = { ...edit.form, name: input.title, description: input.content }
+        if (mentions.length) {
+          await flush()
+          if (topologyChanging.current || pending.current) throw new Error('请等画布保存后重试')
+          const canvasRevision = revision.current
+          topologyChanging.current = ownsTopology = true
+          await editDramaForm(project.id, updated, { canvasRevision, mentionLinks: mentions })
+          revision.current = canvasRevision + 1
+          history.push(snapshot())
+          extrasStored.current = true
+          const graph = extrasRef.current
+          extrasRef.current = { ...graph, links: [...graph.links, ...newMentionLinks(graph.links, mentions)] }
+          setExtras(extrasRef.current)
+          if (pending.current) schedule()
+        } else {
+          await editDramaForm(project.id, updated)
+        }
         await query.refetch()
       } else {
         const node = nodesRef.current.find((item) => item.id === edit.id)
         if (node?.type !== 'media') throw new Error('当前节点已经移除')
-        await saveInlineCard(edit.id, node.data.kind, input)
+        await saveInlineCard(edit.id, node.data.kind, input, mentions)
       }
-      setEditor(null)
-      choose(edit.id)
+      if (inlineRef.current === edit) cancelEditor()
     } catch (error) {
-      setInlineError(error instanceof Error ? error.message : '节点保存失败，请重试')
+      const detail = error instanceof Error ? error.message : '节点保存失败，请重试'
+      if (inlineRef.current === edit) setInlineError(detail)
+      else messageApi.error(detail)
     } finally {
-      inlineSavingRef.current = false
-      setInlineSaving(false)
+      if (ownsTopology) { topologyChanging.current = false; void drain() }
+      inlineSavingRef.current = ''
+      setSavingEditorId('')
     }
   }
   useEffect(() => {
@@ -621,7 +761,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     for (const id of visible) selectWhenAdded.current.delete(id)
     if (selectedId && !visible.has(selectedId) && !selectWhenAdded.current.has(selectedId)) rememberSelection('')
     const editor = inlineRef.current
-    if (editor && !visible.has(editor.id) && !inlineSavingRef.current) cancelEditor()
+    if (editor && !visible.has(editor.id)) cancelEditor()
     const validLinks = new Set(graph.links.filter((link) => visible.has(link.source) && visible.has(link.target)).map((link) => link.id))
     setSelectedLinks((current) => {
       const kept = [...current].filter((id) => validLinks.has(id))
@@ -644,25 +784,6 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow, measured, nodes])
   useEffect(() => {
-    const active = mediaGeneratorId
-    if (!active || revealEditor.current !== active) return
-    const node = flow.getNode(active)
-    const element = shell.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(active)}"]`)
-    if (!node || !element?.offsetWidth || !element.offsetHeight) return
-    revealEditor.current = ''
-    const { position } = node
-    const { offsetWidth: width, offsetHeight: height } = element
-    const current = flow.getViewport()
-    const area = viewSafeArea()
-    const zoom = Math.max(current.zoom, Math.min(0.9, area.width / width))
-    const readable = zoom === current.zoom ? current : {
-      x: current.x + position.x * (current.zoom - zoom), y: current.y + position.y * (current.zoom - zoom), zoom,
-    }
-    const next = revealCanvasNode({ ...position, width, height }, readable, area)
-    if (next !== current) void flow.setViewport(next, { duration: 180 })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flow, mediaGeneratorId, measured, nodes])
-  useEffect(() => {
     if (initialized.current || !query.data || (!measured && (query.data.forms.some((form) => !extras.hidden.includes(form.id)) || extras.cards.length))) return
     initialized.current = true
     const focus = params.get('focus')
@@ -671,9 +792,8 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     if (target) { choose(target.id); void flow.fitView({ nodes: [{ id: target.id }], maxZoom: 0.85, padding: 0.5 }) }
     else { if (restored) choose(restored.id); void flow.setViewport(viewport.current) }
   }, [measured, flow, params, query.data, nodes, extras.hidden, extras.cards.length])
-  useEffect(() => { setPrompt(selected?.description || ''); setStyle({ id: selected?.styleId || '', name: selected?.style || '' }); setRatio(selected?.aspectRatio || '9:16') }, [selectedId, selected?.revision])
   useEffect(() => {
-    function beforeUnload(event: BeforeUnloadEvent) { if (pending.current || saving.current || uploadInProgress.current || inlineRef.current) { event.preventDefault(); event.returnValue = '' } }
+    function beforeUnload(event: BeforeUnloadEvent) { if (pending.current || saving.current || uploadInProgress.current || inlineSavingRef.current) { event.preventDefault(); event.returnValue = '' } }
     window.addEventListener('beforeunload', beforeUnload)
     return () => { window.removeEventListener('beforeunload', beforeUnload); clearTimeout(timer.current); void drain() }
   }, [drain])
@@ -688,25 +808,31 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       return { ...link, selected: selectedLinks.has(link.id), className: reference ? 'drama-canvas-reference' : undefined,
         label: reference ? '描述参考' : selectedLinks.has(link.id) ? '素材关联' : undefined }
     })
-    return [...lineage, ...links].filter((edge) => visible.has(edge.source) && visible.has(edge.target))
-  }, [nodes, query.data, extras.links, selectedLinks])
+    const previews = newMentionLinks(extras.links, inlineEdit?.mentions.map(({ link }) => link) ?? []).map((link): Edge => ({
+      ...link, className: 'drama-canvas-mention-preview', selectable: false, deletable: false, reconnectable: false,
+    }))
+    return [...lineage, ...links, ...previews].filter((edge) => visible.has(edge.source) && visible.has(edge.target))
+  }, [nodes, query.data, extras.links, selectedLinks, inlineEdit?.mentions])
 
-  const selectedNodes = nodes.filter((node) => node.selected)
-  const connectedText = selected ? extras.links.flatMap((link) => {
-    if (link.target !== selected.id) return []
-    const card = extras.cards.find((item) => item.id === link.source && item.kind === 'text' && item.content.trim())
-    return card ? [card] : []
-  }) : []
-  const generationPrompt = [prompt.trim(), ...connectedText.map((card) => `参考文案「${card.title}」\n${card.content}`)].filter(Boolean).join('\n\n')
+  const assetGenerationReferences = selected ? incomingGenerationReferences(selected.id) : []
+  const assetLinkedIds = assetGenerationReferences.map((ref) => ref.id)
+  const assetMentionOptions = selected ? generationMentionOptions.filter((option) =>
+    option.id !== selected.id && (option.id !== selected.parentId || assetLinkedIds.includes(option.id))) : []
+  const assetPrompt = canvasPromptParts(assetDraft?.prompt ?? (selected?.description ? [selected.description] : []), assetLinkedIds)
+  const assetPromptText = assetPrompt.some((part) => typeof part === 'string' && part.trim()) ? canvasPromptText(assetPrompt, assetMentionOptions).trim() : ''
+  const connectedText = assetGenerationReferences.filter((ref) => ref.kind === 'text')
+  const connectedImages = assetGenerationReferences.filter((ref) => ref.kind === 'image')
+  const imagePending = connectedImages.some((ref) => !ref.url)
+  const generationPrompt = [assetPromptText, ...connectedText.map((card) => `参考文案「${card.title}」\n${card.content}`)].filter(Boolean).join('\n\n')
   const generationSource = selected?.parentId ? selected.kind === 'scene' ? '使用原始图片作为参考图' : '使用原始形象作为参考图' : ''
 
   function removeNodes(removed: CanvasNode[], linkIds = new Set<string>()) {
     if (!removed.length && !linkIds.size) return
-    const edit = inlineRef.current
-    if (removed.some((node) => node.id === edit?.id)) {
-      messageApi.info('请先保存或取消正在编辑的节点')
+    if (removed.some((node) => node.id === inlineSavingRef.current)) {
+      messageApi.info('节点正在保存，保存完成后可移除')
       return
     }
+    if (removed.some((node) => node.id === inlineRef.current?.id)) cancelEditor()
     const remove = () => {
       const current = extrasRef.current
       const cards = new Set(removed.filter((node) => node.type === 'media').map((node) => node.id))
@@ -811,6 +937,44 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     }
   }
 
+  async function uploadComposerFile(intent: ComposerUpload, file: File) {
+    if (!revision.current || uploadInProgress.current || blocked.current) return
+    const kind = intent.mode === 'replace' ? intent.kind : 'image'
+    const allowed = kind === 'video' ? videoUploadTypes : imageUploadTypes
+    if (!allowed.split(',').includes(file.type)) {
+      messageApi.warning(kind === 'image' ? '请选择 PNG、JPEG、GIF 或 WebP 图片' : '请选择 MP4 或 WebM 视频')
+      return
+    }
+    uploadInProgress.current = true
+    setComposerUpload(intent)
+    try {
+      const media = await uploadDramaCanvasMedia(project.id, file)
+      if (media.kind !== kind) throw new Error('文件格式与当前上传入口不匹配')
+      if (blocked.current) throw new Error('画布有更新，请重新加载后再上传')
+      const graph = extrasRef.current
+      const target = nodesRef.current.find((node) => node.id === intent.target)
+      if (!target || graph.hidden.includes(intent.target)) throw new Error('目标卡片已移除')
+      if (intent.mode === 'replace') {
+        if (!graph.cards.some((card) => card.id === intent.target && card.kind === kind)) throw new Error('目标卡片已移除')
+        saveExtras({ ...graph, cards: graph.cards.map((card) => card.id === intent.target ? { ...card, content: media.url } : card) })
+        messageApi.success(kind === 'image' ? '已替换当前图片' : '已替换当前视频')
+      } else {
+        if (target.type === 'media' && !graph.cards.some((card) => card.id === intent.target)) throw new Error('目标卡片已移除')
+        const position = findCanvasReferencePosition(nodeGeometry(target), canvasNodeSize('image'), nodesRef.current.map(nodeGeometry))
+        const title = Array.from(file.name.replace(/\.[^.]+$/, '').trim()).slice(0, 80).join('') || '参考图'
+        const card: MediaCard = { id: crypto.randomUUID(), kind: 'image', content: media.url, title, position }
+        const link: DramaCanvasLink = { id: crypto.randomUUID(), source: card.id, target: target.id }
+        saveExtras({ ...graph, cards: [...graph.cards, card], links: [...graph.links, link] })
+        messageApi.success('已添加参考图并连线')
+      }
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : '素材上传失败')
+    } finally {
+      uploadInProgress.current = false
+      setComposerUpload(null)
+    }
+  }
+
   const pasteFiles = useRef<(files: File[]) => void>(() => {})
   pasteFiles.current = (files) => { if (!inlineRef.current && !preview && !mediaPreview) void importFiles(files) }
   useEffect(() => {
@@ -837,19 +1001,22 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     if (uploadInProgress.current) { messageApi.info('素材正在上传，请稍后返回'); return }
     if (topologyChanging.current) { messageApi.info('画布正在添加形象，请稍后返回'); return }
     if (inlineSavingRef.current) { messageApi.info('节点正在保存，请稍后返回'); return }
-    if (inlineRef.current && !window.confirm('当前节点尚未保存，确定返回吗？')) return
+    cancelEditor()
     try { await flush(); setParams((current) => { const next = new URLSearchParams(current); next.delete('canvas'); next.delete('focus'); next.delete('selected'); return next }) }
     catch (error) { messageApi.error(error instanceof Error ? error.message : '保存失败') }
   }
   async function generate() {
-    const current = selectedRef.current
-    if (!current || working || busy(current) || !generationPrompt) return
+    const current = selected
+    if (!current || inlineSavingRef.current === current.id || working || busy(current) || imagePending || (!generationPrompt && !connectedImages.length)) return
     if (Array.from(generationPrompt).length > 10000) { messageApi.warning('生成描述与连接的文案合计最多 10000 字'); return }
     setWorking(true)
     try {
       await flush()
       if ((current.styleId || current.style) !== (style.id || style.name) || current.aspectRatio !== ratio) await editDramaForm(project.id, { ...current, name: current.parentId ? current.name : current.assetName, styleId: style.id, style: style.name, aspectRatio: ratio })
-      await generateDramaImage(project.id, current.id, generationPrompt); await query.refetch(); messageApi.success('图片生成任务已开始，可以继续操作画布')
+      if (pending.current) await flush()
+      await generateDramaImage(project.id, current.id, generationPrompt, revision.current)
+      await query.refetch()
+      messageApi.success('图片生成任务已开始，可以继续操作画布')
     } catch (error) { await query.refetch(); messageApi.error(error instanceof Error ? error.message : '图片生成失败') } finally { setWorking(false) }
   }
   function fitNodes(ids?: string[]) {
@@ -915,7 +1082,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
       openFilePicker(point)
       return
     }
-    if (inlineRef.current) { messageApi.info('请先保存或取消正在编辑的节点'); return }
+    cancelEditor()
     const anchor = flow.screenToFlowPosition(point ?? canvasCenter())
     const position = findCanvasNodePosition(anchor, canvasNodeSize(kind), nodesRef.current.map(nodeGeometry), point ? undefined : visibleCanvasArea())
     if (kind === 'character' || kind === 'prop') {
@@ -935,64 +1102,44 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     if (current?.mode === 'asset') setEditor({ ...current, form: { ...current.form, ...update } })
   }
 
-  const editorActions = useRef({ save: saveInline, cancel: cancelEditor, options: updateAssetOptions })
-  editorActions.current = { save: saveInline, cancel: cancelEditor, options: updateAssetOptions }
+  const editorActions = useRef({ save: saveInline, cancel: cancelEditor, options: updateAssetOptions, mention: addInlineMention, mentionText: updateInlineMentions })
+  editorActions.current = { save: saveInline, cancel: cancelEditor, options: updateAssetOptions, mention: addInlineMention, mentionText: updateInlineMentions }
   const editId = inlineEdit?.id
   const editKind = inlineEdit?.kind
   const editTitle = inlineEdit?.title
   const editContent = inlineEdit?.content
   const formOptions = inlineEdit?.mode === 'asset' ? inlineEdit.form : undefined
+  const savingThisEditor = savingEditorId === editId
   const editor = useMemo((): NodeEditorProps | null => {
     if (!editKind) return null
     const props: NodeEditorProps = { kind: editKind, title: editTitle ?? '', content: editContent ?? '',
-      saving: inlineSaving, error: inlineError, onSave: (input) => void editorActions.current.save(input), onCancel: () => editorActions.current.cancel() }
+      mentionOptions: mentionOptions.filter((option) => option.id !== editId),
+      onMention: (source) => editorActions.current.mention(source), onMentionTextChange: (value) => editorActions.current.mentionText(value),
+      saving: savingThisEditor, saveDisabled: Boolean(savingEditorId), error: inlineError,
+      onSave: (input) => void editorActions.current.save(input), onCancel: () => editorActions.current.cancel() }
     if (!formOptions) return props
     const label = kindNames[formOptions.kind]
     props.heading = formOptions.kind === 'scene' ? '编辑图片' : '编辑形象'
     props.titleLabel = formOptions.parentId && formOptions.kind !== 'scene' ? '形象名称' : `${label}名称`
     if (formOptions.kind === 'scene') props.descriptionLabel = '图片描述'
     if (formOptions.kind === 'character') props.children = <label className="drama-canvas-inline-field">性别
-      <Select size="small" aria-label="性别" disabled={inlineSaving} value={formOptions.gender}
+      <Select size="small" aria-label="性别" disabled={savingThisEditor} value={formOptions.gender}
+        classNames={{ popup: { root: 'drama-canvas-editor-select-popup' } }}
         onChange={(gender) => editorActions.current.options({ gender })}
         options={[{ value: 'unspecified', label: '未指定' }, { value: 'male', label: '男' }, { value: 'female', label: '女' }, { value: 'other', label: '其他' }]} />
     </label>
     return props
-  }, [editKind, editTitle, editContent, formOptions, inlineError, inlineSaving])
+  }, [editId, editKind, editTitle, editContent, formOptions, inlineError, savingEditorId, savingThisEditor, mentionOptions])
   const editingNode = editId ? nodes.find((node) => node.id === editId) : undefined
 
-  const activeMediaReferences = useMemo(() => {
-    if (!mediaGeneratorId) return []
-    const cards = new Map(extras.cards.map((card) => [card.id, card]))
-    const forms = new Map((query.data?.forms ?? []).filter((form) => !extras.hidden.includes(form.id)).map((form) => [form.id, form]))
-    const seen = new Set<string>()
-    return extras.links.flatMap((link): CanvasGenerationReference[] => {
-      if (link.target !== mediaGeneratorId || seen.has(link.source)) return []
-      seen.add(link.source)
-      const card = cards.get(link.source)
-      if (card?.kind === 'text' && card.content.trim()) return [{ id: card.id, title: card.title, kind: 'text', content: card.content }]
-      if (card?.kind === 'image') return [{ id: card.id, title: card.title, kind: 'image', url: card.content || generationJobs.get(card.id)?.resultUrl }]
-      const form = forms.get(link.source)
-      return form?.imageUrl ? [{ id: form.id, title: assetFormLabel(form), kind: 'image', url: form.imageUrl }] : []
-    })
-  }, [extras, generationJobs, mediaGeneratorId, query.data?.forms])
-  const mediaActions = useRef({ open: openMediaGenerator, edit: startEditing, generate: generateMedia, adopt: adoptMediaResult })
-  mediaActions.current = { open: openMediaGenerator, edit: startEditing, generate: generateMedia, adopt: adoptMediaResult }
-  const mediaContext = useMemo(() => ({
-    jobs: generationJobs,
-    active: mediaGeneratorId ? { id: mediaGeneratorId, references: activeMediaReferences, submitting: submittingMedia.has(mediaGeneratorId), error: mediaErrors[mediaGeneratorId] } : undefined,
-    open: (id: string) => mediaActions.current.open(id), edit: (id: string) => mediaActions.current.edit(id),
-    close: () => setMediaGeneratorId(''), generate: (id: string, input: DramaCanvasGenerationInput) => void mediaActions.current.generate(id, input),
-    adopt: (id: string, url: string) => mediaActions.current.adopt(id, url),
-  }), [activeMediaReferences, generationJobs, mediaErrors, mediaGeneratorId, submittingMedia])
-
-  const cardActions = useRef({ edit: startEditing, imageSettings: openAssetGeneration, derive, preview: previewNode, duplicate: duplicateNode, remove: removeNode })
-  cardActions.current = { edit: startEditing, imageSettings: openAssetGeneration, derive, preview: previewNode, duplicate: duplicateNode, remove: removeNode }
+  const cardActions = useRef({ edit: startEditing, derive, preview: previewNode, duplicate: duplicateNode, remove: removeNode })
+  cardActions.current = { edit: startEditing, derive, preview: previewNode, duplicate: duplicateNode, remove: removeNode }
   const cardControls = useMemo(() => ({
-    activeAsset: generationForId,
-    edit: (id: string) => cardActions.current.edit(id), imageSettings: (id: string) => cardActions.current.imageSettings(id),
+    savingId: savingEditorId,
+    edit: (id: string) => cardActions.current.edit(id),
     derive: (id: string) => void cardActions.current.derive(id), preview: (id: string) => cardActions.current.preview(id),
     duplicate: (id: string) => cardActions.current.duplicate(id), remove: (id: string) => cardActions.current.remove(id),
-  }), [generationForId])
+  }), [savingEditorId])
 
   function previewNode(id: string) {
     const node = nodesRef.current.find((item) => item.id === id)
@@ -1011,7 +1158,7 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   }
 
   const modalOpen = Boolean(preview || mediaPreview || modelSettingsOpen)
-  const historyDisabled = Boolean(inlineEdit) || working || uploading || !!saveError || nodes.some((node) => node.dragging)
+  const historyDisabled = Boolean(savingEditorId) || working || uploading || !!saveError || nodes.some((node) => node.dragging)
   const keyboard = useRef<(event: KeyboardEvent) => void>(() => {})
   keyboard.current = (event) => {
     if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || modalOpen) return
@@ -1020,6 +1167,8 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     if (event.key === 'Escape') {
       if (searchOpen) setSearchOpen(false)
       else if (contextMenu) setContextMenu(null)
+      else if (inlineRef.current) cancelEditor()
+      else if (generationNodeId) setGenerationNodeId('')
       else choose('')
       return
     }
@@ -1071,6 +1220,16 @@ function AssetCanvas({ project }: { project: DramaProject }) {
   </div>
 
   return <div className="drama-canvas-shell" ref={shell}
+    onKeyDown={(event) => {
+      const target = event.target
+      if (isPanning || (event.key !== 'Enter' && event.key !== ' ') || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey ||
+        !(target instanceof HTMLElement) || !target.classList.contains('react-flow__node')) return
+      const node = nodesRef.current.find((item) => item.id === target.dataset.id)
+      if (!node) return
+      event.preventDefault()
+      cancelEditor()
+      selectCard(node)
+    }}
     onDoubleClick={(event) => {
       if (!isPanning && event.target instanceof Element && event.target.classList.contains('react-flow__pane')) {
         setContextMenu({ point: { x: event.clientX, y: event.clientY } })
@@ -1092,9 +1251,17 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     {holder}{modalHolder}
     <input ref={fileInput} type="file" multiple hidden accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,audio/mpeg,audio/wav,audio/ogg,.mp3,.wav,.ogg"
       onChange={(event) => { void importFiles(Array.from(event.target.files ?? []), filePickerPoint.current); event.target.value = '' }} />
+    <input ref={composerFileInput} type="file" hidden onChange={(event) => {
+      const intent = uploadIntent.current
+      const file = event.target.files?.[0]
+      uploadIntent.current = null
+      event.target.value = ''
+      if (intent && file) void uploadComposerFile(intent, file)
+    }} />
     <header className="drama-canvas-header">
       <div><Button icon={<ArrowLeftOutlined />} type="text" onClick={() => void leave()} aria-label="返回资产列表" />
-        <strong>{project.title}</strong><span className={saveError ? 'save-error' : ''} role="status">{saveStatus}</span></div>
+        <DramaProjectTitle title={project.title} compact onRename={onRenameProject} />
+        <span className={saveError ? 'save-error' : ''} role="status">{saveStatus}</span></div>
       <div><div className="drama-canvas-wide-action"><DramaImageModelSelect /></div>
         <Button ref={addButton} icon={<PlusOutlined />} loading={uploading} disabled={!query.data || working} aria-expanded={!!contextMenu?.toolbar}
           onClick={(event) => {
@@ -1118,15 +1285,20 @@ function AssetCanvas({ project }: { project: DramaProject }) {
     {query.error && query.data && !saveError && <Alert className="drama-canvas-save-alert" type="warning" showIcon title="暂时无法刷新资产状态"
       action={<Button size="small" onClick={() => void query.refetch()}>重试</Button>} />}
     {!query.data ? <div className="drama-canvas-loading">{query.error ? <Alert type="error" title="读取画布失败" description={query.error.message} action={<Button onClick={() => void query.refetch()}>重试</Button>} /> : <Skeleton active />}</div> : <>
-      <CanvasMedia.Provider value={mediaContext}><CanvasCardControls.Provider value={cardControls}>
+      <CanvasMedia.Provider value={generationJobs}><CanvasCardControls.Provider value={cardControls}>
       <ReactFlow<CanvasNode> className={`drama-canvas-flow${isPanning ? ' is-panning' : ''}`} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes}
-        onNodeClick={() => setContextMenu(null)} onPaneClick={() => {
+        onNodeClick={(event, node) => {
+          setContextMenu(null)
+          if (isPanning || event.ctrlKey || event.metaKey || event.shiftKey || selectingRef.current ||
+            (event.target instanceof Element && event.target.closest('button, input, textarea, audio, video, .react-flow__handle'))) return
+          selectCard(node)
+        }} onPaneClick={() => {
           if (isPanning) return
           choose('')
           setContextMenu(null)
         }}
         onNodeDoubleClick={(event, node) => {
-          if (event.target instanceof Element && event.target.closest('video,audio,button,input,textarea,.drama-canvas-media-generation')) return
+          if (event.target instanceof Element && event.target.closest('video,audio,button,input,textarea')) return
           startEditing(node.id)
         }}
         onPaneContextMenu={(event) => {
@@ -1134,7 +1306,6 @@ function AssetCanvas({ project }: { project: DramaProject }) {
           setContextMenu({ point: { x: event.clientX, y: event.clientY } })
         }}
         onNodeContextMenu={(event, node) => {
-          if (event.target instanceof Element && event.target.closest('.drama-canvas-media-generation')) return
           event.preventDefault()
           choose(node.id)
           setContextMenu({ point: { x: event.clientX, y: event.clientY }, node })
@@ -1180,6 +1351,59 @@ function AssetCanvas({ project }: { project: DramaProject }) {
           <DramaCanvasNodeToolbar nodes={selectedNodes}>{selectionTools}</DramaCanvasNodeToolbar>}
       </ReactFlow>
       </CanvasCardControls.Provider></CanvasMedia.Provider>
+        {activeGenerator && activeMedia && isGenerationKind(activeMedia.kind) && <>
+          <DramaCanvasComposerAnchor node={nodeGeometry(activeGenerator)} above>
+            <Button icon={<UploadOutlined />} size="small" loading={composerUpload?.target === activeMedia.id && composerUpload.mode === 'replace'}
+              disabled={uploading || !!composerUpload || generationJobs.get(activeMedia.id)?.status === 'running' || submittingMedia.has(activeMedia.id) || !!saveError}
+              onClick={() => {
+                if (isGenerationKind(activeMedia.kind)) openComposerFilePicker({ target: activeMedia.id, mode: 'replace', kind: activeMedia.kind })
+              }}>本地上传</Button>
+          </DramaCanvasComposerAnchor>
+          <DramaCanvasComposerAnchor node={nodeGeometry(activeGenerator)}>
+            <DramaCanvasMediaGeneration key={activeMedia.id} kind={activeMedia.kind} content={activeMedia.content}
+              draft={mediaDrafts[activeMedia.id] ?? { ...emptyMediaDraft, ratio: project.aspectRatio }}
+              defaultStyleId={project.styleId}
+              onDraftChange={(patch) => setMediaDrafts((drafts) => ({
+                ...drafts, [activeMedia.id]: { ...(drafts[activeMedia.id] ?? { ...emptyMediaDraft, ratio: project.aspectRatio }), ...patch },
+              }))}
+              job={generationJobs.get(activeMedia.id)} references={incomingGenerationReferences(activeMedia.id)} busy={submittingMedia.has(activeMedia.id)}
+              saving={savingEditorId === activeMedia.id || uploading || !!saveError || (composerUpload?.mode === 'replace' && composerUpload.target === activeMedia.id)}
+              uploading={composerUpload?.target === activeMedia.id && composerUpload.mode === 'reference'}
+              mentionOptions={generationMentionOptions.filter((option) => option.id !== activeMedia.id)}
+              onReferenceChange={(changes) => updateGenerationMentions(activeMedia.id, changes)}
+              error={mediaErrors[activeMedia.id]} onGenerate={(input) => void generateMedia(activeMedia.id, input)} onAdopt={(url) => adoptMediaResult(activeMedia.id, url)}
+              onUploadReference={() => openComposerFilePicker({ target: activeMedia.id, mode: 'reference' })} onClose={() => setGenerationNodeId('')} />
+          </DramaCanvasComposerAnchor>
+        </>}
+        {activeGenerator && selected && <DramaCanvasComposerAnchor node={nodeGeometry(activeGenerator)}>
+          <section className="drama-canvas-media-generation" aria-label="生图设置">
+            <Button className="drama-canvas-composer-close" type="text" size="small" icon={<CloseOutlined />} aria-label="收起生成设置" onClick={() => setGenerationNodeId('')} />
+            <div className="drama-canvas-composer-prompt">
+              <DramaCanvasComposerReferences references={assetGenerationReferences} />
+              <DramaCanvasPromptEditor key={selected.id} ariaLabel="本次生成描述" value={assetPrompt}
+                placeholder={selected.kind === 'scene' ? '描述想生成的图片，输入 @ 引用素材' : '描述想生成的形象，输入 @ 引用素材'}
+                maxLength={10000} disabled={working || busy(selected)} options={assetMentionOptions}
+                editorRef={assetMention} linkedIds={assetLinkedIds} onChange={(value, changes) => {
+                  if (!updateGenerationMentions(selected.id, changes)) return false
+                  updateAssetDraft(selected.id, { prompt: value })
+                }} />
+            </div>
+            <footer className="drama-canvas-composer-toolbar">
+              <DramaCanvasComposerSources disabled={working || busy(selected) || uploading || !!saveError}
+                uploading={composerUpload?.target === selected.id && composerUpload.mode === 'reference'}
+                onUpload={() => openComposerFilePicker({ target: selected.id, mode: 'reference' })} onMention={() => assetMention.current?.open()} />
+              <DramaStylePicker value={style.id || style.name} valueLabel={style.name} onChange={(value) => updateAssetDraft(selected.id, { style: { id: value.id, name: value.name } })} disabled={busy(selected)} />
+              <DramaImageModelSelect compact disabled={working || busy(selected)} />
+              <Select className="drama-canvas-composer-size" size="small" aria-label="生成比例" value={ratio} onChange={(value) => updateAssetDraft(selected.id, { ratio: value })} disabled={busy(selected)}
+                options={[{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }, { value: '1:1', label: '方图 1:1' }]} />
+              <Button className="drama-canvas-composer-generate" size="small" type="primary" icon={<ThunderboltOutlined />} loading={working || busy(selected)}
+                disabled={savingEditorId === selected.id || !!composerUpload || imagePending || (!generationPrompt && !connectedImages.length) || !!saveError}
+                onClick={() => void generate()}>{selected.imageUrl ? '重新生成图片' : '生成图片'}</Button>
+            </footer>
+            {(imagePending || generationSource) && <p className="drama-canvas-media-hint">{imagePending ? '参考图尚未就绪' : generationSource}</p>}
+            {selected.imageError && <p className="drama-canvas-media-failure" role="alert">{selected.imageError}</p>}
+          </section>
+        </DramaCanvasComposerAnchor>}
       {editingNode && editor && <DramaCanvasFloatingPanel key={editingNode.id} node={nodeGeometry(editingNode)} shell={shell}>
         <DramaCanvasInlineEditor {...editor} />
       </DramaCanvasFloatingPanel>}
@@ -1195,12 +1419,6 @@ function AssetCanvas({ project }: { project: DramaProject }) {
         onMinimap={() => setShowMinimap((shown) => !shown)} onFit={() => fitNodes()} onFocusSelection={() => fitNodes(selectedNodes.map((node) => node.id))} />
       {!nodes.length && <div className="drama-canvas-empty"><Empty description="添加节点、拖入文件或右键空白处开始" /></div>}
       <span className="drama-canvas-gesture-hint">{isPanning ? '拖动平移' : '拖动空白框选 · 空格临时抓手'} · 滚轮平移 · Ctrl / ⌘ + 滚轮缩放</span>
-      {selected && generationForId === selected.id && !inlineEdit && <div className="drama-canvas-generation" aria-label="生图设置">
-        <div className="drama-canvas-generation-heading"><span>{kindIcons[selected.kind]} {assetFormLabel(selected)}</span><Button type="text" size="small" onClick={() => setGenerationForId('')}>收起</Button></div>
-        {selected.imageError && <div className="drama-canvas-generation-error">{selected.imageError}</div>}
-        <Input.TextArea aria-label="本次生成描述" value={prompt} onChange={(event) => setPrompt(event.target.value)} autoSize={{ minRows: 2, maxRows: 4 }} placeholder={selected.kind === 'scene' ? '描述想生成的图片' : '描述想生成的形象'} maxLength={10000} disabled={busy(selected)} />
-        <div className="drama-canvas-generation-toolbar"><DramaStylePicker value={style.id || style.name} valueLabel={style.name} onChange={(value) => setStyle({ id: value.id, name: value.name })} disabled={busy(selected)} /><Select aria-label="生成比例" value={ratio} onChange={setRatio} disabled={busy(selected)} options={[{ value: '9:16', label: '竖屏 9:16' }, { value: '16:9', label: '横屏 16:9' }, { value: '1:1', label: '方图 1:1' }]} /><span>{[generationSource, connectedText.length ? `引用 ${connectedText.length} 条文案` : ''].filter(Boolean).join(' · ')}</span><Button type="primary" icon={<PictureOutlined />} loading={working || busy(selected)} disabled={!generationPrompt || !!saveError} onClick={() => void generate()}>{selected.imageUrl ? '重新生成图片' : '生成图片'}</Button></div>
-      </div>}
     </>}
     {dragOver && <div className="drama-canvas-drop"><UploadOutlined /><strong>松开后将文件添加到画布</strong></div>}
     <Modal title="图片模型设置" open={modelSettingsOpen} footer={null} onCancel={() => setModelSettingsOpen(false)}><DramaImageModelSelect /></Modal>
