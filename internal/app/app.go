@@ -110,7 +110,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 	}
 	novelCoverStore := cache.NewNovelCoverPreviewStore(redisClient)
 	novelService := novel.NewService(pgstore.NewNovelRepository(db), novelModel, novelModel, novelCoverStore).
-		WithCoverStyles(novelModel).WithCoverGeneration(novelCoverStore)
+		WithCoverStyles(novelModel).WithCoverGeneration(novelCoverStore).
+		WithDraftGeneration(cache.NewNovelDraftGenerationStore(redisClient))
 	dramaMedia := &dramaMediaFiles{directory: cfg.DramaMediaDirectory}
 	dramaImages := &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}
 	generateDramaCover := func(ctx context.Context, jobID string, request drama.ImageRequest) ([]byte, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -19,6 +20,8 @@ type NovelService interface {
 	Get(context.Context, novel.Owner, string) (novel.Project, error)
 	PlanChapters(context.Context, novel.Owner, string, novel.ChapterPlanInput) (novel.ChapterPlan, error)
 	Apply(context.Context, novel.Owner, string, novel.Action) (novel.Project, error)
+	StartDraftGeneration(context.Context, novel.Owner, string, int, novel.DraftGenerationInput) (novel.DraftGeneration, error)
+	GetDraftGeneration(context.Context, novel.Owner, string, int) (novel.DraftGeneration, error)
 	CoverModels(context.Context, novel.Owner) ([]novel.Model, error)
 	CoverContent(context.Context, novel.Owner, string, string) (novel.CoverImage, error)
 	ListCoverHistory(context.Context, novel.Owner, string) ([]novel.CoverHistoryItem, error)
@@ -82,6 +85,30 @@ func registerNovelRoutes(router *gin.Engine, deps Dependencies) {
 		result, err := deps.Novel.PlanChapters(c.Request.Context(), novelOwner(c), c.Param("id"), input)
 		writeNovelResponse(c, deps, http.StatusOK, result, err)
 	})
+	draftGeneration := group.Group("/projects/:id/chapters/:chapter/draft-generation", func(c *gin.Context) {
+		c.Header("Cache-Control", "private, no-store")
+		c.Next()
+	})
+	draftGeneration.POST("", requireCSRF(deps), func(c *gin.Context) {
+		chapter, ok := bindNovelDraftChapter(c)
+		if !ok {
+			return
+		}
+		var input novel.DraftGenerationInput
+		if !bindNovelInput(c, &input) {
+			return
+		}
+		generation, err := deps.Novel.StartDraftGeneration(c.Request.Context(), novelOwner(c), c.Param("id"), chapter, input)
+		writeNovelResponse(c, deps, http.StatusAccepted, generation, err)
+	})
+	draftGeneration.GET("", func(c *gin.Context) {
+		chapter, ok := bindNovelDraftChapter(c)
+		if !ok {
+			return
+		}
+		generation, err := deps.Novel.GetDraftGeneration(c.Request.Context(), novelOwner(c), c.Param("id"), chapter)
+		writeNovelResponse(c, deps, http.StatusOK, generation, err)
+	})
 	group.POST("/projects/:id/actions", requireCSRF(deps), func(c *gin.Context) {
 		var input novel.Action
 		// 长篇连载撤回确认后可提交完整的 500 章大纲。
@@ -92,6 +119,15 @@ func registerNovelRoutes(router *gin.Engine, deps Dependencies) {
 		p.Cover = novelCoverWithURL(p.ID, p.Cover)
 		writeNovelResponse(c, deps, http.StatusOK, p, err)
 	})
+}
+
+func bindNovelDraftChapter(c *gin.Context) (int, bool) {
+	chapter, err := strconv.Atoi(c.Param("chapter"))
+	if err != nil || chapter < 1 || chapter > novel.MaxChapters {
+		httpx.Fail(c, http.StatusBadRequest, "invalid_novel_input", "章节编号无效")
+		return 0, false
+	}
+	return chapter, true
 }
 
 func bindNovelInput(c *gin.Context, input any) bool {
@@ -130,15 +166,21 @@ func writeNovelResponse(c *gin.Context, deps Dependencies, success int, data any
 		httpx.Fail(c, http.StatusConflict, "novel_state_conflict", err.Error())
 	case errors.Is(err, novel.ErrIdeaRepetition):
 		httpx.Fail(c, http.StatusBadGateway, "novel_generation_failed", novel.ErrIdeaRepetition.Error())
+	case errors.Is(err, novel.ErrContentInspection):
+		deps.Logger.Warn("AI 小说模型调用失败", "request_id", contextString(c, "request_id"), "error", err)
+		httpx.Fail(c, http.StatusBadGateway, "novel_generation_failed", novel.ErrContentInspection.Error())
 	case errors.Is(err, novel.ErrGeneration):
 		deps.Logger.Warn("AI 小说模型调用失败", "request_id", contextString(c, "request_id"), "error", err)
 		message := novel.ErrGeneration.Error()
 		var countError *novel.SerialOpeningCountError
 		var draftError *novel.DraftOutputError
+		var ideaError *novel.IdeaOutputError
 		if errors.As(err, &countError) {
 			message = countError.Error()
 		} else if errors.As(err, &draftError) {
 			message = draftError.Error()
+		} else if errors.As(err, &ideaError) {
+			message = "模型返回的灵感格式有误，已自动重试。请再生成一次。"
 		}
 		httpx.Fail(c, http.StatusBadGateway, "novel_generation_failed", message)
 	case errors.Is(err, novel.ErrCoverGeneration):

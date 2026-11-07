@@ -19,6 +19,28 @@ type DraftOutputError struct{ Message string }
 func (e *DraftOutputError) Error() string { return e.Message }
 func (e *DraftOutputError) Unwrap() error { return ErrGeneration }
 
+func (s *Service) writeChapterDraft(ctx context.Context, owner Owner, p *Project, index int, modelCode, instruction, review string, revising bool) (Chapter, error) {
+	prompt := authorContinuityGuidance + writePrompt + chapterContext(*p, index, instruction, review)
+	if revising {
+		prompt = reviseFromReviewPrompt + prompt
+	}
+	if p.StoryMode == StoryModeSerial {
+		prompt = serialWriteGuidance + prompt
+	}
+	result, err := s.generateChapterDraft(ctx, owner, p, modelCode, prompt)
+	result.AuthorInstruction = instruction
+	return result, err
+}
+
+func (s *Service) finishChapterDraft(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter) {
+	chapter := &p.Chapters[index]
+	var err error
+	if chapter.Summary == "" {
+		chapter.Summary, err = s.generateDraftSummary(ctx, owner, p, modelCode, chapter.Body)
+	}
+	s.reviewAfterDraftChange(ctx, owner, p, index, modelCode, previous, err)
+}
+
 func (s *Service) generateChapterDraft(ctx context.Context, owner Owner, p *Project, modelCode, prompt string) (Chapter, error) {
 	draft, err := s.generateChapterFields(ctx, owner, p, modelCode, prompt)
 	var outputError *DraftOutputError

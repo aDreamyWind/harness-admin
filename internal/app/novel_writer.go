@@ -2,8 +2,12 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"net/url"
+	"strings"
 
 	"harness-admin/internal/coverimage"
 	"harness-admin/internal/drama"
@@ -69,11 +73,44 @@ func (w *novelWriter) GenerateCover(ctx context.Context, owner novel.Owner, mode
 }
 
 func (w *novelWriter) Complete(ctx context.Context, owner novel.Owner, model, prompt string) (string, error) {
+	return w.complete(ctx, owner, model, prompt, nil)
+}
+
+func (w *novelWriter) CompleteIdeaRefinement(ctx context.Context, owner novel.Owner, model, prompt string) (string, error) {
+	result, err := w.complete(ctx, owner, model, prompt, applyNovelIdeaTemperature)
+	if errors.Is(err, errModelContentInspection) {
+		return "", novel.ErrContentInspection
+	}
+	return result, err
+}
+
+func (w *novelWriter) complete(ctx context.Context, owner novel.Owner, model, prompt string, configure func(*modelgateway.PreparedRequest) error) (string, error) {
 	// 网关逐步接收模型输出，小说服务仍只接收完整 JSON 后再校验并保存。
-	result, err := w.completion.CompleteObserved(ctx, owner.OrganizationID, owner.UserID, model, prompt, drama.ModelCallOptions{Stage: "小说创作"})
+	result, err := w.completion.complete(ctx, owner.OrganizationID, owner.UserID, model, prompt, true, drama.ModelCallOptions{Stage: "小说创作"}, configure)
 	if errors.Is(err, modelgateway.ErrModelNotFound) || errors.Is(err, modelgateway.ErrModelDisabled) ||
 		errors.Is(err, modelgateway.ErrModelNotAllowed) || errors.Is(err, modelgateway.ErrModelTypeMismatch) {
 		return "", novel.ErrModel
 	}
 	return result, err
+}
+
+func applyNovelIdeaTemperature(prepared *modelgateway.PreparedRequest) error {
+	if !strings.EqualFold(prepared.Route.UpstreamModelID, "deepseek-v4-flash-0731") {
+		return nil
+	}
+	u, err := url.Parse(prepared.Route.ProviderBaseURL)
+	if err != nil {
+		return err
+	}
+	if !isBailianHost(u.Hostname()) {
+		return nil
+	}
+	var body map[string]any
+	if err := json.Unmarshal(prepared.Body, &body); err != nil {
+		return err
+	}
+	// 百炼兼容接口的温度范围不含 2，取 float32 中最接近 2 的较小值，避免舍入到 2。
+	body["temperature"] = float64(math.Nextafter32(2, 0))
+	prepared.Body, err = json.Marshal(body)
+	return err
 }

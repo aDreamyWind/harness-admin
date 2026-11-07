@@ -1,7 +1,7 @@
 import { HistoryOutlined, RobotOutlined } from '@ant-design/icons'
 import { useMutation } from '@tanstack/react-query'
-import { Alert, Button, Input, Select, Space } from 'antd'
-import { useEffect, useRef, useState } from 'react'
+import { Alert, Button, Input, Select } from 'antd'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import { formatDateTime } from '../utils/dateTime'
 import { refineNovelIdea } from '../api/novel'
@@ -14,6 +14,7 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
   historyScope: string
   onApply: (brief: string) => void
 }) {
+  const panelID = useId()
   const [panel, setPanel] = useState<'refine' | 'history'>()
   const [instruction, setInstruction] = useState('')
   const [saved, setSaved] = useState(() => listNovelIdeaHistory(historyScope))
@@ -103,26 +104,26 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
   }
 
   return (
-    <div className="novel-idea-refinement">
-      <Space wrap>
-        <Button icon={<RobotOutlined />} disabled={disabled || pending} aria-expanded={panel === 'refine'}
+    <div className="novel-idea-refinement" data-open={panel !== undefined}>
+      <div className="novel-idea-tabs" role="group" aria-label="故事灵感工具">
+        <Button type="text" className="novel-idea-tab" id={`${panelID}-refine-tab`} icon={<RobotOutlined aria-hidden />}
+          disabled={disabled || pending} aria-expanded={panel === 'refine'} aria-controls={panel === 'refine' ? `${panelID}-refine` : undefined}
           onClick={() => setPanel((value) => value === 'refine' ? undefined : 'refine')}>
-          {panel === 'refine' ? '收起灵感优化' : 'AI 优化灵感'}
+          AI 优化灵感
         </Button>
-        <Button icon={<HistoryOutlined />} disabled={disabled || pending} aria-expanded={panel === 'history'}
+        <Button type="text" className="novel-idea-tab" id={`${panelID}-history-tab`} icon={<HistoryOutlined aria-hidden />}
+          disabled={disabled || pending} aria-expanded={panel === 'history'} aria-controls={panel === 'history' ? `${panelID}-history` : undefined}
           onClick={() => setPanel((value) => value === 'history' ? undefined : 'history')}>
           灵感历史
         </Button>
-      </Space>
-      {temporary.length > 0 && <p className="novel-hint" role="status">浏览器未能保存部分版本，请在关闭弹窗前复制需要保留的内容。</p>}
+      </div>
       {panel === 'refine' && (
-        <div className="novel-ai-panel">
+        <div className="novel-ai-panel" id={`${panelID}-refine`} role="region" aria-labelledby={`${panelID}-refine-tab`}>
           <label htmlFor="novel-idea-instruction">优化方案（选填）</label>
           <Input.TextArea id="novel-idea-instruction" rows={2} value={instruction} maxLength={1200} disabled={disabled || pending}
             onChange={(event) => setInstruction(event.target.value)}
             placeholder="例如：把设定改成民国悬疑，加强主角的两难，保留那把钥匙。" />
-          <p className="novel-hint">{model ? `使用 ${model.name}。可以先看结果，再决定是否采用。` : '需要可用的文本模型。'}</p>
-          {!instructionText && <p className="novel-hint">留空时会检查当前浏览器里相近灵感的全部历史结果，发现重复会自动再试。</p>}
+          {!model && <p className="novel-hint">需要可用的文本模型。</p>}
           <Button loading={pending} disabled={disabled || !source || !model} onClick={generate}>
             生成优化建议
           </Button>
@@ -139,7 +140,7 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
         </div>
       )}
       {panel === 'history' && (
-        <div className="novel-ai-panel" role="region" aria-label="灵感历史">
+        <div className="novel-ai-panel" id={`${panelID}-history`} role="region" aria-labelledby={`${panelID}-history-tab`}>
           <p className="novel-hint">灵感历史保存在当前浏览器。点击下方的恢复按钮，会把所选内容填回上方输入框，并保留你当前填写的内容。</p>
           {selected ? <>
             <label htmlFor="novel-idea-history">查看版本</label>
@@ -159,6 +160,7 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
           </> : <p className="novel-hint">还没有灵感历史。生成优化建议后，可以在这里查看原文和结果。</p>}
         </div>
       )}
+      {temporary.length > 0 && <p className="novel-hint" role="status">浏览器未能保存部分版本，请在关闭弹窗前复制需要保留的内容。</p>}
     </div>
   )
 }

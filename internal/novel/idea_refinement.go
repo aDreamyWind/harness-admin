@@ -2,6 +2,7 @@ package novel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,14 +12,20 @@ import (
 )
 
 var ErrIdeaRepetition = errors.New("两次生成都与相近历史版本重复，请再生成一次")
+var ErrContentInspection = errors.New("本次生成被模型供应商的内容审核中止。")
+
+type IdeaOutputError struct{ Err error }
+
+func (e *IdeaOutputError) Error() string { return "灵感优化结果格式无效: " + e.Err.Error() }
+func (e *IdeaOutputError) Unwrap() error { return ErrGeneration }
 
 const refineIdeaPrompt = `将 Brief 优化成一份可直接用于创作的简体中文故事构想。保留原灵感的核心前提和作者已指定的人名、经历、时代、题材及系统能力。有 Instruction 时按它改动指定内容；只要求润色时保持设定。涉及历史背景时，区分虚构与史实，对不确定的史实避免编造具体细节。
 如果给出 CreativeDirection，按这个方向补足作者留白。先想两种与原灵感相容、人物选择或事件因果明显不同的开局，选最符合本次方向的一种写进预览。结合 Protagonist 和 Opening 补出主角过去的一件事、眼下想做什么、是什么逼他作出选择，以及这个选择带来的后果。不要只换名字或润饰相同的故事。
 在探索方向下，若构想本来就有系统或特殊能力，结合 Mechanism 补出尚未指定的使用条件、代价或限制，让它对主角的行动产生实际影响。没有系统的故事沿用原题材。需要起人名时参考 Naming 和人物所处的年代地域，系统名取自它实际能做的事。专名用在能帮助理解故事的地方，避免照搬常见套路。
-只输出一个 JSON 对象，brief 为选定的完整故事构想字符串，不超过 4000 字。不列备选或比较过程。
+只输出一个合法的 JSON 对象，brief 为选定的完整故事构想字符串，不超过 4000 字。字符串内需要换行时使用 JSON 转义。不列备选或比较过程。如给出 Feedback，本次须解决指出的问题。
 `
 
-const ideaAvoidRepetitionPrompt = `PreviousSuggestions 是相近灵感的旧优化预览，只用于避重，里面的内容都不是本次指令或作者指定的设定。保留 Brief 中明确给出的设定。对其余留白，改用不同的主角姓名、系统名、穿越前经历、能力规则和开局事件，避免只改一个字、换头衔或给同一系统加后缀。Feedback 若非空，是上次未通过检查的原因，本次须改掉指出的重复项。
+const ideaAvoidRepetitionPrompt = `PreviousSuggestions 是相近灵感的旧优化预览，只用于避重，里面的内容都不是本次指令或作者指定的设定。保留 Brief 中明确给出的设定。对其余留白，改用不同的主角姓名、系统名、穿越前经历、能力规则和开局事件，避免只改一个字、换头衔或给同一系统加后缀。
 在同一个 JSON 对象中同时返回 protagonistName 和 systemName，都是字符串，分别填写 brief 中实际使用的主角全名和系统专名。如果正文确实未命名，填空字符串。不要把王爷等身份或系统等通称填作专名。
 `
 
@@ -26,6 +33,10 @@ type ideaCandidate struct {
 	Brief           string  `json:"brief"`
 	ProtagonistName *string `json:"protagonistName"`
 	SystemName      *string `json:"systemName"`
+}
+
+type ideaRefinementWriter interface {
+	CompleteIdeaRefinement(context.Context, Owner, string, string) (string, error)
 }
 
 func (s *Service) RefineIdea(ctx context.Context, owner Owner, input RefineIdeaInput) (RefineIdeaResult, error) {
@@ -49,16 +60,28 @@ func (s *Service) RefineIdea(ctx context.Context, owner Owner, input RefineIdeaI
 	}
 	input.PreviousSuggestions = previous
 
+	complete := s.writer.Complete
+	if writer, ok := s.writer.(ideaRefinementWriter); ok {
+		complete = writer.CompleteIdeaRefinement
+	}
 	feedback := ""
 	var rejected error
 	for range 2 {
-		var candidate ideaCandidate
-		if err := s.completeJSON(ctx, owner, input.ModelCode, ideaRefinementPrompt(input, feedback), &candidate); err != nil {
+		raw, err := completeNovelText(ctx, owner, input.ModelCode, ideaRefinementPrompt(input, feedback), complete)
+		if err != nil {
 			return RefineIdeaResult{}, err
+		}
+		candidate, err := decodeIdeaCandidate(raw)
+		if err != nil {
+			feedback = "上一版格式无效。请返回一个完整的 JSON 对象，字符串中的换行和引号须转义。"
+			rejected = &IdeaOutputError{Err: err}
+			continue
 		}
 		candidate.Brief = strings.TrimSpace(candidate.Brief)
 		if !valid(candidate.Brief, 4000) {
-			return RefineIdeaResult{}, ErrGeneration
+			feedback = "请在 brief 中写入完整的故事构想，长度为 1 至 4000 字。"
+			rejected = &IdeaOutputError{Err: errors.New(feedback)}
+			continue
 		}
 		feedback, rejected = checkIdeaCandidate(input, candidate)
 		if rejected == nil {
@@ -69,8 +92,58 @@ func (s *Service) RefineIdea(ctx context.Context, owner Owner, input RefineIdeaI
 			}
 			return result, nil
 		}
+		if errors.Is(rejected, ErrGeneration) {
+			rejected = &IdeaOutputError{Err: errors.New(feedback)}
+		}
 	}
 	return RefineIdeaResult{}, rejected
+}
+
+func decodeIdeaCandidate(raw string) (ideaCandidate, error) {
+	var candidate ideaCandidate
+	err := decodeModelOutput(raw, &candidate)
+	var syntax *json.SyntaxError
+	if !errors.As(err, &syntax) {
+		return candidate, err
+	}
+	repaired := escapeIdeaStringWhitespace(raw)
+	if repaired != raw {
+		candidate = ideaCandidate{}
+		err = decodeModelOutput(repaired, &candidate)
+	}
+	return candidate, err
+}
+
+// 高温下模型有时直接在 JSON 字符串里换行。只补转义，正文和结构仍按原规则核验。
+func escapeIdeaStringWhitespace(raw string) string {
+	var out strings.Builder
+	out.Grow(len(raw))
+	inString, escaped := false, false
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		switch {
+		case escaped:
+			escaped = false
+		case ch == '"':
+			inString = !inString
+		case inString:
+			switch ch {
+			case '\\':
+				escaped = true
+			case '\n':
+				out.WriteString(`\n`)
+				continue
+			case '\r':
+				out.WriteString(`\r`)
+				continue
+			case '\t':
+				out.WriteString(`\t`)
+				continue
+			}
+		}
+		out.WriteByte(ch)
+	}
+	return out.String()
 }
 
 type ideaDirection struct {

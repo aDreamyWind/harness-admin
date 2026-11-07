@@ -165,6 +165,7 @@ type Service struct {
 	coverPreviews  CoverPreviewStore
 	coverStyles    CoverStyleResolver
 	coverJobs      CoverGenerationStore
+	draftJobs      DraftGenerationStore
 }
 
 func NewService(repo Repository, writer Writer, coverGenerator CoverGenerator, coverPreviews CoverPreviewStore) *Service {
@@ -377,16 +378,27 @@ func equalOutlines(a, b *Outline) bool {
 		a.Characters == b.Characters && slices.Equal(a.Beats, b.Beats)
 }
 
-func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, action Action) error {
+func chapterActionIndex(p *Project, action Action) (int, error) {
 	if action.Chapter < 1 || action.Chapter > len(p.Chapters) {
-		return ErrInvalid
+		return 0, ErrInvalid
 	}
 	index := action.Chapter - 1
 	if !p.Confirmed || p.Outline == nil || index >= len(p.Outline.Beats) {
-		return fmt.Errorf("%w，请先确认作品大纲", ErrState)
+		return 0, fmt.Errorf("%w，请先确认作品大纲", ErrState)
 	}
 	if index > p.finalizedCount() {
-		return fmt.Errorf("%w，请先定稿前文", ErrState)
+		return 0, fmt.Errorf("%w，请先定稿前文", ErrState)
+	}
+	if p.Chapters[index].Final && action.Kind != "reopen_chapter" {
+		return 0, fmt.Errorf("%w，请先撤回本章定稿", ErrState)
+	}
+	return index, nil
+}
+
+func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, action Action) error {
+	index, err := chapterActionIndex(p, action)
+	if err != nil {
+		return err
 	}
 	chapter := &p.Chapters[index]
 	if action.Kind == "reopen_chapter" {
@@ -400,9 +412,6 @@ func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, act
 			clearChapterReview(&p.Chapters[i])
 		}
 		return nil
-	}
-	if chapter.Final {
-		return fmt.Errorf("%w，请先撤回本章定稿", ErrState)
 	}
 	switch action.Kind {
 	case "write", "revise_review":
@@ -425,22 +434,12 @@ func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, act
 				return nil
 			}
 		}
-		prompt := authorContinuityGuidance + writePrompt + chapterContext(*p, index, instruction, review)
-		if previous != nil {
-			prompt = reviseFromReviewPrompt + prompt
-		}
-		if p.StoryMode == StoryModeSerial {
-			prompt = serialWriteGuidance + prompt
-		}
-		result, err := s.generateChapterDraft(ctx, owner, p, action.ModelCode, prompt)
+		result, err := s.writeChapterDraft(ctx, owner, p, index, action.ModelCode, instruction, review, previous != nil)
 		if err != nil {
 			return err
 		}
-		if result.Summary == "" {
-			result.Summary, err = s.generateDraftSummary(ctx, owner, p, action.ModelCode, result.Body)
-		}
-		*chapter = Chapter{Body: result.Body, Summary: result.Summary, AuthorInstruction: instruction}
-		s.reviewAfterDraftChange(ctx, owner, p, index, action.ModelCode, previous, err)
+		*chapter = result
+		s.finishChapterDraft(ctx, owner, p, index, action.ModelCode, previous)
 	case "save_draft", "finalize":
 		result := Chapter{Body: action.Body, Summary: action.Summary, Final: action.Kind == "finalize", AuthorInstruction: chapter.AuthorInstruction}
 		if !validDraft(&result, result.Final) {
@@ -535,21 +534,33 @@ func (s *Service) generate(ctx context.Context, owner Owner, p *Project, code, p
 }
 
 func (s *Service) completeJSON(ctx context.Context, owner Owner, code, prompt string, output any) error {
-	code = strings.TrimSpace(code)
-	if !valid(code, 160) {
-		return ErrModel
-	}
-	raw, err := s.writer.Complete(ctx, owner, code, prompt)
+	return completeNovelJSON(ctx, owner, code, prompt, output, s.writer.Complete)
+}
+
+func completeNovelJSON(ctx context.Context, owner Owner, code, prompt string, output any, complete func(context.Context, Owner, string, string) (string, error)) error {
+	raw, err := completeNovelText(ctx, owner, code, prompt, complete)
 	if err != nil {
-		if errors.Is(err, ErrModel) {
-			return err
-		}
-		return fmt.Errorf("%w: %w", ErrGeneration, err)
+		return err
 	}
 	if err := decodeModelOutput(raw, output); err != nil {
 		return fmt.Errorf("%w: %w", ErrGeneration, err)
 	}
 	return nil
+}
+
+func completeNovelText(ctx context.Context, owner Owner, code, prompt string, complete func(context.Context, Owner, string, string) (string, error)) (string, error) {
+	code = strings.TrimSpace(code)
+	if !valid(code, 160) {
+		return "", ErrModel
+	}
+	raw, err := complete(ctx, owner, code, prompt)
+	if err != nil {
+		if errors.Is(err, ErrModel) {
+			return "", err
+		}
+		return "", fmt.Errorf("%w: %w", ErrGeneration, err)
+	}
+	return raw, nil
 }
 
 func normalizeOutline(outline *Outline, count int) bool {

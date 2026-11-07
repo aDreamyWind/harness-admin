@@ -90,7 +90,8 @@ const base = '/api/v1/ai-novel'
 export const listNovels = () => request<NovelBook[]>(base + '/projects')
 export const listNovelModels = () => request<{ code: string; name: string }[]>(base + '/models')
 export const listNovelCoverModels = () => request<{ code: string; name: string }[]>(base + '/cover-models')
-export const getNovel = (id: string) => request<NovelProject>(base + '/projects/' + encodeURIComponent(id))
+export const getNovel = (id: string, signal?: AbortSignal) =>
+  request<NovelProject>(base + '/projects/' + encodeURIComponent(id), { signal, cache: 'no-store' })
 export const listNovelFinalizedChapters = (id: string) =>
   request<{ number: number; title: string }[]>(`${base}/projects/${encodeURIComponent(id)}/finalized-chapters`)
 
@@ -110,6 +111,26 @@ export const refineNovelIdea = (
 export const createNovel = (input: NovelCreate) => post<NovelProject>('/projects', input)
 export const applyNovelAction = (p: NovelProject, action: NovelAction) =>
   post<NovelProject>('/projects/' + encodeURIComponent(p.id) + '/actions', { ...action, version: p.version })
+
+export interface NovelDraftGeneration {
+  status: 'idle' | 'running' | 'succeeded' | 'failed'
+  jobId?: string
+  phase?: 'writing' | 'reviewing'
+  projectVersion?: number
+  errorMessage?: string
+  warningMessage?: string
+}
+
+const draftGenerationPath = (id: string, chapter: number) =>
+  `/projects/${encodeURIComponent(id)}/chapters/${chapter}/draft-generation`
+
+export const getNovelDraftGeneration = (id: string, chapter: number, signal?: AbortSignal) =>
+  request<NovelDraftGeneration>(base + draftGenerationPath(id, chapter), { signal, cache: 'no-store' })
+
+export const startNovelDraftGeneration = (project: NovelProject, input: Extract<NovelAction, { kind: 'write' }>) =>
+  post<NovelDraftGeneration>(draftGenerationPath(project.id, input.chapter), {
+    version: project.version, modelCode: input.modelCode, instruction: input.instruction,
+  }, { keepalive: true })
 
 export const planNovelChapters = (p: NovelProject, input: { count: number; modelCode: string; instruction: string }) =>
   post<{ beats: NovelBeat[] }>(`/projects/${encodeURIComponent(p.id)}/chapter-plan`, { ...input, version: p.version })

@@ -127,6 +127,7 @@ make demo-up
 
 - [开发与部署](docs/development.md) · 代码结构、数据库迁移、接入配置和验证命令
 - [OpenAPI 契约](api/openapi.yaml) · 接口、认证与数据结构
+- [AI 调用可靠性与排障](docs/ai-call-reliability.md) · 后台生成约定及小说、漫剧和试衣的超时、校验、重试与恢复
 - [图片与视频模型网关](docs/model-media-gateway.md) · 媒体生成与任务查询
 - [MCP 接入方案](docs/enterprise-skills-mcp-plan.md) · 服务来源、网关和权限
 - [企业 Skills 接入](docs/enterprise-skill-management-plan.md) · 导入、发布与分发

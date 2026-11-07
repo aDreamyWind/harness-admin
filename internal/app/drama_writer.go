@@ -29,6 +29,10 @@ type dramaForwarder interface {
 
 const dramaRequestTimeoutMS = 10 * 60 * 1000
 
+const modelContentInspectionCode = "data_inspection_failed"
+
+var errModelContentInspection = errors.New("模型供应商内容审核未通过")
+
 type dramaWriter struct {
 	gateway      dramaModelGateway
 	forwarder    dramaForwarder
@@ -51,14 +55,14 @@ func (w *dramaWriter) AvailableModels(ctx context.Context, organizationID, userI
 }
 
 func (w *dramaWriter) Complete(ctx context.Context, org, user, model, prompt string) (string, error) {
-	return w.complete(ctx, org, user, model, prompt, false, drama.ModelCallOptions{})
+	return w.complete(ctx, org, user, model, prompt, false, drama.ModelCallOptions{}, nil)
 }
 func (w *dramaWriter) CompleteStream(ctx context.Context, org, user, model, prompt string, onText func(string) error) (string, error) {
-	return w.complete(ctx, org, user, model, prompt, true, drama.ModelCallOptions{OnText: onText})
+	return w.complete(ctx, org, user, model, prompt, true, drama.ModelCallOptions{OnText: onText}, nil)
 }
 
 func (w *dramaWriter) CompleteObserved(ctx context.Context, org, user, model, prompt string, options drama.ModelCallOptions) (string, error) {
-	return w.complete(ctx, org, user, model, prompt, true, options)
+	return w.complete(ctx, org, user, model, prompt, true, options, nil)
 }
 
 type dramaCompletion struct {
@@ -78,7 +82,7 @@ type dramaCompletion struct {
 	} `json:"usage"`
 }
 
-func (w *dramaWriter) complete(ctx context.Context, organizationID, userID, modelCode, prompt string, stream bool, options drama.ModelCallOptions) (string, error) {
+func (w *dramaWriter) complete(ctx context.Context, organizationID, userID, modelCode, prompt string, stream bool, options drama.ModelCallOptions, configure func(*modelgateway.PreparedRequest) error) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	onText := options.OnText
@@ -102,6 +106,11 @@ func (w *dramaWriter) complete(ctx context.Context, organizationID, userID, mode
 	policy, err := applyDramaReasoningPolicy(&prepared, options.Stage)
 	if err != nil {
 		return "", err
+	}
+	if configure != nil {
+		if err := configure(&prepared); err != nil {
+			return "", err
+		}
 	}
 	started := time.Now()
 	timing := &modelgateway.CallTiming{Stage: options.Stage, ReasoningPolicy: policy, RequestedAt: started}
@@ -205,16 +214,19 @@ func (w *dramaWriter) complete(ctx context.Context, organizationID, userID, mode
 			callErr = errors.Join(callErr, e)
 		}
 		result := "success"
-		errorMessage := ""
+		errorCode, errorMessage := "", ""
 		if callErr != nil {
 			result = "failed"
 			errorMessage = callErr.Error()
+			if errors.Is(callErr, errModelContentInspection) {
+				errorCode = modelContentInspectionCode
+			}
 		} else if status < 200 || status >= 300 {
 			result = "failed"
 			errorMessage = fmt.Sprintf("模型供应商返回状态 %d", status)
 		}
 		return modelgateway.CallOutcome{
-			Result: result, HTTPStatus: status, ErrorMessage: errorMessage,
+			Result: result, HTTPStatus: status, ErrorCode: errorCode, ErrorMessage: errorMessage,
 			ResponseBody: rawBytes, ResponseTruncated: truncated,
 			PromptTokens: completion.Usage.PromptTokens, CompletionTokens: completion.Usage.CompletionTokens, TotalTokens: completion.Usage.TotalTokens,
 		}
@@ -276,6 +288,17 @@ func readDramaSSEObserved(reader io.Reader, completion *dramaCompletion, onText 
 			return fmt.Errorf("读取模型流式数据失败: %w", err)
 		}
 		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+			var providerError struct {
+				Code string `json:"code"`
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(chunk.Error, &providerError) == nil {
+				for _, code := range []string{providerError.Code, providerError.Type} {
+					if code == modelContentInspectionCode || code == "DataInspectionFailed" {
+						return errModelContentInspection
+					}
+				}
+			}
 			return errors.New("模型供应商在流式响应中返回错误")
 		}
 		if len(chunk.Usage) > 0 && string(chunk.Usage) != "null" {
@@ -354,11 +377,9 @@ func applyDramaReasoningPolicy(prepared *modelgateway.PreparedRequest, stage str
 	if err != nil {
 		return "", err
 	}
-	host := strings.ToLower(u.Hostname())
-	knownHost := host == "dashscope.aliyuncs.com" || strings.HasSuffix(host, ".dashscope.aliyuncs.com") || strings.HasSuffix(host, ".maas.aliyuncs.com")
 	model := strings.ToLower(prepared.Route.UpstreamModelID)
 	lowSupported := model == "deepseek-v4-flash-0731" || model == "deepseek-v4-pro-0813" || model == "deepseek-v4.1-flash" || model == "deepseek-v4.1-flash-1017"
-	if stage == "" || !knownHost || (!lowSupported && model != "deepseek-v4-pro") {
+	if stage == "" || !isBailianHost(u.Hostname()) || (!lowSupported && model != "deepseek-v4-pro") {
 		return "供应商默认策略", nil
 	}
 	var body map[string]any
@@ -382,4 +403,9 @@ func applyDramaReasoningPolicy(prepared *modelgateway.PreparedRequest, stage str
 	}
 	prepared.Body, err = json.Marshal(body)
 	return policy, err
+}
+
+func isBailianHost(host string) bool {
+	host = strings.ToLower(host)
+	return host == "dashscope.aliyuncs.com" || strings.HasSuffix(host, ".dashscope.aliyuncs.com") || strings.HasSuffix(host, ".maas.aliyuncs.com")
 }

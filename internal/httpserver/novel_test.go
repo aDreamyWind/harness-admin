@@ -32,6 +32,11 @@ type novelHTTPStub struct {
 	coverData          []byte
 	coverGeneration    novel.CoverGeneration
 	coverGenerationErr error
+	draftInput         novel.DraftGenerationInput
+	draftProject       string
+	draftChapter       int
+	draftGeneration    novel.DraftGeneration
+	draftGenerationErr error
 }
 
 func (s *novelHTTPStub) List(_ context.Context, owner novel.Owner) ([]novel.Book, error) {
@@ -108,6 +113,18 @@ func (s *novelHTTPStub) PlanChapters(_ context.Context, owner novel.Owner, _ str
 	s.owner, s.planInput = owner, input
 	return novel.ChapterPlan{Beats: []novel.Beat{{Title: "余波", Goal: "追踪新证人"}}}, nil
 }
+
+func (s *novelHTTPStub) StartDraftGeneration(_ context.Context, owner novel.Owner, project string, chapter int, input novel.DraftGenerationInput) (novel.DraftGeneration, error) {
+	s.draftInput = input
+	s.owner, s.draftProject, s.draftChapter = owner, project, chapter
+	return s.draftGeneration, s.draftGenerationErr
+}
+
+func (s *novelHTTPStub) GetDraftGeneration(_ context.Context, owner novel.Owner, project string, chapter int) (novel.DraftGeneration, error) {
+	s.owner, s.draftProject, s.draftChapter = owner, project, chapter
+	return s.draftGeneration, s.draftGenerationErr
+}
+
 func (s *novelHTTPStub) Apply(_ context.Context, owner novel.Owner, _ string, input novel.Action) (novel.Project, error) {
 	s.owner, s.actionInput = owner, input
 	if s.actionError != nil {
@@ -117,6 +134,88 @@ func (s *novelHTTPStub) Apply(_ context.Context, owner novel.Owner, _ string, in
 		return *s.actionResult, nil
 	}
 	return novel.Project{}, novel.ErrConflict
+}
+
+func TestNovelDraftGenerationRoutes(t *testing.T) {
+	stub := &novelHTTPStub{}
+	router := New(Dependencies{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth:   &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}},
+		Novel:  stub, SessionCookie: "test_session",
+	})
+	const project = "2ebf4214-5527-407d-92c0-a9694d1f0926"
+	const chapterPath = "/api/v1/ai-novel/projects/" + project + "/chapters/"
+	const path = chapterPath + "2/draft-generation"
+	const body = `{"version":6,"modelCode":"writer","instruction":"加强悬疑感","ownerId":"other"}`
+	send := func(method, path, body string, session, csrf bool) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		if session {
+			request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+		}
+		if csrf {
+			request.Header.Set("X-CSRF-Token", "csrf-token")
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	for _, tt := range []struct {
+		name, method, path, body string
+		session, csrf            bool
+		status                   int
+	}{
+		{"匿名查询", http.MethodGet, path, "", false, false, http.StatusUnauthorized},
+		{"匿名提交", http.MethodPost, path, body, false, false, http.StatusUnauthorized},
+		{"缺少 CSRF", http.MethodPost, path, body, true, false, http.StatusForbidden},
+		{"请求格式无效", http.MethodPost, path, "{", true, true, http.StatusBadRequest},
+		{"章节不是整数", http.MethodGet, chapterPath + "2.5/draft-generation", "", true, false, http.StatusBadRequest},
+		{"章节超出范围", http.MethodPost, chapterPath + "501/draft-generation", body, true, true, http.StatusBadRequest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if response := send(tt.method, tt.path, tt.body, tt.session, tt.csrf); response.Code != tt.status {
+				t.Fatalf("响应状态 %d，预期 %d: %s", response.Code, tt.status, response.Body)
+			}
+		})
+	}
+	if stub.draftProject != "" {
+		t.Fatal("无效请求不应进入生成服务")
+	}
+	assertGeneration := func(response *httptest.ResponseRecorder, status int, want map[string]any) {
+		t.Helper()
+		if response.Code != status || response.Header().Get("Cache-Control") != "private, no-store" {
+			t.Fatalf("任务状态响应或缓存头有误: %d %+v %s", response.Code, response.Header(), response.Body)
+		}
+		var result struct{ Data map[string]any }
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || !reflect.DeepEqual(result.Data, want) {
+			t.Fatalf("任务状态响应有误: %s (%v)", response.Body, err)
+		}
+	}
+	stub.draftGeneration = novel.DraftGeneration{Status: "idle"}
+	assertGeneration(send(http.MethodGet, path, "", true, false), http.StatusOK, map[string]any{"status": "idle"})
+	stub.draftGeneration = novel.DraftGeneration{Status: "running", Phase: "writing", JobID: "new-job"}
+	assertGeneration(send(http.MethodPost, path, body, true, true), http.StatusAccepted, map[string]any{
+		"status": "running", "phase": "writing", "jobId": "new-job",
+	})
+	if stub.owner != (novel.Owner{OrganizationID: "org-1", UserID: "user-1"}) || stub.draftProject != project || stub.draftChapter != 2 ||
+		stub.draftInput != (novel.DraftGenerationInput{Version: 6, ModelCode: "writer", Instruction: "加强悬疑感"}) {
+		t.Fatalf("生成请求未使用会话身份、路径或提交参数: %+v %q %d %+v", stub.owner, stub.draftProject, stub.draftChapter, stub.draftInput)
+	}
+	stub.draftGeneration = novel.DraftGeneration{Status: "running", Phase: "reviewing", JobID: "new-job", ProjectVersion: 7}
+	assertGeneration(send(http.MethodGet, path, "", true, false), http.StatusOK, map[string]any{
+		"status": "running", "phase": "reviewing", "jobId": "new-job", "projectVersion": float64(7),
+	})
+	stub.draftGeneration = novel.DraftGeneration{Status: "succeeded", JobID: "new-job", ProjectVersion: 7, WarningMessage: "正文已保存，审稿未完成。"}
+	assertGeneration(send(http.MethodGet, path, "", true, false), http.StatusOK, map[string]any{
+		"status": "succeeded", "jobId": "new-job", "projectVersion": float64(7), "warningMessage": "正文已保存，审稿未完成。",
+	})
+	stub.draftGenerationErr = novel.ErrConflict
+	if response := send(http.MethodPost, path, body, true, true); response.Code != http.StatusConflict {
+		t.Fatalf("版本冲突未返回 409: %d %s", response.Code, response.Body)
+	}
+	stub.draftGenerationErr = novel.ErrNotFound
+	if response := send(http.MethodGet, path, "", true, false); response.Code != http.StatusNotFound {
+		t.Fatalf("不可访问作品未返回 404: %d %s", response.Code, response.Body)
+	}
 }
 
 func TestNovelOutlineCheckAction(t *testing.T) {
@@ -386,7 +485,7 @@ func TestNovelRoutesRequireSessionAndUseSessionOwner(t *testing.T) {
 	}
 }
 
-func TestNovelRefineIdeaBindsPreviousSuggestionsAndReportsRepetition(t *testing.T) {
+func TestNovelRefineIdeaBindsPreviousSuggestionsAndReportsFailures(t *testing.T) {
 	stub := &novelHTTPStub{refineResult: &novel.RefineIdeaResult{
 		Brief: "守塔人陆徊借观潮录查明午夜呼救的来历", ProtagonistName: "陆徊", SystemName: "观潮录",
 	}}
@@ -422,12 +521,27 @@ func TestNovelRefineIdeaBindsPreviousSuggestionsAndReportsRepetition(t *testing.
 	}
 
 	const modelDetail = "只供内部排查的模型结果"
-	stub.refineError = fmt.Errorf("%w: %s", novel.ErrIdeaRepetition, modelDetail)
-	recorder = refine()
-	if body := recorder.Body.String(); recorder.Code != http.StatusBadGateway ||
-		!strings.Contains(body, `"code":"novel_generation_failed"`) || !strings.Contains(body, novel.ErrIdeaRepetition.Error()) ||
-		strings.Contains(body, modelDetail) {
-		t.Fatalf("优化结果重复的错误响应有误: %d %s", recorder.Code, body)
+	for _, test := range []struct {
+		name    string
+		err     error
+		message string
+	}{
+		{"优化结果重复", fmt.Errorf("%w: %s", novel.ErrIdeaRepetition, modelDetail), novel.ErrIdeaRepetition.Error()},
+		{"优化结果格式错误", fmt.Errorf("灵感优化: %w", &novel.IdeaOutputError{Err: fmt.Errorf("JSON 解析失败: %s", modelDetail)}),
+			"模型返回的灵感格式有误，已自动重试。请再生成一次。"},
+		{"供应商内容审核中止", fmt.Errorf("%w: %w: %s", novel.ErrGeneration, novel.ErrContentInspection, modelDetail),
+			"本次生成被模型供应商的内容审核中止。"},
+		{"其他生成错误", fmt.Errorf("%w: %s", novel.ErrGeneration, modelDetail), novel.ErrGeneration.Error()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stub.refineError = test.err
+			recorder := refine()
+			if body := recorder.Body.String(); recorder.Code != http.StatusBadGateway ||
+				!strings.Contains(body, `"code":"novel_generation_failed"`) || !strings.Contains(body, test.message) ||
+				strings.Contains(body, modelDetail) {
+				t.Fatalf("优化结果错误响应有误: %d %s", recorder.Code, body)
+			}
+		})
 	}
 }
 

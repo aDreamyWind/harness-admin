@@ -883,6 +883,41 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /ai-novel/projects/{id}/chapters/{chapter}/draft-generation:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: chapter, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 500 }, description: 从 1 开始的章号。 }
+    get:
+      summary: 查询本人小说指定章节的正文生成状态
+      operationId: getNovelDraftGeneration
+      description: 刷新或重新打开页面后可查询同一章节的最新任务。章节没有生成任务时返回 idle。
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/NovelDraftGenerationResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: 提交本人小说指定章节的后台正文生成
+      operationId: startNovelDraftGeneration
+      description: 接受后在后台写稿，关闭或刷新页面后可继续查询。正文通过校验后保存，摘要或审稿未完成时可在任务结果中查看提示。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NovelDraftGenerationInput' }
+      responses:
+        '202': { $ref: '#/components/responses/NovelDraftGenerationResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 作品版本冲突，或当前创作阶段不允许生成正文。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   /ai-novel/projects/{id}/actions:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -5074,6 +5109,18 @@ components:
             required: [data]
             properties:
               data: { $ref: '#/components/schemas/NovelCoverGeneration' }
+    NovelDraftGenerationResponse:
+      description: 指定章节的最新正文生成任务状态。
+      headers:
+        Cache-Control:
+          schema: { type: string, const: 'private, no-store' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { $ref: '#/components/schemas/NovelDraftGeneration' }
     NovelCoverConflict:
       description: 封面已被其他操作更新。应用预览时可重新生成预览后确认。
       content:
@@ -5237,6 +5284,23 @@ components:
         modelCode: { type: string }
         styleId: { type: string }
         instruction: { type: string }
+    NovelDraftGenerationInput:
+      type: object
+      required: [version, modelCode]
+      properties:
+        version: { type: integer, minimum: 1 }
+        modelCode: { type: string, minLength: 1, maxLength: 160 }
+        instruction: { type: string, maxLength: 1200, description: 可选的本章写作要求。 }
+    NovelDraftGeneration:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [idle, running, succeeded, failed] }
+        phase: { type: string, enum: [writing, reviewing], description: 运行中的任务当前阶段。 }
+        jobId: { type: string, format: uuid, description: 本次正文生成任务编号。 }
+        errorMessage: { type: string, description: 生成失败时提供的提示。 }
+        warningMessage: { type: string, description: 正文已保存但后续处理未完成时提供的提示。 }
+        projectVersion: { type: integer, minimum: 1, description: 本次任务最近一次成功保存作品后的版本。 }
     NovelBook:
       type: object
       required: [id, title, chapterCount, finalizedChapterCount, updatedAt]

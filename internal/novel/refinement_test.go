@@ -44,6 +44,82 @@ func TestNovelRefineIdeaReturnsPreviewWithoutProject(t *testing.T) {
 	}
 }
 
+func TestNovelRefineIdeaPreservesLiteralNewlinesInModelJSON(t *testing.T) {
+	calls := 0
+	writer := &testWriter{
+		result: "```json\n{\n" + `"brief":"顾承舟喊道：\"随我来。\"` + "\n\n\t" +
+			`他用验契器查到一艘假船。\n同伴去报信。","protagonistName":"顾承舟","systemName":"验契器"}` + "\n```",
+		beforeReturn: func() { calls++ },
+	}
+	service := NewService(nil, writer, nil, nil)
+	result, err := service.RefineIdea(context.Background(), Owner{}, RefineIdeaInput{
+		Brief: "古代王爷靠系统破案", ModelCode: "writer", PreviousSuggestions: []string{"萧景珩用闲王日常系统破案。"},
+	})
+	const brief = "顾承舟喊道：\"随我来。\"\n\n\t他用验契器查到一艘假船。\n同伴去报信。"
+	if err != nil || result.Brief != brief || result.ProtagonistName != "顾承舟" || result.SystemName != "验契器" || calls != 1 {
+		t.Fatalf("应保留原段落和转义内容且无需重试，调用 %d 次，结果 %+v，错误 %v", calls, result, err)
+	}
+}
+
+func TestNovelRefineIdeaRetriesUnrecoverableFormatAtMostOnce(t *testing.T) {
+	const broken = `{"brief":"未完成的构想`
+	for _, tt := range []struct {
+		name, second, want string
+	}{
+		{"重试后成功", `{"brief":"守塔人去海边寻找灯光。"}`, "守塔人去海边寻找灯光。"},
+		{"重试仍不合法", `{"brief":"不能接受两个对象。"} {"brief":"另一个构想。"}`, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := &testWriter{result: broken}
+			var prompts []string
+			writer.beforeReturn = func() {
+				prompts = append(prompts, writer.prompt)
+				if len(prompts) > 1 {
+					writer.result = tt.second
+				}
+			}
+			service := NewService(nil, writer, nil, nil)
+			result, err := service.RefineIdea(context.Background(), Owner{}, RefineIdeaInput{
+				Brief: "守塔人看见奇怪的光", ModelCode: "writer",
+			})
+			if len(prompts) != 2 || result.Brief != tt.want {
+				t.Fatalf("格式失败只能重试一次，调用 %d 次，结果 %+v，错误 %v", len(prompts), result, err)
+			}
+			if strings.Contains(prompts[0], `"Feedback":`) || !strings.Contains(prompts[1], `"Feedback":"上一版格式无效`) {
+				t.Fatalf("只有重试请求应带格式反馈：%q", prompts)
+			}
+			var outputErr *IdeaOutputError
+			if tt.want == "" && !errors.As(err, &outputErr) || tt.want != "" && err != nil {
+				t.Fatalf("最终错误与重试结果不符：%v", err)
+			}
+		})
+	}
+}
+
+type failedIdeaWriter struct {
+	testWriter
+	err   error
+	calls int
+}
+
+func (w *failedIdeaWriter) Complete(context.Context, Owner, string, string) (string, error) {
+	w.calls++
+	return "", w.err
+}
+
+func TestNovelRefineIdeaDoesNotRetryUpstreamFailure(t *testing.T) {
+	upstreamErr := errors.New("上游连接失败")
+	writer := &failedIdeaWriter{err: upstreamErr}
+	service := NewService(nil, writer, nil, nil)
+	_, err := service.RefineIdea(context.Background(), Owner{}, RefineIdeaInput{
+		Brief: "守塔人发现断绳", ModelCode: "writer",
+	})
+	var outputErr *IdeaOutputError
+	if !errors.Is(err, upstreamErr) || errors.As(err, &outputErr) || writer.calls != 1 {
+		t.Fatalf("上游调用错误不应当按格式错误重试，调用 %d 次，错误 %v", writer.calls, err)
+	}
+}
+
 func TestNovelRefineIdeaRetriesRepeatedNames(t *testing.T) {
 	const old = "萧景珩成了闲散王爷，绑定闲王日常系统。"
 	const improved = "桥吏顾承舟得到渡口验契器。太子的船靠岸时，他从两份通行凭据上发现了同一道裂痕。"

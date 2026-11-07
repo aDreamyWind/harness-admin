@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -31,6 +32,104 @@ data: [DONE]
 	if !forwarder.streaming || gateway.record.Source != "ai_novel" || gateway.record.TotalTokens != 20 ||
 		!strings.Contains(string(gateway.record.RequestBody), "待审正文") || string(gateway.record.ResponseBody) != forwarder.payload {
 		t.Fatalf("未记录小说调用参数、流式响应或用量: %+v", gateway.record)
+	}
+}
+
+func TestNovelIdeaRefinementClassifiesContentInspectionInStream(t *testing.T) {
+	for _, tc := range []struct {
+		name, errorFrame string
+		wantCode         string
+	}{
+		{"百炼兼容接口", `{"error":{"code":"data_inspection_failed","type":"data_inspection_failed","message":"供应商内部信息"}}`, modelContentInspectionCode},
+		{"百炼错误码别名", `{"error":{"type":"DataInspectionFailed","message":"供应商内部信息"}}`, modelContentInspectionCode},
+		{"其他流式错误", `{"error":{"code":"internal_error","message":"data_inspection_failed"}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := &dramaGatewayStub{}
+			payload := "data: {\"choices\":[{\"delta\":{\"content\":\"部分正文\"}}]}\n\ndata: " + tc.errorFrame + "\n\n"
+			writer := &novelWriter{completion: dramaWriter{
+				gateway: gateway, forwarder: &dramaStreamForwarderStub{payload: payload}, source: "ai_novel",
+			}}
+			service := novel.NewService(nil, writer, nil, nil)
+			result, err := service.RefineIdea(context.Background(), novel.Owner{}, novel.RefineIdeaInput{
+				Brief: "旧城守钟人", Instruction: "指定主角姓氏", ModelCode: "writer",
+			})
+			if err == nil || result.Brief != "" || errors.Is(err, novel.ErrContentInspection) != (tc.wantCode != "") {
+				t.Fatalf("流式错误分类或返回结果不正确：%+v，%v", result, err)
+			}
+			if gateway.record.Result != "failed" || gateway.record.HTTPStatus != http.StatusOK ||
+				gateway.record.ErrorCode != tc.wantCode || string(gateway.record.ResponseBody) != payload ||
+				gateway.record.Timing == nil || gateway.record.Timing.FirstContentAt == nil {
+				t.Fatal("流式错误没有按实际状态和阶段记录")
+			}
+		})
+	}
+}
+
+type ideaGatewayStub struct {
+	dramaGatewayStub
+	baseURL, upstreamID string
+}
+
+func (g *ideaGatewayStub) PrepareForUser(ctx context.Context, org, user string, body []byte) (modelgateway.PreparedRequest, error) {
+	prepared, err := g.dramaGatewayStub.PrepareForUser(ctx, org, user, body)
+	prepared.Route.ProviderBaseURL = g.baseURL
+	prepared.Route.UpstreamModelID = g.upstreamID
+	return prepared, err
+}
+
+func TestNovelIdeaRefinementTemperatureUsesVerifiedRoute(t *testing.T) {
+	const model = "deepseek-v4-flash-0731"
+	for _, tc := range []struct {
+		name, baseURL, upstreamID string
+		withTemperature           bool
+	}{
+		{"百炼通用接入", "https://dashscope.aliyuncs.com/compatible-mode/v1", model, true},
+		{"百炼工作空间接入", "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", model, true},
+		{"百炼其他模型", "https://dashscope.aliyuncs.com/compatible-mode/v1", "deepseek-v4-pro", false},
+		{"其他供应商同名模型", "https://dashscope.aliyuncs.com.example.com/compatible-mode/v1", model, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			owner := novel.Owner{OrganizationID: "org", UserID: "user"}
+			gateway := &ideaGatewayStub{baseURL: tc.baseURL, upstreamID: tc.upstreamID}
+			forwarder := &dramaForwarderStub{}
+			writer := &novelWriter{completion: dramaWriter{gateway: gateway, forwarder: forwarder, source: "ai_novel"}}
+			if _, err := writer.Complete(ctx, owner, model, "大纲或正文"); err != nil {
+				t.Fatal(err)
+			}
+			var ordinary map[string]any
+			if err := json.Unmarshal(gateway.record.RequestBody, &ordinary); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := ordinary["temperature"]; ok {
+				t.Fatal("普通小说任务未保留供应商默认温度")
+			}
+
+			service := novel.NewService(nil, writer, nil, nil)
+			forwarderIdea := &dramaStreamForwarderStub{payload: "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"brief\\\":\\\"改写后的灵感\\\"}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"}
+			writer.completion.forwarder = forwarderIdea
+			result, err := service.RefineIdea(ctx, owner, novel.RefineIdeaInput{Brief: "旧城守钟人", ModelCode: model})
+			if err != nil || result.Brief != "改写后的灵感" {
+				t.Fatalf("灵感优化失败: %q，%v", result.Brief, err)
+			}
+			var refined map[string]any
+			if err := json.Unmarshal(gateway.record.RequestBody, &refined); err != nil {
+				t.Fatal(err)
+			}
+			temperature, exists := refined["temperature"]
+			if tc.withTemperature {
+				value, isNumber := temperature.(float64)
+				if !isNumber || !(value < 2 && math.Nextafter32(float32(value), 2) == 2) {
+					t.Fatalf("灵感优化温度没有取到小于 2 的上界附近: %v", temperature)
+				}
+			} else if exists {
+				t.Fatalf("不匹配的上游路由不应传采样温度: %s", gateway.record.RequestBody)
+			}
+			if refined["enable_thinking"] != ordinary["enable_thinking"] || refined["reasoning_effort"] != ordinary["reasoning_effort"] {
+				t.Fatalf("灵感优化改变了原有思考参数: %s", gateway.record.RequestBody)
+			}
+		})
 	}
 }
 
