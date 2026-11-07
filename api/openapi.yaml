@@ -517,6 +517,11 @@ paths:
                 brief: { type: string, minLength: 1, maxLength: 4000 }
                 instruction: { type: string, maxLength: 1200, description: 作者希望如何优化灵感。 }
                 modelCode: { type: string, minLength: 1, maxLength: 160 }
+                previousSuggestions:
+                  type: array
+                  maxItems: 3
+                  items: { type: string, minLength: 1, maxLength: 500 }
+                  description: 供模型参考的相近灵感历史片段。未填写优化要求时，用于避免重复使用人物姓名、系统名和开场设定。
       responses:
         '200':
           description: 优化后的故事灵感。
@@ -531,11 +536,13 @@ paths:
                     required: [brief]
                     properties:
                       brief: { type: string, minLength: 1, maxLength: 4000 }
+                      protagonistName: { type: string, description: 优化结果中实际使用的主角姓名，用于对照本地灵感历史。 }
+                      systemName: { type: string, description: 优化结果中实际使用的系统专名，用于对照本地灵感历史。 }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '502':
-          description: 文本模型调用失败或输出不符合结构要求。
+          description: 文本模型调用失败、输出不符合结构要求，或重试后仍与相近历史版本重复。
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }

@@ -114,13 +114,16 @@ type CreateInput struct {
 }
 
 type RefineIdeaInput struct {
-	Brief       string `json:"brief"`
-	Instruction string `json:"instruction"`
-	ModelCode   string `json:"modelCode"`
+	Brief               string   `json:"brief"`
+	Instruction         string   `json:"instruction"`
+	ModelCode           string   `json:"modelCode"`
+	PreviousSuggestions []string `json:"previousSuggestions,omitempty"`
 }
 
 type RefineIdeaResult struct {
-	Brief string `json:"brief"`
+	Brief           string `json:"brief"`
+	ProtagonistName string `json:"protagonistName,omitempty"`
+	SystemName      string `json:"systemName,omitempty"`
 }
 
 type Action struct {
@@ -174,24 +177,6 @@ func (s *Service) List(ctx context.Context, owner Owner) ([]Book, error) {
 
 func (s *Service) Models(ctx context.Context, owner Owner) ([]Model, error) {
 	return s.writer.Models(ctx, owner)
-}
-
-func (s *Service) RefineIdea(ctx context.Context, owner Owner, input RefineIdeaInput) (RefineIdeaResult, error) {
-	input.Brief = strings.TrimSpace(input.Brief)
-	input.Instruction = strings.TrimSpace(input.Instruction)
-	if !valid(input.Brief, 4000) || !validOptional(input.Instruction, 1200) {
-		return RefineIdeaResult{}, fmt.Errorf("%w，请输入有效的故事灵感，优化要求最多 1200 字", ErrInvalid)
-	}
-	prompt := refineIdeaPrompt + asJSON(struct{ Brief, Instruction string }{input.Brief, input.Instruction})
-	var result RefineIdeaResult
-	if err := s.completeJSON(ctx, owner, input.ModelCode, prompt, &result); err != nil {
-		return RefineIdeaResult{}, err
-	}
-	result.Brief = strings.TrimSpace(result.Brief)
-	if !valid(result.Brief, 4000) {
-		return RefineIdeaResult{}, ErrGeneration
-	}
-	return result, nil
 }
 
 func (s *Service) Get(ctx context.Context, owner Owner, id string) (Project, error) {

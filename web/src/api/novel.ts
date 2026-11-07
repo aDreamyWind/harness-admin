@@ -94,7 +94,7 @@ export const getNovel = (id: string) => request<NovelProject>(base + '/projects/
 export const listNovelFinalizedChapters = (id: string) =>
   request<{ number: number; title: string }[]>(`${base}/projects/${encodeURIComponent(id)}/finalized-chapters`)
 
-function post<T>(path: string, data: object, options?: Pick<RequestInit, 'keepalive'>) {
+function post<T>(path: string, data: object, options?: Pick<RequestInit, 'keepalive' | 'signal'>) {
   return request<T>(base + path, {
     method: 'POST',
     ...options,
@@ -103,8 +103,10 @@ function post<T>(path: string, data: object, options?: Pick<RequestInit, 'keepal
   })
 }
 
-export const refineNovelIdea = (input: { brief: string; instruction?: string; modelCode: string }) =>
-  post<{ brief: string }>('/ideas/refine', input)
+export const refineNovelIdea = (
+  input: { brief: string; instruction?: string; modelCode: string; previousSuggestions?: string[] },
+  signal?: AbortSignal,
+) => post<{ brief: string; protagonistName?: string; systemName?: string }>('/ideas/refine', input, { signal })
 export const createNovel = (input: NovelCreate) => post<NovelProject>('/projects', input)
 export const applyNovelAction = (p: NovelProject, action: NovelAction) =>
   post<NovelProject>('/projects/' + encodeURIComponent(p.id) + '/actions', { ...action, version: p.version })

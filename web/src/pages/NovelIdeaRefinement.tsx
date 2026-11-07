@@ -1,11 +1,11 @@
 import { HistoryOutlined, RobotOutlined } from '@ant-design/icons'
 import { useMutation } from '@tanstack/react-query'
 import { Alert, Button, Input, Select, Space } from 'antd'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { formatDateTime } from '../utils/dateTime'
 import { refineNovelIdea } from '../api/novel'
-import { listNovelIdeaHistory, novelIdeaHistoryPrefix, persistNovelIdeaHistoryEntry, type NovelIdeaHistoryEntry } from './novelIdeaHistory'
+import { findRepeatedIdeaSuggestion, ideaSuggestionExcerpts, listNovelIdeaHistory, matchingIdeaSuggestions, novelIdeaHistoryPrefix, persistNovelIdeaHistoryEntry, type NovelIdeaHistoryEntry } from './novelIdeaHistory'
 
 export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onApply }: {
   brief: string
@@ -19,6 +19,7 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
   const [saved, setSaved] = useState(() => listNovelIdeaHistory(historyScope))
   const [temporary, setTemporary] = useState<NovelIdeaHistoryEntry[]>([])
   const [historyID, setHistoryID] = useState<string>()
+  const activeRefine = useRef<AbortController | null>(null)
   const history = [...temporary, ...saved.filter((entry) => !temporary.some((item) => item.id === entry.id))]
     .sort((first, second) => second.savedAt - first.savedAt)
   const selected = history.find((entry) => entry.id === historyID) ?? history[0]
@@ -34,6 +35,8 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
     return () => window.removeEventListener('storage', sync)
   }, [historyScope])
 
+  useEffect(() => () => activeRefine.current?.abort(), [historyScope])
+
   function remember(entry: NovelIdeaHistoryEntry) {
     if (persistNovelIdeaHistoryEntry(historyScope, entry)) {
       setSaved(listNovelIdeaHistory(historyScope))
@@ -44,8 +47,32 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
   }
 
   const refine = useMutation({
-    mutationFn: ({ entry, modelCode }: { entry: NovelIdeaHistoryEntry; modelCode: string }) =>
-      refineNovelIdea({ brief: entry.source.trim(), modelCode, instruction: entry.instruction }),
+    mutationFn: async ({ entry, modelCode, signal }: {
+      entry: NovelIdeaHistoryEntry; modelCode: string; signal: AbortSignal
+    }) => {
+      const source = entry.source.trim()
+      const related = () => historyScope && !entry.instruction
+        ? matchingIdeaSuggestions([...history, ...listNovelIdeaHistory(historyScope)], source)
+        : []
+      const generate = (previous: string[]) => {
+        const excerpts = ideaSuggestionExcerpts(previous)
+        return refineNovelIdea({ brief: source, modelCode, instruction: entry.instruction,
+          previousSuggestions: excerpts.length ? excerpts : undefined }, signal)
+      }
+
+      const first = await generate(related())
+      const previous = related()
+      const repeated = findRepeatedIdeaSuggestion(previous, source, first)
+      if (!repeated) return first
+
+      // 把撞名放到片段开头，即使它在原版的 500 字以外也能传给模型。
+      const evidence = repeated.name ? `旧版已用名称「${repeated.name}」\n${repeated.suggestion}` : repeated.suggestion
+      const retry = await generate([evidence, ...previous.filter((item) => item !== repeated.suggestion)])
+      if (findRepeatedIdeaSuggestion(related(), source, retry)) {
+        throw new Error('这次仍与相近的历史版本重复，请再生成一次')
+      }
+      return retry
+    },
     onSuccess: (data, { entry }) => remember({ ...entry, result: data.brief }),
   })
   const source = brief.trim()
@@ -59,9 +86,11 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
   function generate() {
     if (!model || !source || pending || disabled) return
     const entry = { ...ideaVersion(brief), modelName: model.name, instruction: instructionText }
+    const controller = new AbortController()
+    activeRefine.current = controller
     remember(entry)
     setHistoryID(entry.id)
-    refine.mutate({ entry, modelCode: model.code })
+    refine.mutate({ entry, modelCode: model.code, signal: controller.signal })
   }
 
   function apply(value: string) {
@@ -93,6 +122,7 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
             onChange={(event) => setInstruction(event.target.value)}
             placeholder="例如：把设定改成民国悬疑，加强主角的两难，保留那把钥匙。" />
           <p className="novel-hint">{model ? `使用 ${model.name}。可以先看结果，再决定是否采用。` : '需要可用的文本模型。'}</p>
+          {!instructionText && <p className="novel-hint">留空时会检查当前浏览器里相近灵感的全部历史结果，发现重复会自动再试。</p>}
           <Button loading={pending} disabled={disabled || !source || !model} onClick={generate}>
             生成优化建议
           </Button>
@@ -110,7 +140,7 @@ export function NovelIdeaRefinement({ brief, model, disabled, historyScope, onAp
       )}
       {panel === 'history' && (
         <div className="novel-ai-panel" role="region" aria-label="灵感历史">
-          <p className="novel-hint">版本保存在当前浏览器。恢复旧版前会保留你当前填写的内容。</p>
+          <p className="novel-hint">灵感历史保存在当前浏览器。点击下方的恢复按钮，会把所选内容填回上方输入框，并保留你当前填写的内容。</p>
           {selected ? <>
             <label htmlFor="novel-idea-history">查看版本</label>
             <Select id="novel-idea-history" value={selected.id} onChange={setHistoryID} style={{ width: '100%' }}

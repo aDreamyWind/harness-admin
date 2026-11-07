@@ -21,6 +21,8 @@ type novelHTTPStub struct {
 	owner              novel.Owner
 	createInput        novel.CreateInput
 	refineInput        novel.RefineIdeaInput
+	refineResult       *novel.RefineIdeaResult
+	refineError        error
 	planInput          novel.ChapterPlanInput
 	actionInput        novel.Action
 	actionResult       *novel.Project
@@ -46,6 +48,12 @@ func (s *novelHTTPStub) Models(_ context.Context, owner novel.Owner) ([]novel.Mo
 func (s *novelHTTPStub) RefineIdea(_ context.Context, owner novel.Owner, input novel.RefineIdeaInput) (novel.RefineIdeaResult, error) {
 	s.owner = owner
 	s.refineInput = input
+	if s.refineError != nil {
+		return novel.RefineIdeaResult{}, s.refineError
+	}
+	if s.refineResult != nil {
+		return *s.refineResult, nil
+	}
 	return novel.RefineIdeaResult{Brief: "一名守塔人追查午夜呼救的来历"}, nil
 }
 func (s *novelHTTPStub) Create(_ context.Context, owner novel.Owner, input novel.CreateInput) (novel.Project, error) {
@@ -364,7 +372,7 @@ func TestNovelRoutesRequireSessionAndUseSessionOwner(t *testing.T) {
 			}
 			if test.path == "/ideas/refine" && test.status == http.StatusOK {
 				want := novel.RefineIdeaInput{Brief: "守塔人听到呼救", Instruction: "加强悬疑感", ModelCode: "writer"}
-				if stub.refineInput != want || !strings.Contains(recorder.Body.String(), `"brief":"一名守塔人追查午夜呼救的来历"`) {
+				if !reflect.DeepEqual(stub.refineInput, want) || !strings.Contains(recorder.Body.String(), `"brief":"一名守塔人追查午夜呼救的来历"`) {
 					t.Fatalf("灵感优化请求或预览响应错误: %+v, %s", stub.refineInput, recorder.Body)
 				}
 			}
@@ -375,6 +383,51 @@ func TestNovelRoutesRequireSessionAndUseSessionOwner(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNovelRefineIdeaBindsPreviousSuggestionsAndReportsRepetition(t *testing.T) {
+	stub := &novelHTTPStub{refineResult: &novel.RefineIdeaResult{
+		Brief: "守塔人陆徊借观潮录查明午夜呼救的来历", ProtagonistName: "陆徊", SystemName: "观潮录",
+	}}
+	router := New(Dependencies{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth:   &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}},
+		Novel:  stub, SessionCookie: "test_session",
+	})
+	refine := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/ai-novel/ideas/refine", strings.NewReader(
+			`{"brief":"守塔人听到呼救","modelCode":"writer","previousSuggestions":["守塔人贺岩误以为是潮声","旧版在涨潮时开启剧情"]}`))
+		request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+		request.Header.Set("X-CSRF-Token", "csrf-token")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+	recorder := refine()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("响应 %d，预期 200: %s", recorder.Code, recorder.Body)
+	}
+	want := novel.RefineIdeaInput{
+		Brief: "守塔人听到呼救", ModelCode: "writer",
+		PreviousSuggestions: []string{"守塔人贺岩误以为是潮声", "旧版在涨潮时开启剧情"},
+	}
+	if !reflect.DeepEqual(stub.refineInput, want) {
+		t.Fatalf("未绑定历史优化片段，收到 %+v", stub.refineInput)
+	}
+	for _, field := range []string{`"brief":"守塔人陆徊借观潮录查明午夜呼救的来历"`, `"protagonistName":"陆徊"`, `"systemName":"观潮录"`} {
+		if !strings.Contains(recorder.Body.String(), field) {
+			t.Fatalf("灵感优化响应缺少 %s: %s", field, recorder.Body)
+		}
+	}
+
+	const modelDetail = "只供内部排查的模型结果"
+	stub.refineError = fmt.Errorf("%w: %s", novel.ErrIdeaRepetition, modelDetail)
+	recorder = refine()
+	if body := recorder.Body.String(); recorder.Code != http.StatusBadGateway ||
+		!strings.Contains(body, `"code":"novel_generation_failed"`) || !strings.Contains(body, novel.ErrIdeaRepetition.Error()) ||
+		strings.Contains(body, modelDetail) {
+		t.Fatalf("优化结果重复的错误响应有误: %d %s", recorder.Code, body)
 	}
 }
 

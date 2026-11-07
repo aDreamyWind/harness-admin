@@ -383,6 +383,7 @@
 .novel-outline-issues q { display: block; color: var(--novel-muted); }
 .novel-ai-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   justify-items: start;
   gap: 8px;
   margin-top: 10px;
@@ -393,6 +394,6 @@
   background: #edf6f5;
 }
 .novel-ai-panel label { font-weight: 600; }
-.novel-ai-panel p { margin: 0; }
+.novel-ai-panel p { margin: 0; overflow-wrap: anywhere; }
 .novel-ai-panel .ant-alert { width: 100%; }
 .novel-create-modal .novel-hint { color: #52656a; }
