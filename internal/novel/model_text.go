@@ -4,9 +4,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 )
+
+const ModelOutputFormatMessage = "模型返回的结果格式有误。"
+
+type ModelOutputFormatError struct{ Err error }
+
+func (e *ModelOutputFormatError) Error() string {
+	return fmt.Sprintf("%s %v", ModelOutputFormatMessage, e.Err)
+}
+
+func (e *ModelOutputFormatError) Unwrap() error { return e.Err }
+
+var errExtraModelJSON = errors.New("模型返回了额外的结构化数据")
+
+func isModelJSONFormatError(err error) bool {
+	var syntax *json.SyntaxError
+	return errors.As(err, &syntax) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || errors.Is(err, errExtraModelJSON)
+}
 
 // 只取完整的模型 JSON。部分模型会在结构化答案后附带自然语言说明。
 func decodeModelOutput(raw string, output any) error {
@@ -16,7 +34,16 @@ func decodeModelOutput(raw string, output any) error {
 		_, raw, _ = strings.Cut(raw, "\n")
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
-	if err := decoder.Decode(output); err != nil {
+	err := decoder.Decode(output)
+	var syntax *json.SyntaxError
+	if errors.As(err, &syntax) {
+		if repaired := escapeModelStringWhitespace(raw); repaired != raw {
+			raw = repaired
+			decoder = json.NewDecoder(strings.NewReader(raw))
+			err = decoder.Decode(output)
+		}
+	}
+	if err != nil {
 		return err
 	}
 	tail := strings.TrimSpace(raw[decoder.InputOffset():])
@@ -26,10 +53,42 @@ func decodeModelOutput(raw string, output any) error {
 	if tail != "" {
 		var extra json.RawMessage
 		if json.NewDecoder(strings.NewReader(tail)).Decode(&extra) == nil || strings.ContainsAny(tail, "{}[]`") {
-			return errors.New("模型返回了额外的结构化数据")
+			return errExtraModelJSON
 		}
 	}
 	return nil
+}
+
+// 仅补 JSON 字符串内的字面换行、回车和制表符，保留原有转义及结构。
+func escapeModelStringWhitespace(raw string) string {
+	var out strings.Builder
+	out.Grow(len(raw))
+	inString, escaped := false, false
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		switch {
+		case escaped:
+			escaped = false
+		case ch == '"':
+			inString = !inString
+		case inString:
+			switch ch {
+			case '\\':
+				escaped = true
+			case '\n':
+				out.WriteString(`\n`)
+				continue
+			case '\r':
+				out.WriteString(`\r`)
+				continue
+			case '\t':
+				out.WriteString(`\t`)
+				continue
+			}
+		}
+		out.WriteByte(ch)
+	}
+	return out.String()
 }
 
 func parseReview(raw json.RawMessage) (string, error) {

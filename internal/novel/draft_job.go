@@ -143,7 +143,7 @@ func (s *Service) generateAndSaveDraft(ctx context.Context, owner Owner, id stri
 	if p.Version != input.Version {
 		return ErrConflict
 	}
-	draft, err := s.writeChapterDraft(ctx, owner, &p, index, input.ModelCode, input.Instruction, p.Chapters[index].Review, false)
+	draft, err := s.writeChapterDraft(ctx, owner, &p, index, input.ModelCode, input.Instruction, p.Chapters[index].Review)
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (s *Service) generateAndSaveDraft(ctx context.Context, owner Owner, id stri
 		return errors.New("小说正文任务租约已失效")
 	}
 	saved.Chapters = slices.Clone(saved.Chapters)
-	s.finishChapterDraft(ctx, owner, &saved, index, input.ModelCode, nil)
+	s.finishChapterDraft(ctx, owner, &saved, index, input.ModelCode, nil, nil)
 	if saved.Chapters[index].ReviewFailed {
 		job.WarningMessage = "正文已保存，摘要或审稿未完成。可继续编辑或重新审稿。"
 	}
@@ -194,6 +194,7 @@ func (s *Service) saveDraftForJob(ctx context.Context, owner Owner, p Project, i
 
 func draftJobErrorMessage(err error) string {
 	var draftError *DraftOutputError
+	var formatError *ModelOutputFormatError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "正文生成超时，请重新生成。"
@@ -203,6 +204,8 @@ func draftJobErrorMessage(err error) string {
 		return ErrModel.Error()
 	case errors.As(err, &draftError):
 		return draftError.Error()
+	case errors.As(err, &formatError):
+		return ModelOutputFormatMessage
 	default:
 		return "正文生成未完成，请重新生成。"
 	}

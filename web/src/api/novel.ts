@@ -46,6 +46,11 @@ export interface NovelChapter {
   review: string
   reviewFailed?: boolean
   reviewPassed?: boolean
+  lastReviewRevision?: {
+    bodyChanged: boolean
+    summaryChanged: boolean
+    completedAt: string
+  }
   authorInstruction?: string
   final: boolean
 }

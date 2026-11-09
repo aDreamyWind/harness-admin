@@ -179,12 +179,15 @@ func writeNovelResponse(c *gin.Context, deps Dependencies, success int, data any
 		var countError *novel.SerialOpeningCountError
 		var draftError *novel.DraftOutputError
 		var ideaError *novel.IdeaOutputError
+		var formatError *novel.ModelOutputFormatError
 		if errors.As(err, &countError) {
 			message = countError.Error()
 		} else if errors.As(err, &draftError) {
 			message = draftError.Error()
 		} else if errors.As(err, &ideaError) {
 			message = "模型返回的灵感格式有误，已自动重试。请再生成一次。"
+		} else if errors.As(err, &formatError) {
+			message = novel.ModelOutputFormatMessage
 		}
 		httpx.Fail(c, http.StatusBadGateway, "novel_generation_failed", message)
 	case errors.Is(err, novel.ErrCoverGeneration):

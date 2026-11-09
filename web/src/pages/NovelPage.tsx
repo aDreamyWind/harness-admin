@@ -1,6 +1,6 @@
 import { BookOutlined, EditOutlined, PictureOutlined, PlusOutlined, RobotOutlined } from '@ant-design/icons'
 import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Space, Spin, Tag } from 'antd'
+import { Alert, Button, Card, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Space, Spin, Tag, Typography } from 'antd'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
@@ -8,6 +8,7 @@ import { ApiError } from '../api/client'
 import { applyNovelAction, getNovel, getNovelDraftGeneration, listNovelModels, listNovels, startNovelDraftGeneration,
   type NovelAction, type NovelBeat, type NovelOutline, type NovelProject } from '../api/novel'
 import { useAuth } from '../auth/AuthContext'
+import { formatDateTime } from '../utils/dateTime'
 import { NovelAppendChapters, novelChapterLimit } from './NovelAppendChapters'
 import { NovelCoverEditor } from './NovelCoverEditor'
 import { NovelCreateDialog } from './NovelCreateDialog'
@@ -222,9 +223,10 @@ export function NovelProjectPage() {
   }, [cache, id, location.pathname, location.search, mutate, navigate, organizationId, outlineModel, project.data, userId])
 
   const initialModel = outlineModel ?? (automaticAction?.kind === 'generate_outline' ? automaticAction.modelCode : undefined)
-  const failure = latestAction && latestAction.id !== dismissedFailure && latestAction.variables?.input.kind !== 'append_chapters'
-    && !(latestAction.variables?.input.kind === 'write' && (draftRunning || draftReceiving))
-    ? latestAction.error : null
+  const failedInput = latestAction?.variables?.input
+  const failure = latestAction?.error && failedInput && latestAction.id !== dismissedFailure && failedInput.kind !== 'append_chapters'
+    && !(failedInput.kind === 'write' && (draftRunning || draftReceiving))
+    ? { error: latestAction.error, input: failedInput } : undefined
   async function applyAction(p: NovelProject, input: Exclude<NovelAction, { kind: 'write' }>) {
     if (draftBusy || cache.isMutating({ mutationKey, exact: true })) {
       throw new Error('当前作品还有操作正在进行')
@@ -300,12 +302,17 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
   draftNotice: ReactNode
   revisingOutline?: boolean
   autoOutlining?: boolean
-  failure: Error | null
+  failure?: { error: Error; input: NovelAction }
   reload: () => void
 }) {
   const firstUnfinished = project.chapters.findIndex((chapter) => !chapter.final)
   const [selectedIndex, setSelected] = useState(() => project.confirmed ? (firstUnfinished < 0 ? project.chapterCount - 1 : firstUnfinished) : -1)
   const selected = Math.min(selectedIndex, project.chapters.length - 1)
+  const failedInput = failure?.input
+  const actionError = failedInput && 'chapter' in failedInput && failedInput.chapter !== selected + 1 ? undefined : failure?.error
+  const chapterModelErrorTitle = failedInput?.kind === 'review' || failedInput?.kind === 'revise_review'
+    ? `第 ${failedInput.chapter} 章${failedInput.kind === 'review' ? '审稿' : '按审稿意见修改'}失败` : undefined
+  const errorRequestId = actionError instanceof ApiError ? actionError.requestId : undefined
   const [chapterPage, setChapterPage] = useState(() => Math.floor(Math.max(selected, 0) / chapterPageSize) + 1)
   const [beatPage, setBeatPage] = useState(1)
   const [selectedModel, setModel] = useState<string>()
@@ -410,10 +417,13 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
           ? 'AI 会核对章节之间的前因后果，并尝试修正明确的矛盾。'
           : pending === 'review' || pending === 'revise_review' ? '可以先在站内切换页面，稍后回来查看结果。' : undefined} />}
       {draftNotice}
-      {failure && <Alert type="error" showIcon title={errorMessage(failure)}
-        description={awaitingOpening ? '灵感已保存，可以重试规划。'
+      {actionError && <Alert type="error" showIcon title={chapterModelErrorTitle ?? errorMessage(actionError)}
+        description={chapterModelErrorTitle ? <>
+          <div>{errorMessage(actionError)}</div>
+          {errorRequestId && <div>请求 ID <Typography.Text code copyable>{errorRequestId}</Typography.Text></div>}
+        </> : awaitingOpening ? '灵感已保存，可以重试规划。'
           : initialModel && !project.outline ? '灵感已保存，可以重试生成大纲，也可以自己填写。' : undefined}
-        action={failure instanceof ApiError && failure.code === 'novel_conflict'
+        action={actionError instanceof ApiError && actionError.code === 'novel_conflict'
           ? <Popconfirm title="重新加载会清除当前未保存的修改，继续吗？" onConfirm={reload}><Button size="small">重新加载</Button></Popconfirm>
           : initialModel && !project.outline && <Button size="small" disabled={busy || dirty || !modelCode}
               onClick={() => run({ kind: 'generate_outline', modelCode })}>重试生成</Button>} />}
@@ -665,6 +675,7 @@ function ChapterEditor({ project, index, instruction, setInstruction, modelCode,
   const summaryMissing = !!chapter.body.trim() && !chapter.summary.trim()
   const awaitingRecheck = chapter.reviewFailed && !!chapter.review
   const reviewPassed = chapter.reviewPassed && !dirty && !chapter.reviewFailed && !summaryMissing
+  const lastRevision = chapter.lastReviewRevision
   const writeDisabled = chapterBusy || dirty || !modelCode || !editable
   const generate = () => run({ kind: 'write', chapter: number, modelCode, instruction })
   const reviseFromReview = () => run({ kind: 'revise_review', chapter: number, modelCode })
@@ -703,12 +714,17 @@ function ChapterEditor({ project, index, instruction, setInstruction, modelCode,
           <TextArea id="novel-instruction" rows={2} value={instruction} maxLength={1200} onChange={(event) => setInstruction(event.target.value)} />
         </Form.Item>}
       </Form>
+      {lastRevision && !dirty && !chapterBusy && <Alert type="info" showIcon
+        title={lastRevision.bodyChanged ? '正文已更新'
+          : lastRevision.summaryChanged ? '正文未改动，仅更新了连续性摘要' : '正文和摘要均未改动'}
+        description={<>上次按审稿意见修改 · <time dateTime={lastRevision.completedAt}>{formatDateTime(lastRevision.completedAt)}</time></>} />}
       {reviewPassed && editable && <Alert type="success" showIcon title="审稿通过，可以定稿" />}
       {chapter.review && !reviewPassed && <aside className="novel-review">
         <div className="novel-review-header">
-          <h3>{dirty ? '上一版草稿的审稿意见' : awaitingRecheck ? '上轮意见待复核' : '审稿意见'}</h3>
+          <h3>{dirty ? '上一版草稿的审稿意见' : awaitingRecheck ? '上轮意见待复核'
+            : lastRevision ? '当前草稿仍有待处理意见' : '审稿意见'}</h3>
           {editable && !awaitingRecheck && !summaryMissing && <Popconfirm title="按这份审稿意见修改？"
-            description="会更新本章草稿和连续性摘要，之后只核对原问题及本次修改引入的问题。"
+            description="AI 会尝试修改意见指向的正文句段，再逐条复核。"
             okText="开始修改" cancelText="取消" onConfirm={reviseFromReview}>
             <Button type="primary" size="small" icon={<RobotOutlined />} disabled={writeDisabled}>按审稿意见修改</Button>
           </Popconfirm>}

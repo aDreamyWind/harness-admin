@@ -2,7 +2,6 @@ package novel
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -71,8 +70,8 @@ func (s *Service) RefineIdea(ctx context.Context, owner Owner, input RefineIdeaI
 		if err != nil {
 			return RefineIdeaResult{}, err
 		}
-		candidate, err := decodeIdeaCandidate(raw)
-		if err != nil {
+		var candidate ideaCandidate
+		if err := decodeModelOutput(raw, &candidate); err != nil {
 			feedback = "上一版格式无效。请返回一个完整的 JSON 对象，字符串中的换行和引号须转义。"
 			rejected = &IdeaOutputError{Err: err}
 			continue
@@ -97,53 +96,6 @@ func (s *Service) RefineIdea(ctx context.Context, owner Owner, input RefineIdeaI
 		}
 	}
 	return RefineIdeaResult{}, rejected
-}
-
-func decodeIdeaCandidate(raw string) (ideaCandidate, error) {
-	var candidate ideaCandidate
-	err := decodeModelOutput(raw, &candidate)
-	var syntax *json.SyntaxError
-	if !errors.As(err, &syntax) {
-		return candidate, err
-	}
-	repaired := escapeIdeaStringWhitespace(raw)
-	if repaired != raw {
-		candidate = ideaCandidate{}
-		err = decodeModelOutput(repaired, &candidate)
-	}
-	return candidate, err
-}
-
-// 高温下模型有时直接在 JSON 字符串里换行。只补转义，正文和结构仍按原规则核验。
-func escapeIdeaStringWhitespace(raw string) string {
-	var out strings.Builder
-	out.Grow(len(raw))
-	inString, escaped := false, false
-	for i := 0; i < len(raw); i++ {
-		ch := raw[i]
-		switch {
-		case escaped:
-			escaped = false
-		case ch == '"':
-			inString = !inString
-		case inString:
-			switch ch {
-			case '\\':
-				escaped = true
-			case '\n':
-				out.WriteString(`\n`)
-				continue
-			case '\r':
-				out.WriteString(`\r`)
-				continue
-			case '\t':
-				out.WriteString(`\t`)
-				continue
-			}
-		}
-		out.WriteByte(ch)
-	}
-	return out.String()
 }
 
 type ideaDirection struct {

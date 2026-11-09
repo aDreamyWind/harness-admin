@@ -96,13 +96,20 @@ type Beat struct {
 }
 
 type Chapter struct {
-	AuthorInstruction string `json:"authorInstruction,omitempty"`
-	Body              string `json:"body"`
-	Summary           string `json:"summary"`
-	Review            string `json:"review"`
-	ReviewFailed      bool   `json:"reviewFailed,omitempty"`
-	ReviewPassed      bool   `json:"reviewPassed,omitempty"`
-	Final             bool   `json:"final"`
+	AuthorInstruction  string                 `json:"authorInstruction,omitempty"`
+	Body               string                 `json:"body"`
+	Summary            string                 `json:"summary"`
+	Review             string                 `json:"review"`
+	ReviewFailed       bool                   `json:"reviewFailed,omitempty"`
+	ReviewPassed       bool                   `json:"reviewPassed,omitempty"`
+	LastReviewRevision *ReviewRevisionOutcome `json:"lastReviewRevision,omitempty"`
+	Final              bool                   `json:"final"`
+}
+
+type ReviewRevisionOutcome struct {
+	BodyChanged    bool      `json:"bodyChanged"`
+	SummaryChanged bool      `json:"summaryChanged"`
+	CompletedAt    time.Time `json:"completedAt"`
 }
 
 type CreateInput struct {
@@ -415,32 +422,19 @@ func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, act
 		return nil
 	}
 	switch action.Kind {
-	case "write", "revise_review":
+	case "write":
 		instruction := strings.TrimSpace(action.Instruction)
 		if !validOptional(instruction, 1200) {
 			return ErrInvalid
 		}
-		review := chapter.Review
-		var previous *Chapter
-		if action.Kind == "revise_review" {
-			if chapter.Body == "" || chapter.Review == "" || chapter.ReviewFailed || chapter.ReviewPassed {
-				return fmt.Errorf("%w，请先获取本章有效的审稿意见", ErrState)
-			}
-			saved := *chapter
-			previous = &saved
-			instruction = saved.AuthorInstruction
-			review = reviewText(reviewIssuesToVerify(saved.Review))
-			if review == "" {
-				chapter.Review, chapter.ReviewPassed = "", true
-				return nil
-			}
-		}
-		result, err := s.writeChapterDraft(ctx, owner, p, index, action.ModelCode, instruction, review, previous != nil)
+		result, err := s.writeChapterDraft(ctx, owner, p, index, action.ModelCode, instruction, chapter.Review)
 		if err != nil {
 			return err
 		}
 		*chapter = result
-		s.finishChapterDraft(ctx, owner, p, index, action.ModelCode, previous)
+		s.finishChapterDraft(ctx, owner, p, index, action.ModelCode, nil, nil)
+	case "revise_review":
+		return s.reviseChapterFromReview(ctx, owner, p, index, action.ModelCode)
 	case "save_draft", "finalize":
 		result := Chapter{Body: action.Body, Summary: action.Summary, Final: action.Kind == "finalize", AuthorInstruction: chapter.AuthorInstruction}
 		if !validDraft(&result, result.Final) {
@@ -450,6 +444,7 @@ func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, act
 			result.Review = chapter.Review
 			result.ReviewFailed = chapter.ReviewFailed && !result.Final
 			result.ReviewPassed = chapter.ReviewPassed
+			result.LastReviewRevision = chapter.LastReviewRevision
 		}
 		*chapter = result
 	case "review":
@@ -467,14 +462,15 @@ func (s *Service) applyChapter(ctx context.Context, owner Owner, p *Project, act
 				return fmt.Errorf("%w: %w", &DraftOutputError{Message: "模型未能补全连续性摘要，已保存的正文仍在。"}, err)
 			}
 			chapter.Summary = summary
+			chapter.LastReviewRevision = nil
 			// 重试时原始改稿前的正文已不可用，补齐摘要后只复核已有意见。
 			if previous != nil {
 				previous.Summary = summary
 			}
-			s.reviewAfterDraftChange(ctx, owner, p, index, action.ModelCode, previous, nil)
+			s.reviewAfterDraftChange(ctx, owner, p, index, action.ModelCode, previous, nil, nil)
 			return nil
 		}
-		return s.reviewChapter(ctx, owner, p, index, action.ModelCode, previous)
+		return s.reviewChapter(ctx, owner, p, index, action.ModelCode, previous, nil)
 	}
 	return nil
 }
@@ -485,10 +481,10 @@ func clearChapterReview(chapter *Chapter) {
 	chapter.ReviewPassed = false
 }
 
-func (s *Service) reviewAfterDraftChange(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter, summaryErr error) {
+func (s *Service) reviewAfterDraftChange(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter, summaryErr error, feedback map[int]string) {
 	err := summaryErr
 	if err == nil {
-		err = s.reviewChapter(ctx, owner, p, index, modelCode, previous)
+		err = s.reviewChapter(ctx, owner, p, index, modelCode, previous, feedback)
 	}
 	if err != nil {
 		chapter := &p.Chapters[index]
@@ -502,12 +498,12 @@ func (s *Service) reviewAfterDraftChange(ctx context.Context, owner Owner, p *Pr
 	}
 }
 
-func (s *Service) reviewChapter(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter) error {
+func (s *Service) reviewChapter(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter, feedback map[int]string) error {
 	chapter := &p.Chapters[index]
 	var review string
 	var err error
 	if previous != nil {
-		review, err = s.verifyChapterReview(ctx, owner, p, index, modelCode, *previous)
+		review, err = s.verifyChapterReview(ctx, owner, p, index, modelCode, *previous, false, feedback)
 	} else {
 		memory := s.memoryForChapter(ctx, owner, *p, index, chapter.AuthorInstruction)
 		prompt := memory.guidance() + reviewPrompt + chapterContext(*p, index, chapter.AuthorInstruction, "", memory)
@@ -545,6 +541,9 @@ func completeNovelJSON(ctx context.Context, owner Owner, code, prompt string, ou
 		return err
 	}
 	if err := decodeModelOutput(raw, output); err != nil {
+		if isModelJSONFormatError(err) {
+			err = &ModelOutputFormatError{Err: err}
+		}
 		return fmt.Errorf("%w: %w", ErrGeneration, err)
 	}
 	return nil

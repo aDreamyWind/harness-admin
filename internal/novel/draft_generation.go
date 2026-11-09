@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 )
@@ -19,12 +20,9 @@ type DraftOutputError struct{ Message string }
 func (e *DraftOutputError) Error() string { return e.Message }
 func (e *DraftOutputError) Unwrap() error { return ErrGeneration }
 
-func (s *Service) writeChapterDraft(ctx context.Context, owner Owner, p *Project, index int, modelCode, instruction, review string, revising bool) (Chapter, error) {
+func (s *Service) writeChapterDraft(ctx context.Context, owner Owner, p *Project, index int, modelCode, instruction, review string) (Chapter, error) {
 	memory := s.memoryForChapter(ctx, owner, *p, index, instruction)
 	prompt := memory.guidance() + authorContinuityGuidance + writePrompt + chapterContext(*p, index, instruction, review, memory)
-	if revising {
-		prompt = reviseFromReviewPrompt + prompt
-	}
 	if p.StoryMode == StoryModeSerial {
 		prompt = serialWriteGuidance + prompt
 	}
@@ -33,24 +31,40 @@ func (s *Service) writeChapterDraft(ctx context.Context, owner Owner, p *Project
 	return result, err
 }
 
-func (s *Service) finishChapterDraft(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter) {
+func (s *Service) finishChapterDraft(ctx context.Context, owner Owner, p *Project, index int, modelCode string, previous *Chapter, feedback map[int]string) {
 	chapter := &p.Chapters[index]
 	var err error
 	if chapter.Summary == "" {
 		chapter.Summary, err = s.generateDraftSummary(ctx, owner, p, modelCode, chapter.Body)
 	}
-	s.reviewAfterDraftChange(ctx, owner, p, index, modelCode, previous, err)
+	s.reviewAfterDraftChange(ctx, owner, p, index, modelCode, previous, err, feedback)
 }
 
 func (s *Service) generateChapterDraft(ctx context.Context, owner Owner, p *Project, modelCode, prompt string) (Chapter, error) {
-	draft, err := s.generateChapterFields(ctx, owner, p, modelCode, prompt)
-	var outputError *DraftOutputError
-	if errors.As(err, &outputError) && ctx.Err() == nil {
-		retry := fmt.Sprintf("上一轮的正文没有通过保存校验。%s 请返回完整正文和连续性摘要，正文以 body 字符串返回，最多 %d 字。即使只改摘要，也要完整返回正文。\n",
-			outputError.Message, maxDraftBodyRunes)
-		return s.generateChapterFields(ctx, owner, p, modelCode, retry+prompt)
+	requirement := fmt.Sprintf("请返回完整正文和连续性摘要，正文以 body 字符串返回，最多 %d 字。", maxDraftBodyRunes)
+	return retryChapterCandidate(ctx, p.ID, prompt, requirement, func(prompt string) (Chapter, error) {
+		return s.generateChapterFields(ctx, owner, p, modelCode, prompt)
+	})
+}
+
+func retryChapterCandidate(ctx context.Context, projectID, prompt, requirement string, generate func(string) (Chapter, error)) (Chapter, error) {
+	draft, err := generate(prompt)
+	if err == nil || ctx.Err() != nil {
+		return draft, err
 	}
-	return draft, err
+	var outputError *DraftOutputError
+	var formatError *ModelOutputFormatError
+	var feedback string
+	switch {
+	case errors.As(err, &outputError):
+		feedback = outputError.Message
+	case errors.As(err, &formatError):
+		feedback = "请返回一个完整的 JSON 对象，闭合字符串和对象，字符串内的换行及引号需要转义。"
+	default:
+		return draft, err
+	}
+	slog.WarnContext(ctx, "小说正文结果未通过校验，将补做一次", "project_id", projectID, "error", err)
+	return generate("上一轮的正文没有通过保存校验。" + feedback + " " + requirement + "\n" + prompt)
 }
 
 func (s *Service) generateChapterFields(ctx context.Context, owner Owner, p *Project, modelCode, prompt string) (Chapter, error) {

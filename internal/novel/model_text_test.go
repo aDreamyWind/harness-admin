@@ -1,7 +1,9 @@
 package novel
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -52,5 +54,31 @@ func TestParseReviewWithModelPreambleAndTrailingNotes(t *testing.T) {
 		if got != test.want || (err == nil) != (test.want != "") {
 			t.Errorf("输入 %q，得到 %q，错误 %v，预期 %q", test.raw, got, err, test.want)
 		}
+	}
+}
+
+func TestNovelModelOutputFormatErrorSeparatesDecoderFromModelCall(t *testing.T) {
+	var raw json.RawMessage
+	upstreamErr := json.Unmarshal([]byte(`{]`), &raw)
+	for _, test := range []struct {
+		name     string
+		response string
+		upstream error
+		format   bool
+	}{
+		{"不完整的内层 JSON", `{"body":"开头`, nil, true},
+		{"修复字面换行后仍禁止额外结构", `{"body":"第一段` + "\n" + `第二段"} {"body":"另一个答案"}`, nil, true},
+		{"已解析的字段类型不符", `{"body":[]}`, nil, false},
+		{"上游外层解码错误", "", upstreamErr, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output struct{ Body string }
+			err := completeNovelJSON(context.Background(), Owner{}, "writer", "", &output,
+				func(context.Context, Owner, string, string) (string, error) { return test.response, test.upstream })
+			var format *ModelOutputFormatError
+			if !errors.Is(err, ErrGeneration) || errors.As(err, &format) != test.format {
+				t.Fatalf("模型错误归类不正确: %v", err)
+			}
+		})
 	}
 }

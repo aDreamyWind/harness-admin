@@ -5484,6 +5484,14 @@ components:
                   review: { type: string, description: 统一保存为文本的审稿意见，数组形式的模型输出按条目合并。 }
                   reviewPassed: { type: boolean, description: 本轮审稿没有发现需要修改的实质问题时为 true。 }
                   reviewFailed: { type: boolean, description: 正文已保存但补摘要或自动审稿未完成时为 true，可通过审稿操作重试。 }
+                  lastReviewRevision:
+                    type: object
+                    description: 当前草稿最近一次按审稿意见改稿的内容比较结果。历史记录和其他写作入口可能省略。
+                    required: [bodyChanged, summaryChanged, completedAt]
+                    properties:
+                      bodyChanged: { type: boolean, description: 改稿后的正文与改稿前不同。 }
+                      summaryChanged: { type: boolean, description: 改稿后的连续性摘要与改稿前不同。 }
+                      completedAt: { type: string, format: date-time }
                   authorInstruction: { type: string, maxLength: 1200, description: 作者为本章保存的写作要求。 }
                   final: { type: boolean }
     NovelAction:

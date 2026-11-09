@@ -319,6 +319,27 @@ func TestNovelReopenActionsAndLargeOutline(t *testing.T) {
 	}
 }
 
+func TestNovelRevisionReportsMalformedOutputWithoutInternalDetails(t *testing.T) {
+	stub := &novelHTTPStub{actionError: fmt.Errorf("%w: %w", novel.ErrGeneration,
+		&novel.ModelOutputFormatError{Err: fmt.Errorf("内部解析细节")})}
+	router := New(Dependencies{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth:   &csrfCheckingAuthStub{&accountAuthStub{session: accountTestSession()}},
+		Novel:  stub, SessionCookie: "test_session",
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/ai-novel/projects/book/actions",
+		strings.NewReader(`{"kind":"revise_review","version":2,"chapter":2,"modelCode":"writer"}`))
+	request.AddCookie(&http.Cookie{Name: "test_session", Value: "token"})
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	body := response.Body.String()
+	if response.Code != http.StatusBadGateway || !strings.Contains(body, "novel_generation_failed") ||
+		!strings.Contains(body, novel.ModelOutputFormatMessage) || strings.Contains(body, "内部解析细节") {
+		t.Fatalf("改稿格式错误提示不正确: %d %s", response.Code, body)
+	}
+}
+
 func TestNovelOutlineGenerationReportsChapterCountWithoutExposingProviderErrors(t *testing.T) {
 	stub := &novelHTTPStub{}
 	router := New(Dependencies{

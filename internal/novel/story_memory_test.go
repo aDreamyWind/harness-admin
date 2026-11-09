@@ -50,12 +50,12 @@ func TestStoryMemoryRecallsChapterOutsideSummarySample(t *testing.T) {
 	})
 	s := NewService(nil, writer, nil, nil).WithStoryMemory(archive)
 	ctx := context.Background()
-	draft, err := s.writeChapterDraft(ctx, Owner{}, &p, 49, "writer", "", "", false)
+	draft, err := s.writeChapterDraft(ctx, Owner{}, &p, 49, "writer", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.Chapters[49] = draft
-	if err := s.reviewChapter(ctx, Owner{}, &p, 49, "writer", nil); err != nil || calls != 2 {
+	if err := s.reviewChapter(ctx, Owner{}, &p, 49, "writer", nil, nil); err != nil || calls != 2 {
 		t.Fatalf("写作和审稿应各读取一次档案: %v", err)
 	}
 	p.Chapters[11].Final = false
