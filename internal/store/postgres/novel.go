@@ -77,19 +77,31 @@ func (r *NovelRepository) Get(ctx context.Context, owner novel.Owner, id string)
 
 func (r *NovelRepository) Save(ctx context.Context, owner novel.Owner, p novel.Project) (novel.Project, error) {
 	var cover novel.Cover
-	err := r.db.QueryRow(ctx, `WITH saved AS (
-		UPDATE novel_projects SET title=$1, workspace=$2, chapter_count=$3, version=version+1, updated_at=NOW()
-		WHERE organization_id=$4 AND owner_id=$5 AND id=$6 AND version=$7
-		RETURNING id, version, updated_at
-	)
-	SELECT saved.version, saved.updated_at, COALESCE(c.revision::text, ''), COALESCE(h.source, ''),
-		COALESCE(c.updated_at, saved.updated_at)
-	FROM saved LEFT JOIN novel_project_covers c ON c.project_id=saved.id
-	LEFT JOIN novel_project_cover_history h ON h.project_id=c.project_id AND h.revision=c.revision`,
-		p.Title, p.Workspace, p.ChapterCount, owner.OrganizationID, owner.UserID, p.ID, p.Version).
-		Scan(&p.Version, &p.UpdatedAt, &cover.Revision, &cover.Source, &cover.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return novel.Project{}, novel.ErrConflict
+	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+		var prior novel.Workspace
+		err := tx.QueryRow(ctx, `WITH saved AS (
+			UPDATE novel_projects AS p SET title=$1, workspace=$2, chapter_count=$3, version=p.version+1, updated_at=NOW()
+			FROM novel_projects AS prior
+			WHERE p.organization_id=$4 AND p.owner_id=$5 AND p.id=$6 AND p.version=$7
+				AND prior.id=p.id AND prior.version=p.version
+			RETURNING p.id, p.version, p.updated_at, prior.workspace AS prior_workspace
+		)
+		SELECT saved.version, saved.updated_at, COALESCE(c.revision::text, ''), COALESCE(h.source, ''),
+			COALESCE(c.updated_at, saved.updated_at), saved.prior_workspace
+		FROM saved LEFT JOIN novel_project_covers c ON c.project_id=saved.id
+		LEFT JOIN novel_project_cover_history h ON h.project_id=c.project_id AND h.revision=c.revision`,
+			p.Title, p.Workspace, p.ChapterCount, owner.OrganizationID, owner.UserID, p.ID, p.Version).
+			Scan(&p.Version, &p.UpdatedAt, &cover.Revision, &cover.Source, &cover.UpdatedAt, &prior)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return novel.ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		return syncNovelMemory(ctx, tx, p.ID, prior, p.Workspace)
+	})
+	if err != nil {
+		return novel.Project{}, err
 	}
 	if cover.Revision != "" {
 		p.Cover = &cover

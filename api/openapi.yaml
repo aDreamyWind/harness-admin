@@ -831,6 +831,64 @@ paths:
                         title: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /ai-novel/projects/{id}/story-memory:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: 查询本人小说的故事记忆、待确认冲突和提取进度
+      operationId: getNovelStoryMemory
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/NovelStoryMemoryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /ai-novel/projects/{id}/story-memory/resolve:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 选定一条有定稿证据的事实来解决故事记忆冲突
+      operationId: resolveNovelStoryMemory
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conflictId, choice]
+              properties:
+                conflictId: { type: string, pattern: '^[0-9a-f]{64}$', description: 从故事记忆响应的 conflicts 中取得。 }
+                choice: { type: integer, enum: [0, 1], description: 冲突选项在 options 数组中的下标。 }
+      responses:
+        '200': { $ref: '#/components/responses/NovelStoryMemoryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 冲突已解决或定稿发生变化，请重新读取故事记忆。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /ai-novel/projects/{id}/story-memory/backfill:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: 提交本人小说已定稿章节的后台故事记忆补提取
+      operationId: backfillNovelStoryMemory
+      description: 为尚未提取或提取失败的定稿章节登记任务。提交后可继续创作，使用故事记忆查询接口查看进度。
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, example: {} }
+      responses:
+        '202': { $ref: '#/components/responses/NovelStoryMemoryResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /ai-novel/projects/{id}/chapter-plan:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -5121,6 +5179,18 @@ components:
             required: [data]
             properties:
               data: { $ref: '#/components/schemas/NovelDraftGeneration' }
+    NovelStoryMemoryResponse:
+      description: 该小说从当前定稿中提取的故事记忆、待确认冲突和提取进度。
+      headers:
+        Cache-Control:
+          schema: { type: string, const: 'private, no-store' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { $ref: '#/components/schemas/NovelStoryMemory' }
     NovelCoverConflict:
       description: 封面已被其他操作更新。应用预览时可重新生成预览后确认。
       content:
@@ -5301,6 +5371,39 @@ components:
         errorMessage: { type: string, description: 生成失败时提供的提示。 }
         warningMessage: { type: string, description: 正文已保存但后续处理未完成时提供的提示。 }
         projectVersion: { type: integer, minimum: 1, description: 本次任务最近一次成功保存作品后的版本。 }
+    NovelStoryMemory:
+      type: object
+      required: [facts, conflicts, pending, completed, failed, missing]
+      properties:
+        facts: { type: array, items: { $ref: '#/components/schemas/NovelMemoryFact' } }
+        conflicts:
+          type: array
+          items:
+            type: object
+            required: [id, reason, options]
+            properties:
+              id: { type: string, pattern: '^[0-9a-f]{64}$' }
+              reason: { type: string }
+              options:
+                type: array
+                minItems: 2
+                maxItems: 2
+                items: { $ref: '#/components/schemas/NovelMemoryFact' }
+        pending: { type: integer, minimum: 0, description: 排队或正在提取的定稿章节数。 }
+        completed: { type: integer, minimum: 0, description: 已完成提取的定稿章节数。 }
+        failed: { type: integer, minimum: 0, description: 提取失败的定稿章节数。 }
+        missing: { type: integer, minimum: 0, description: 尚无提取记录的定稿章节数。 }
+    NovelMemoryFact:
+      type: object
+      required: [kind, name, field, value, quote, chapter]
+      properties:
+        kind: { type: string, enum: [character, place, clue] }
+        name: { type: string }
+        field: { type: string, enum: [alias, birth_name, birthplace, relationship, location, region, holder, status, detail] }
+        value: { type: string }
+        related: { type: string, description: 有关联对象时提供其名称。 }
+        quote: { type: string, description: 支持这条事实的定稿正文原句。 }
+        chapter: { type: integer, minimum: 1, maximum: 500, description: 从 1 开始的证据章号。 }
     NovelBook:
       type: object
       required: [id, title, chapterCount, finalizedChapterCount, updatedAt]

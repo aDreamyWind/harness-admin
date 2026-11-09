@@ -11,6 +11,7 @@ import { useAuth } from '../auth/AuthContext'
 import { NovelAppendChapters, novelChapterLimit } from './NovelAppendChapters'
 import { NovelCoverEditor } from './NovelCoverEditor'
 import { NovelCreateDialog } from './NovelCreateDialog'
+import { NovelStoryMemory } from './NovelStoryMemory'
 import { NovelTitleEditor } from './NovelTitleEditor'
 import { ProjectCoverBackdrop } from './ProjectCoverBackdrop'
 import './novel.css'
@@ -313,6 +314,7 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
   const [appendProject, setAppendProject] = useState<NovelProject>()
   const [dirtyVersion, setDirtyVersion] = useState<number>()
   const [instructionDraft, setInstructionDraft] = useState<{ index: number; saved: string; value: string }>()
+  const deskContent = useRef<HTMLDivElement>(null)
   const dirty = dirtyVersion === project.version
   const markDirty = (value: boolean) => setDirtyVersion(value ? project.version : undefined)
   const busy = !!pending && pending !== 'write'
@@ -342,6 +344,13 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
     if (index >= 0) setChapterPage(Math.floor(index / chapterPageSize) + 1)
     setInstructionDraft(undefined)
     markDirty(false)
+  }
+
+  function openMemoryChapter(chapter: number) {
+    if (chapter < 1 || chapter > project.chapters.length) return
+    if (dirty && !window.confirm('放弃当前未保存的修改？')) return
+    switchSection(chapter - 1)
+    deskContent.current?.scrollIntoView({ block: 'start' })
   }
 
   function sectionButton(index: number, label: string, hint?: string, locked = false) {
@@ -426,24 +435,29 @@ function NovelWorkspace({ project, models, modelsNotice, initialModel, fromDrama
             simple current={visibleChapterPage} total={project.chapterCount} pageSize={chapterPageSize}
             showSizeChanger={false} onChange={setChapterPage} />}
         </nav>
-        <Card className="novel-paper" variant="borderless">
-          {selected === -1 && !project.outline && (autoOutlining || (awaitingOpening && pending === 'generate_outline'))
-            ? <div className="novel-generating-outline">
-                <h2>正在规划你的故事</h2>
-                <p>{serial ? 'AI 正在拟定全书主线，并根据开篇需要安排首批章节。'
-                  : `AI 会根据这条灵感拟好故事设定、人物关系和 ${project.chapterCount} 章的写作目标。`}</p>
-              </div>
-            : selected === -1
-            ? <OutlineEditor key={project.version} project={project} modelCode={modelCode} busy={projectBusy} run={run}
-                beatPage={beatPage} setBeatPage={setBeatPage}
-                dirty={dirty} markDirty={markDirty} onStart={() => switchSection(Math.max(0, firstUnfinished))} />
-            : <ChapterEditor key={project.version + ':' + selected} project={project} index={selected}
-                instruction={chapterInstruction} setInstruction={(value) => setInstructionDraft({ index: selected, saved: savedInstruction, value })}
-                modelCode={modelCode} busy={busy} run={run} dirty={dirty} markDirty={markDirty}
-                draftReady={draftReady} draftBusy={writing}
-                ready={chapterReady(selected)} onPrerequisite={() => switchSection(project.confirmed ? Math.max(0, firstUnfinished) : -1)}
-                onNext={() => switchSection(selected + 1)} onAppend={canAppend ? openAppend : undefined} />}
-        </Card>
+        <div ref={deskContent} className="novel-desk-content">
+          <Card className="novel-paper" variant="borderless">
+            {selected === -1 && !project.outline && (autoOutlining || (awaitingOpening && pending === 'generate_outline'))
+              ? <div className="novel-generating-outline">
+                  <h2>正在规划你的故事</h2>
+                  <p>{serial ? 'AI 正在拟定全书主线，并根据开篇需要安排首批章节。'
+                    : `AI 会根据这条灵感拟好故事设定、人物关系和 ${project.chapterCount} 章的写作目标。`}</p>
+                </div>
+              : selected === -1
+              ? <OutlineEditor key={project.version} project={project} modelCode={modelCode} busy={projectBusy} run={run}
+                  beatPage={beatPage} setBeatPage={setBeatPage}
+                  dirty={dirty} markDirty={markDirty} onStart={() => switchSection(Math.max(0, firstUnfinished))} />
+              : <ChapterEditor key={project.version + ':' + selected} project={project} index={selected}
+                  instruction={chapterInstruction} setInstruction={(value) => setInstructionDraft({ index: selected, saved: savedInstruction, value })}
+                  modelCode={modelCode} busy={busy} run={run} dirty={dirty} markDirty={markDirty}
+                  draftReady={draftReady} draftBusy={writing}
+                  ready={chapterReady(selected)} onPrerequisite={() => switchSection(project.confirmed ? Math.max(0, firstUnfinished) : -1)}
+                  onNext={() => switchSection(selected + 1)} onAppend={canAppend ? openAppend : undefined} />}
+          </Card>
+          {selected === -1 && project.outline && <Card className="novel-paper" variant="borderless">
+            <NovelStoryMemory projectId={project.id} openChapter={openMemoryChapter} sourceDisabled={busy} />
+          </Card>}
+        </div>
       </div>
     </>
   )
@@ -496,8 +510,9 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
   const currentBeatPage = Math.min(beatPage, Math.max(1, Math.ceil(outline.beats.length / chapterPageSize)))
   const beatOffset = (currentBeatPage - 1) * chapterPageSize
   const visibleBeats = paginateBeats ? outline.beats.slice(beatOffset, beatOffset + chapterPageSize) : outline.beats
+  const incompleteBeats = outline.beats.filter((beat) => !beat.title.trim() || !beat.goal.trim()).length
   const complete = !!(outline.synopsis.trim() && outline.world.trim() && outline.characters.trim()
-    && outline.beats.every((beat) => beat.title.trim() && beat.goal.trim()))
+    && incompleteBeats === 0)
   const outlineCheck = dirty ? undefined : project.outlineCheck
   const confirmTitle = outlineCheck?.status === 'needs_review' ? '部分因果待核对，仍要确认当前大纲？'
     : outlineCheck?.status === 'unavailable' ? '因果检查未完成，仍要确认当前大纲？' : '确认当前大纲并开放正文写作？'
@@ -588,25 +603,32 @@ function OutlineEditor({ project, modelCode, busy, dirty, markDirty, run, onStar
               onChange={(event) => changeOutline({ ...outline, [key]: event.target.value })} />
           </Form.Item>
         ))}
-        <h3>{serial && !project.confirmed && !hasWrittenChapters && project.chapterCount <= 8 ? `开篇蓝图 · AI 建议 ${project.chapterCount} 章` : '章节蓝图'}</h3>
-        {visibleBeats.map((beat, pageIndex) => {
-          const index = paginateBeats ? beatOffset + pageIndex : pageIndex
-          return (
-            <fieldset className="novel-beat" key={index}>
-              <legend>第 {index + 1} 章</legend>
-              <Form.Item label="标题" htmlFor={`novel-beat-title-${index}`}>
-                <Input id={`novel-beat-title-${index}`} value={beat.title} readOnly={project.confirmed} maxLength={120} onChange={(event) =>
-                  changeOutline({ ...outline, beats: outline.beats.map((item, i) => i === index ? { ...item, title: event.target.value } : item) })} />
-              </Form.Item>
-              <Form.Item label="本章目标" htmlFor={`novel-beat-goal-${index}`}>
-                <TextArea id={`novel-beat-goal-${index}`} rows={2} value={beat.goal} readOnly={project.confirmed} maxLength={1200} onChange={(event) =>
-                  changeOutline({ ...outline, beats: outline.beats.map((item, i) => i === index ? { ...item, goal: event.target.value } : item) })} />
-              </Form.Item>
-            </fieldset>
-          )
-        })}
-        {paginateBeats && <Pagination aria-label="章节蓝图分页" size="small" current={currentBeatPage} total={outline.beats.length}
-          pageSize={chapterPageSize} showSizeChanger={false} onChange={setBeatPage} />}
+        <details className="novel-blueprint" open={!project.confirmed}>
+          <summary><strong>章节蓝图</strong>
+            <span>{serial && !project.confirmed && !hasWrittenChapters && project.chapterCount <= 8 ? 'AI 建议 ' : ''}
+              {outline.beats.length} 章{incompleteBeats > 0 && ` · ${incompleteBeats} 章待补全`}</span>
+          </summary>
+          <div className="novel-blueprint-body">
+            {visibleBeats.map((beat, pageIndex) => {
+              const index = paginateBeats ? beatOffset + pageIndex : pageIndex
+              return (
+                <fieldset className="novel-beat" key={index}>
+                  <legend>第 {index + 1} 章</legend>
+                  <Form.Item label="标题" htmlFor={`novel-beat-title-${index}`}>
+                    <Input id={`novel-beat-title-${index}`} value={beat.title} readOnly={project.confirmed} maxLength={120} onChange={(event) =>
+                      changeOutline({ ...outline, beats: outline.beats.map((item, i) => i === index ? { ...item, title: event.target.value } : item) })} />
+                  </Form.Item>
+                  <Form.Item label="本章目标" htmlFor={`novel-beat-goal-${index}`}>
+                    <TextArea id={`novel-beat-goal-${index}`} rows={2} value={beat.goal} readOnly={project.confirmed} maxLength={1200} onChange={(event) =>
+                      changeOutline({ ...outline, beats: outline.beats.map((item, i) => i === index ? { ...item, goal: event.target.value } : item) })} />
+                  </Form.Item>
+                </fieldset>
+              )
+            })}
+            {paginateBeats && <Pagination aria-label="章节蓝图分页" size="small" current={currentBeatPage} total={outline.beats.length}
+              pageSize={chapterPageSize} showSizeChanger={false} onChange={setBeatPage} />}
+          </div>
+        </details>
       </Form>
       <div className="novel-actions">
         {project.confirmed ? <Button type="primary" onClick={onStart}>进入正文</Button> : <Space wrap>

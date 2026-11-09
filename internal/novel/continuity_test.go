@@ -30,7 +30,7 @@ func TestChapterContextIncludesRecentProseAndOnlyFinalizedHistory(t *testing.T) 
 			FinalizedProse string
 		}
 	}
-	raw := chapterContext(book, 3, "", "")
+	raw := chapterContext(book, 3, "", "", nil)
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestLongChapterContextLimitsHistoryAndPreservesRecentContinuity(t *testing.
 	book.Chapters[chapterCount-1] = Chapter{}
 
 	var got struct{ PriorChapters []priorChapter }
-	if err := json.Unmarshal([]byte(chapterContext(book, chapterCount-1, "", "")), &got); err != nil {
+	if err := json.Unmarshal([]byte(chapterContext(book, chapterCount-1, "", "", nil)), &got); err != nil {
 		t.Fatal(err)
 	}
 	history := got.PriorChapters

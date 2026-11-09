@@ -76,6 +76,13 @@ func (w *novelWriter) Complete(ctx context.Context, owner novel.Owner, model, pr
 	return w.complete(ctx, owner, model, prompt, nil)
 }
 
+func (w *novelWriter) CompleteStoryMemory(ctx context.Context, owner novel.Owner, model, prompt, jobID string) (string, error) {
+	writer := w.completion
+	writer.operation = "story_memory"
+	ctx = modelgateway.WithCallRequestID(ctx, jobID)
+	return writer.complete(ctx, owner.OrganizationID, owner.UserID, model, prompt, true, drama.ModelCallOptions{Stage: "故事档案"}, nil)
+}
+
 func (w *novelWriter) CompleteIdeaRefinement(ctx context.Context, owner novel.Owner, model, prompt string) (string, error) {
 	result, err := w.complete(ctx, owner, model, prompt, applyNovelIdeaTemperature)
 	if errors.Is(err, errModelContentInspection) {

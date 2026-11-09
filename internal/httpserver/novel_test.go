@@ -37,6 +37,11 @@ type novelHTTPStub struct {
 	draftChapter       int
 	draftGeneration    novel.DraftGeneration
 	draftGenerationErr error
+	storyMemory        novel.StoryMemory
+	storyMemoryError   error
+	storyMemoryProject string
+	storyMemoryAction  string
+	memoryResolution   novel.MemoryResolutionInput
 }
 
 func (s *novelHTTPStub) List(_ context.Context, owner novel.Owner) ([]novel.Book, error) {

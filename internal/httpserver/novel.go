@@ -22,6 +22,9 @@ type NovelService interface {
 	Apply(context.Context, novel.Owner, string, novel.Action) (novel.Project, error)
 	StartDraftGeneration(context.Context, novel.Owner, string, int, novel.DraftGenerationInput) (novel.DraftGeneration, error)
 	GetDraftGeneration(context.Context, novel.Owner, string, int) (novel.DraftGeneration, error)
+	GetStoryMemory(context.Context, novel.Owner, string) (novel.StoryMemory, error)
+	BackfillStoryMemory(context.Context, novel.Owner, string) (novel.StoryMemory, error)
+	ResolveStoryMemory(context.Context, novel.Owner, string, novel.MemoryResolutionInput) (novel.StoryMemory, error)
 	CoverModels(context.Context, novel.Owner) ([]novel.Model, error)
 	CoverContent(context.Context, novel.Owner, string, string) (novel.CoverImage, error)
 	ListCoverHistory(context.Context, novel.Owner, string) ([]novel.CoverHistoryItem, error)
@@ -37,6 +40,7 @@ type NovelService interface {
 func registerNovelRoutes(router *gin.Engine, deps Dependencies) {
 	group := router.Group("/api/v1/ai-novel", requireSession(deps))
 	registerNovelCoverRoutes(group, deps)
+	registerNovelStoryMemoryRoutes(group, deps)
 	group.GET("/models", func(c *gin.Context) {
 		items, err := deps.Novel.Models(c.Request.Context(), novelOwner(c))
 		writeNovelResponse(c, deps, http.StatusOK, items, err)

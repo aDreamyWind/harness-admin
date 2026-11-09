@@ -135,6 +135,43 @@ export const startNovelDraftGeneration = (project: NovelProject, input: Extract<
 export const planNovelChapters = (p: NovelProject, input: { count: number; modelCode: string; instruction: string }) =>
   post<{ beats: NovelBeat[] }>(`/projects/${encodeURIComponent(p.id)}/chapter-plan`, { ...input, version: p.version })
 
+export type NovelMemoryKind = 'character' | 'place' | 'clue'
+
+export interface NovelMemoryFact {
+  kind: NovelMemoryKind
+  name: string
+  field: string
+  value: string
+  related?: string
+  quote: string
+  chapter: number
+}
+
+export interface NovelMemoryConflict {
+  id: string
+  reason: string
+  options: [NovelMemoryFact, NovelMemoryFact]
+}
+
+export interface NovelStoryMemory {
+  facts: NovelMemoryFact[]
+  conflicts: NovelMemoryConflict[]
+  pending: number
+  completed: number
+  failed: number
+  missing: number
+}
+
+const storyMemoryPath = (id: string) => `/projects/${encodeURIComponent(id)}/story-memory`
+
+export const getNovelStoryMemory = (id: string, signal?: AbortSignal) =>
+  request<NovelStoryMemory>(base + storyMemoryPath(id), { signal, cache: 'no-store' })
+
+export const backfillNovelStoryMemory = (id: string) => post<NovelStoryMemory>(storyMemoryPath(id) + '/backfill', {})
+
+export const resolveNovelMemoryConflict = (id: string, conflictId: string, choice: 0 | 1) =>
+  post<NovelStoryMemory>(storyMemoryPath(id) + '/resolve', { conflictId, choice })
+
 export function uploadNovelCover(id: string, file: File) {
   const body = new FormData()
   body.append('file', file)

@@ -20,7 +20,8 @@ func (e *DraftOutputError) Error() string { return e.Message }
 func (e *DraftOutputError) Unwrap() error { return ErrGeneration }
 
 func (s *Service) writeChapterDraft(ctx context.Context, owner Owner, p *Project, index int, modelCode, instruction, review string, revising bool) (Chapter, error) {
-	prompt := authorContinuityGuidance + writePrompt + chapterContext(*p, index, instruction, review)
+	memory := s.memoryForChapter(ctx, owner, *p, index, instruction)
+	prompt := memory.guidance() + authorContinuityGuidance + writePrompt + chapterContext(*p, index, instruction, review, memory)
 	if revising {
 		prompt = reviseFromReviewPrompt + prompt
 	}

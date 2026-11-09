@@ -250,7 +250,7 @@ export function ModelGatewayPage() {
       render: (_, item) => <div className="gateway-call-model">
         <strong>{item.modelName || item.modelCode}</strong>
         <div>
-          <Tag>{item.operation === 'video_task_query' ? '视频状态查询' : item.operation === 'video' ? '视频生成提交'
+          <Tag>{item.operation === 'story_memory' ? '故事档案提取' : item.operation === 'video_task_query' ? '视频状态查询' : item.operation === 'video' ? '视频生成提交'
             : item.modelType === 'image' ? '图片' : item.modelType === 'video' ? '视频' : '对话'}</Tag>
           {item.streaming ? <Tag>流式</Tag> : null}
         </div>

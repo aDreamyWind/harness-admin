@@ -35,6 +35,18 @@ data: [DONE]
 	}
 }
 
+func TestNovelStoryMemoryWriterRecordsJobAndOperation(t *testing.T) {
+	gateway := &dramaGatewayStub{}
+	forwarder := &dramaStreamForwarderStub{payload: "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"facts\\\":[]}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"}
+	writer := &novelWriter{completion: dramaWriter{gateway: gateway, forwarder: forwarder, source: "ai_novel"}}
+	const jobID = "30941f8f-02d0-4f93-8c0a-0b58869a09e3"
+	got, err := writer.CompleteStoryMemory(context.Background(), novel.Owner{}, "writer", "提取定稿事实", jobID)
+	if err != nil || got != `{"facts":[]}` || gateway.record.RequestID != jobID || gateway.record.Source != "ai_novel" ||
+		gateway.record.Operation != "story_memory" || gateway.record.Timing == nil || gateway.record.Timing.Stage != "故事档案" {
+		t.Fatalf("故事档案调用未按任务关联记录: %q，%v", got, err)
+	}
+}
+
 func TestNovelIdeaRefinementClassifiesContentInspectionInStream(t *testing.T) {
 	for _, tc := range []struct {
 		name, errorFrame string

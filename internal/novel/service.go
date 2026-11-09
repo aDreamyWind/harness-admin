@@ -166,6 +166,7 @@ type Service struct {
 	coverStyles    CoverStyleResolver
 	coverJobs      CoverGenerationStore
 	draftJobs      DraftGenerationStore
+	storyMemory    MemoryStore
 }
 
 func NewService(repo Repository, writer Writer, coverGenerator CoverGenerator, coverPreviews CoverPreviewStore) *Service {
@@ -508,7 +509,8 @@ func (s *Service) reviewChapter(ctx context.Context, owner Owner, p *Project, in
 	if previous != nil {
 		review, err = s.verifyChapterReview(ctx, owner, p, index, modelCode, *previous)
 	} else {
-		prompt := reviewPrompt + chapterContext(*p, index, chapter.AuthorInstruction, "")
+		memory := s.memoryForChapter(ctx, owner, *p, index, chapter.AuthorInstruction)
+		prompt := memory.guidance() + reviewPrompt + chapterContext(*p, index, chapter.AuthorInstruction, "", memory)
 		var result json.RawMessage
 		if err := s.generate(ctx, owner, p, modelCode, prompt, &result); err != nil {
 			return err

@@ -33,7 +33,7 @@
 
 | 模块 | 已在后台执行的主要入口 | 仍依赖请求等待的入口 |
 | --- | --- | --- |
-| 小说 | 封面预览、生成正文及「AI 改写」。页面通过对应生成状态接口查询。[封面接口](../internal/httpserver/novel_cover.go) · [小说工作台](../web/src/pages/NovelPage.tsx) | AI 开篇、大纲生成与检查、续批章节蓝图、按审稿意见修改、单独审稿或补摘要、拟题及灵感优化。新建接口先保存作品，开篇实际由工作台的大纲生成请求发起。手工保存草稿和定稿只做校验与保存。[小说接口](../internal/httpserver/novel.go) · [小说工作台](../web/src/pages/NovelPage.tsx) |
+| 小说 | 封面预览、生成正文及「AI 改写」、定稿后的故事档案提取。页面通过对应状态接口查询。[封面接口](../internal/httpserver/novel_cover.go) · [小说工作台](../web/src/pages/NovelPage.tsx) | AI 开篇、大纲生成与检查、续批章节蓝图、按审稿意见修改、单独审稿或补摘要、拟题及灵感优化。新建接口先保存作品，开篇实际由工作台的大纲生成请求发起。手工保存草稿不调用模型，定稿写库时只登记故事档案任务。[小说接口](../internal/httpserver/novel.go) · [小说工作台](../web/src/pages/NovelPage.tsx) |
 | 漫剧 | 项目生成与重解析、批次解析、分镜与节奏优化、形象图、画布媒体、封面和片段视频。项目、批次、分镜、形象图与片段视频等进程内任务重启后会标记中断，按各流程保留或续用已保存的成果。[漫剧接口](../internal/httpserver/drama.go) · [重启恢复](../internal/drama/service.go) | 已核对的主要生成入口都由后台执行。 |
 | 试衣 | 试穿与衣物出图使用 PostgreSQL 队列，页面查询任务和结果。[试衣接口](../internal/httpserver/tryon.go) | 素材弹窗内的参考图标准化预览、文字生成人物与衣物识别仍同步。两种出图的业务上限为 6 分钟，衣物识别为 90 秒。[素材弹窗](../web/src/pages/TryOnAssetDialog.tsx) · [素材预览](../internal/tryon/asset_preview.go) · [人物生成与识别](../internal/tryon/service.go) |
 
@@ -52,6 +52,7 @@
 | 链路 | 已有设计和排查入口 |
 | --- | --- |
 | **小说正文任务** | `POST` 按章节提交，`GET` 查询 `/api/v1/ai-novel/projects/{id}/chapters/{chapter}/draft-generation`。后台总上限 40 分钟，Redis 租约 41 分钟，结束状态保留 24 小时。先保存通过校验的正文，再补缺失的摘要并自动审稿，失败时保留正文供编辑或补审。保存使用作品版本，处理期间其他修改会触发版本冲突。状态可在刷新后重新查询，进程中断按租约收敛。[正文任务](../internal/novel/draft_job.go) · [正文和摘要](../internal/novel/draft_generation.go) · [小说接口](../internal/httpserver/novel.go) |
+| **小说故事档案** | 定稿与登记任务在同一个 PostgreSQL 事务。任务运行上限 10 分钟，租约 11 分钟。进程中断后可重新领取过期任务。重新定稿更换任务身份，撤回定稿移除相关档案，过期或已撤回的任务不能写回。运行失败留状态，作品大纲可以补齐历史定稿或重试失败。下次定稿也会补排该作品尚未入队的定稿，迁移时不会批量发模型请求。模型调用以任务 ID 关联，操作为 `story_memory`。[任务存储](../internal/store/postgres/novel_memory.go) · [后台提取](../internal/novel/story_memory_worker.go) · [状态接口](../internal/httpserver/novel_story_memory.go) |
 | **小说文本调用** | 文本适配器读取完整的上游流式正文，单次模型调用有 10 分钟上下文。遗留同步接口在模型调用和解析、校验完成后返回。灵感预览后端最多两次模型调用，格式与历史重复共用一次补做。浏览器检查更多本地历史后可以另发一次请求，因此一次点击最坏可能有四次模型调用。[小说预览](../internal/novel/idea_refinement.go) · [文本适配器](../internal/app/drama_writer.go) · [浏览器预览](../web/src/pages/NovelIdeaRefinement.tsx) |
 | **小说封面** | 使用后台生成任务，生成上下文 10 分钟，租约 11 分钟。同步兼容接口也复用这份任务。区分供应商生成、图片验收、历史归档与保存当前结果。已有封面历史可供核对，不能因预览失败覆盖上次采用版本。[封面任务](../internal/novel/cover_generation.go) |
 | **漫剧解析和分镜** | 批次单次文本调用 10 分钟，整批 8 小时。分镜单次 10 分钟，整次运行 3 小时。解析按输入指纹持久化已通过的证据单元，失败时复用检查点。分镜在已有问题和总调用预算内做局部修订，失败保留可复核的草稿或历史版本。页面进度断开后可重新订阅，不能据此判断后台已停止。[漫剧工作流](ai-drama-workflow.md) · [批次步骤](../internal/drama/batch_workflow.go) · [分镜执行](../internal/drama/storyboard_workflow.go) |
@@ -60,6 +61,12 @@
 | **试衣出图** | 试穿和衣物生成队列单任务业务预算 6 分钟，租约 7 分钟。共用生图适配器虽设 10 分钟调用上限，仍受上层 6 分钟约束。领取与写回有独立短时限，写回需匹配仍有效的租约。租约过期转失败，显式重试才重新生成。本站任务轮询只读状态。下载模型已返回的同一图片链接可以按适配器规则有限补做，和重新发起一次出图是不同操作。试衣 worker 当前日志未统一使用任务 ID 关联，应按来源 `ai_tryon`、操作、调用身份和时间核对。[试衣设计](ai-tryon-design.md) · [试穿队列](../internal/tryon/tryon_jobs.go) · [衣物队列](../internal/tryon/garment_jobs.go) · [生图适配器](../internal/app/drama_image.go) · [图片下载](../internal/modelprovider/image_download.go) |
 
 ## 已验证案例
+
+### 从旧定稿找回未进入摘要抽样的地点
+
+故事档案按定稿保存人物、名字和别名、地点、伏笔以及原文证据。写正文、审稿和按意见复核会按本章目标、作者要求、草稿中的名称和关联对象查找有用的历史证据，最多带 12 条匹配事实和 3 组相关待确认冲突。最近正文与摘要仍提供章节衔接。档案查询失败会记诊断日志，本章可用原来的资料继续生成。候选只取当前章以前仍有效的定稿，未确认的冲突只作为待核对资料。位置移动和伏笔推进保留章序，程序只就别名归属、本名、出生地等固定资料的不同记录请求取舍。
+
+已用模拟模型验证第 12 章的账册藏址虽然不在第 50 章的摘要抽样里，写作和审稿仍能从档案拿到原文。关系图展示档案中有出处的关联，和写审使用同一份事实；抽取遗漏和名称无法匹配时仍可能查不到旧线索。[旧章召回回归](../internal/novel/story_memory_test.go) · [档案召回规则](../internal/novel/story_memory_context.go)
 
 ### 刷新取消了正在生成的小说正文
 

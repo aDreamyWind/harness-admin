@@ -33,6 +33,7 @@ func main() {
 	workers.Go(func() { application.RunAlertRefresh(workerCtx, logger) })
 	workers.Go(func() { application.RunGarmentJobs(workerCtx) })
 	workers.Go(func() { application.RunTryOnJobs(workerCtx) })
+	workers.Go(func() { application.RunNovelStoryMemory(workerCtx) })
 	defer func() {
 		stopWorker()
 		workers.Wait()

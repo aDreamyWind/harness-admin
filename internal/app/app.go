@@ -46,6 +46,7 @@ type Application struct {
 	Redis        *cache.Client
 	alertService *modelgateway.Service
 	tryOnService *tryon.Service
+	novelService *novel.Service
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Application, error) {
@@ -109,9 +110,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		styles: dramaRepository,
 	}
 	novelCoverStore := cache.NewNovelCoverPreviewStore(redisClient)
-	novelService := novel.NewService(pgstore.NewNovelRepository(db), novelModel, novelModel, novelCoverStore).
+	novelRepo := pgstore.NewNovelRepository(db)
+	novelService := novel.NewService(novelRepo, novelModel, novelModel, novelCoverStore).
 		WithCoverStyles(novelModel).WithCoverGeneration(novelCoverStore).
-		WithDraftGeneration(cache.NewNovelDraftGenerationStore(redisClient))
+		WithDraftGeneration(cache.NewNovelDraftGenerationStore(redisClient)).
+		WithStoryMemory(novelRepo)
 	dramaMedia := &dramaMediaFiles{directory: cfg.DramaMediaDirectory}
 	dramaImages := &dramaImageEngine{gateway: modelGatewayService, forwarder: modelForwarder}
 	generateDramaCover := func(ctx context.Context, jobID string, request drama.ImageRequest) ([]byte, error) {
@@ -225,7 +228,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Applicat
 		Redis:        redisClient,
 		alertService: modelGatewayService,
 		tryOnService: tryOnService,
+		novelService: novelService,
 	}, nil
+}
+
+func (a *Application) RunNovelStoryMemory(ctx context.Context) {
+	a.novelService.RunStoryMemory(ctx)
 }
 
 func (a *Application) RunGarmentJobs(ctx context.Context) {

@@ -165,7 +165,7 @@ func priorChapters(p Project, before int, includeRecentProse bool) []priorChapte
 	return append(history, recent...)
 }
 
-func chapterContext(p Project, index int, instruction, review string) string {
+func chapterContext(p Project, index int, instruction, review string, memory *storyMemoryContext) string {
 	var next *Beat
 	if index+1 < len(p.Outline.Beats) {
 		next = &p.Outline.Beats[index+1]
@@ -178,10 +178,11 @@ func chapterContext(p Project, index int, instruction, review string) string {
 		NextBeat                                  *Beat `json:",omitempty"`
 		PriorChapters                             []priorChapter
 		Draft, DraftSummary, Review, Instruction  string
+		StoryMemory                               *storyMemoryContext `json:",omitempty"`
 	}{
 		p.Title, p.Brief, p.Outline.Synopsis, p.Outline.World, p.Outline.Characters, p.AuthorGuidance,
 		index + 1, p.Outline.Beats[index], next, priorChapters(p, index, true),
-		p.Chapters[index].Body, p.Chapters[index].Summary, review, instruction,
+		p.Chapters[index].Body, p.Chapters[index].Summary, review, instruction, memory,
 	})
 }
 

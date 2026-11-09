@@ -289,6 +289,14 @@
 .novel-brief summary { cursor: pointer; }
 .novel-brief p, .novel-goal, .novel-review p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .novel-brief p, .novel-review p { margin-bottom: 0; }
+.novel-desk-content { display: grid; gap: 16px; min-width: 0; scroll-margin-top: 16px; }
+.novel-blueprint { border: 1px solid var(--novel-line); border-radius: 6px; }
+.novel-blueprint > summary { padding: 10px 12px; background: var(--novel-wash); border-radius: 5px; cursor: pointer; }
+.novel-blueprint > summary:focus-visible { outline: 2px solid var(--novel-accent); outline-offset: 2px; }
+.novel-blueprint > summary::marker { color: var(--novel-accent); }
+.novel-blueprint > summary > span { margin-inline-start: 10px; color: var(--novel-muted); font-size: 12px; }
+.novel-blueprint-body { padding: 12px; border-top: 1px solid var(--novel-line); }
+.novel-blueprint-body > .novel-beat:last-child { margin-bottom: 0; }
 .novel-review-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .novel-review h3 { margin: 0; }
 .novel-beat { min-width: 0; padding: 10px 14px 0; border: 1px solid var(--novel-line); border-radius: 6px; margin: 0 0 12px; }

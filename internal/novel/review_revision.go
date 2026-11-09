@@ -60,17 +60,18 @@ func (s *Service) verifyChapterReview(ctx context.Context, owner Owner, p *Proje
 		return "", nil
 	}
 	current := p.Chapters[index]
+	memory := s.memoryForChapter(ctx, owner, *p, index, current.AuthorInstruction)
 	material := struct {
 		Current         json.RawMessage       `json:"current"`
 		Issues          []reviewIssueToVerify `json:"issues"`
 		PreviousBody    string                `json:"previousBody,omitempty"`
 		PreviousSummary string                `json:"previousSummary,omitempty"`
-	}{Current: json.RawMessage(chapterContext(*p, index, current.AuthorInstruction, "")), Issues: issues}
+	}{Current: json.RawMessage(chapterContext(*p, index, current.AuthorInstruction, "", memory)), Issues: issues}
 	if previous.Body != current.Body || previous.Summary != current.Summary {
 		material.PreviousBody, material.PreviousSummary = previous.Body, previous.Summary
 	}
 	var reply reviewVerification
-	if err := s.generate(ctx, owner, p, modelCode, verifyReviewPrompt+asJSON(material), &reply); err != nil {
+	if err := s.generate(ctx, owner, p, modelCode, memory.guidance()+verifyReviewPrompt+asJSON(material), &reply); err != nil {
 		return "", err
 	}
 	return verifiedReviewText(issues, previous, current, reply)
